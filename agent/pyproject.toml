@@ -1,0 +1,24 @@
+[project]
+name = "guppi-agent"
+version = "0.1.0"
+description = "GuppiGPT agent: AG-UI over SSE on the AgentCore Runtime contract"
+requires-python = ">=3.12"
+dependencies = [
+    "ag-ui-protocol>=0.1.22",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.27",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/guppi_agent"]

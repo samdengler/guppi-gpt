@@ -1,0 +1,25 @@
+[project]
+name = "guppi-gpt"
+version = "0.1.0"
+description = "GuppiGPT: a one page, stateless chat on Amazon Bedrock AgentCore"
+requires-python = ">=3.12"
+
+[tool.uv.workspace]
+members = ["infra", "agent"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["agent/tests", "infra/tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

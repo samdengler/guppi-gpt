@@ -1,0 +1,477 @@
+"""The GuppiGpt stack.
+
+Spike stage: the streaming path only. DNS and certificates, Cognito with Google
+federation, the agent runtime, the edge gateway with a runtime target, and CloudFront
+serving the page and proxying /api/* to the gateway. No knowledge base, tools gateway,
+WAF, or alarms yet.
+
+Resource ordering that matters:
+  apex A record -> user pool custom domain (Cognito refuses the domain without an A record)
+  gateway -> runtime (runtime authorizer names the gateway as its allowed workload)
+  runtime -> gateway role policy -> gateway target
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import aws_cdk as cdk
+import jsii
+from aws_cdk import (
+    Duration,
+    Fn,
+    RemovalPolicy,
+    SecretValue,
+)
+from aws_cdk import (
+    aws_bedrockagentcore as agentcore,
+)
+from aws_cdk import (
+    aws_certificatemanager as acm,
+)
+from aws_cdk import (
+    aws_cloudfront as cloudfront,
+)
+from aws_cdk import (
+    aws_cloudfront_origins as origins,
+)
+from aws_cdk import (
+    aws_cognito as cognito,
+)
+from aws_cdk import (
+    aws_ecr_assets as ecr_assets,
+)
+from aws_cdk import (
+    aws_iam as iam,
+)
+from aws_cdk import (
+    aws_route53 as route53,
+)
+from aws_cdk import (
+    aws_route53_targets as targets,
+)
+from aws_cdk import (
+    aws_s3 as s3,
+)
+from constructs import Construct
+
+ZONE_NAME = "dengler.io"
+CHAT_HOST = f"chat.{ZONE_NAME}"
+AUTH_HOST = f"auth.{ZONE_NAME}"
+SITE_URL = f"https://{CHAT_HOST}/"
+
+# RFC 5737 TEST-NET-1: reserved for documentation, never routed. Cognito only needs the
+# parent domain to resolve before it will create the custom domain.
+APEX_PLACEHOLDER_IP = "192.0.2.1"
+
+RUNTIME_NAME = "guppi_gpt"
+GATEWAY_NAME = "guppi-gpt-edge"
+TARGET_NAME = "api"  # makes the gateway path /api/invocations, matching the /api/* behavior
+SESSION_HEADER = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
+ORIGIN_RESPONSE_TIMEOUT = Duration.seconds(60)
+CLOUDFRONT_HOSTED_ZONE_ID = "Z2FDTNDATAQYW2"  # the same for every CloudFront distribution
+
+
+@jsii.implements(route53.IAliasRecordTarget)
+class CognitoDomainAlias:
+    """Alias to the CloudFront distribution behind a Cognito custom domain.
+
+    The CDK's UserPoolDomainTarget resolves the distribution through an AwsCustomResource,
+    which is a Lambda function. The CloudFormation resource exposes the same value as an
+    attribute, so this target reads it directly and the stack stays Lambda free.
+    """
+
+    def __init__(self, domain: cognito.UserPoolDomain) -> None:
+        cfn_domain = domain.node.default_child
+        assert isinstance(cfn_domain, cognito.CfnUserPoolDomain)
+        self._dns_name = cfn_domain.attr_cloud_front_distribution
+
+    def bind(self, _record, _zone=None) -> route53.AliasRecordTargetConfig:
+        return route53.AliasRecordTargetConfig(
+            dns_name=self._dns_name, hosted_zone_id=CLOUDFRONT_HOSTED_ZONE_ID
+        )
+
+
+class GuppiGptStack(cdk.Stack):
+    def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
+        super().__init__(scope, construct_id, **kwargs)
+
+        google_client_id = cdk.CfnParameter(
+            self,
+            "GoogleClientId",
+            type="String",
+            description="OAuth client id from the guppi-gpt Google Cloud project",
+        )
+        google_client_secret = cdk.CfnParameter(
+            self,
+            "GoogleClientSecret",
+            type="String",
+            no_echo=True,
+            description="OAuth client secret; supplied by scripts/deploy.sh from 1Password",
+        )
+
+        zone = route53.HostedZone.from_lookup(self, "Zone", domain_name=ZONE_NAME)
+
+        # ---- DNS and certificates ------------------------------------------------------
+        apex_record = route53.ARecord(
+            self,
+            "ApexPlaceholder",
+            zone=zone,
+            target=route53.RecordTarget.from_ip_addresses(APEX_PLACEHOLDER_IP),
+            ttl=Duration.hours(1),
+            comment=(
+                "Placeholder so Cognito will issue auth.dengler.io; "
+                "192.0.2.1 is RFC 5737 TEST-NET-1 and never routes"
+            ),
+        )
+        chat_cert = acm.Certificate(
+            self,
+            "ChatCertificate",
+            domain_name=CHAT_HOST,
+            validation=acm.CertificateValidation.from_dns(zone),
+        )
+        auth_cert = acm.Certificate(
+            self,
+            "AuthCertificate",
+            domain_name=AUTH_HOST,
+            validation=acm.CertificateValidation.from_dns(zone),
+        )
+
+        # ---- Cognito -------------------------------------------------------------------
+        user_pool = cognito.UserPool(
+            self,
+            "UserPool",
+            user_pool_name="guppi-gpt",
+            self_sign_up_enabled=False,  # users arrive only through Google federation
+            sign_in_aliases=cognito.SignInAliases(email=True),
+            standard_attributes=cognito.StandardAttributes(
+                email=cognito.StandardAttribute(required=True, mutable=True)
+            ),
+            removal_policy=RemovalPolicy.DESTROY,
+        )
+        google = cognito.UserPoolIdentityProviderGoogle(
+            self,
+            "Google",
+            user_pool=user_pool,
+            client_id=google_client_id.value_as_string,
+            client_secret_value=SecretValue.cfn_parameter(google_client_secret),
+            scopes=["openid", "email", "profile"],
+            attribute_mapping=cognito.AttributeMapping(
+                email=cognito.ProviderAttribute.GOOGLE_EMAIL,
+                fullname=cognito.ProviderAttribute.GOOGLE_NAME,
+            ),
+        )
+        client = user_pool.add_client(
+            "Web",
+            user_pool_client_name="guppi-gpt-web",
+            generate_secret=False,
+            o_auth=cognito.OAuthSettings(
+                flows=cognito.OAuthFlows(authorization_code_grant=True),
+                scopes=[
+                    cognito.OAuthScope.OPENID,
+                    cognito.OAuthScope.EMAIL,
+                    cognito.OAuthScope.PROFILE,
+                ],
+                callback_urls=[SITE_URL],
+                logout_urls=[SITE_URL],
+            ),
+            supported_identity_providers=[cognito.UserPoolClientIdentityProvider.GOOGLE],
+            access_token_validity=Duration.minutes(60),
+            id_token_validity=Duration.minutes(60),
+            refresh_token_validity=Duration.days(30),
+            prevent_user_existence_errors=True,
+        )
+        client.node.add_dependency(google)
+
+        domain = user_pool.add_domain(
+            "Domain",
+            custom_domain=cognito.CustomDomainOptions(domain_name=AUTH_HOST, certificate=auth_cert),
+            managed_login_version=cognito.ManagedLoginVersion.NEWER_MANAGED_LOGIN,
+        )
+        domain.node.add_dependency(apex_record)
+        cognito.CfnManagedLoginBranding(
+            self,
+            "Branding",
+            user_pool_id=user_pool.user_pool_id,
+            client_id=client.user_pool_client_id,
+            use_cognito_provided_values=True,
+        )
+        route53.ARecord(
+            self,
+            "AuthRecord",
+            zone=zone,
+            record_name="auth",
+            target=route53.RecordTarget.from_alias(CognitoDomainAlias(domain)),
+        )
+
+        discovery_url = (
+            f"https://cognito-idp.{self.region}.amazonaws.com/"
+            f"{user_pool.user_pool_id}/.well-known/openid-configuration"
+        )
+        jwt_allowed_clients = [client.user_pool_client_id]
+
+        # ---- Agent image ---------------------------------------------------------------
+        image_uri = self.node.try_get_context("image_uri")
+        runtime_role = self._runtime_role()
+        if image_uri is None:
+            asset = ecr_assets.DockerImageAsset(
+                self,
+                "AgentImage",
+                directory=str(Path(__file__).resolve().parents[2] / "agent"),
+                platform=ecr_assets.Platform.LINUX_ARM64,
+            )
+            asset.repository.grant_pull(runtime_role)
+            image_uri = asset.image_uri
+        else:
+            runtime_role.add_to_policy(
+                iam.PolicyStatement(
+                    actions=["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"],
+                    resources=[f"arn:aws:ecr:{self.region}:{self.account}:repository/*"],
+                )
+            )
+
+        # ---- Edge gateway --------------------------------------------------------------
+        gateway_role = iam.Role(
+            self,
+            "GatewayRole",
+            assumed_by=iam.ServicePrincipal("bedrock-agentcore.amazonaws.com"),
+            description="Lets the edge gateway invoke the GuppiGPT runtime",
+        )
+        gateway = agentcore.CfnGateway(
+            self,
+            "EdgeGateway",
+            name=GATEWAY_NAME,
+            description="GuppiGPT edge: JWT check, per-user limits, runtime target",
+            role_arn=gateway_role.role_arn,
+            authorizer_type="CUSTOM_JWT",
+            authorizer_configuration=agentcore.CfnGateway.AuthorizerConfigurationProperty(
+                custom_jwt_authorizer=agentcore.CfnGateway.CustomJWTAuthorizerConfigurationProperty(
+                    discovery_url=discovery_url,
+                    allowed_clients=jwt_allowed_clients,
+                )
+            ),
+            # protocol_type is left unset on purpose: runtime targets cannot be added to
+            # MCP protocol gateways.
+            exception_level="DEBUG",
+        )
+
+        # ---- Runtime -------------------------------------------------------------------
+        protocol = self.node.try_get_context("runtime_protocol") or "AGUI"
+        runtime = agentcore.CfnRuntime(
+            self,
+            "Runtime",
+            agent_runtime_name=RUNTIME_NAME,
+            description="GuppiGPT agent (AG-UI over SSE)",
+            role_arn=runtime_role.role_arn,
+            agent_runtime_artifact=agentcore.CfnRuntime.AgentRuntimeArtifactProperty(
+                container_configuration=agentcore.CfnRuntime.ContainerConfigurationProperty(
+                    container_uri=image_uri
+                )
+            ),
+            network_configuration=agentcore.CfnRuntime.NetworkConfigurationProperty(
+                network_mode="PUBLIC"
+            ),
+            protocol_configuration=protocol,
+            authorizer_configuration=agentcore.CfnRuntime.AuthorizerConfigurationProperty(
+                custom_jwt_authorizer=agentcore.CfnRuntime.CustomJWTAuthorizerConfigurationProperty(
+                    discovery_url=discovery_url,
+                    allowed_clients=jwt_allowed_clients,
+                    allowed_workload_configuration=(
+                        agentcore.CfnRuntime.AllowedWorkloadConfigurationProperty(
+                            hosting_environments=[
+                                agentcore.CfnRuntime.HostingEnvironmentProperty(
+                                    arn=gateway.attr_gateway_arn
+                                )
+                            ]
+                        )
+                    ),
+                )
+            ),
+            environment_variables={"LOG_LEVEL": "INFO"},
+        )
+
+        invoke_policy = iam.Policy(
+            self,
+            "GatewayInvokePolicy",
+            roles=[gateway_role],
+            statements=[
+                iam.PolicyStatement(
+                    actions=["bedrock-agentcore:InvokeAgentRuntime"],
+                    resources=[
+                        runtime.attr_agent_runtime_arn,
+                        f"{runtime.attr_agent_runtime_arn}/runtime-endpoint/*",
+                    ],
+                )
+            ],
+        )
+
+        target = agentcore.CfnGatewayTarget(
+            self,
+            "RuntimeTarget",
+            gateway_identifier=gateway.attr_gateway_identifier,
+            name=TARGET_NAME,
+            description="GuppiGPT runtime, token passthrough",
+            target_configuration=agentcore.CfnGatewayTarget.TargetConfigurationProperty(
+                http=agentcore.CfnGatewayTarget.HttpTargetConfigurationProperty(
+                    agentcore_runtime=agentcore.CfnGatewayTarget.RuntimeTargetConfigurationProperty(
+                        arn=runtime.attr_agent_runtime_arn,
+                        qualifier="DEFAULT",
+                    )
+                )
+            ),
+            credential_provider_configurations=[
+                agentcore.CfnGatewayTarget.CredentialProviderConfigurationProperty(
+                    credential_provider_type="JWT_PASSTHROUGH"
+                )
+            ],
+            metadata_configuration=agentcore.CfnGatewayTarget.MetadataConfigurationProperty(
+                allowed_request_headers=[SESSION_HEADER]
+            ),
+        )
+        target.node.add_dependency(invoke_policy)
+
+        # ---- Site and CloudFront -------------------------------------------------------
+        site_bucket = s3.Bucket(
+            self,
+            "SiteBucket",
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            enforce_ssl=True,
+            removal_policy=RemovalPolicy.RETAIN,
+        )
+        gateway_host = Fn.select(2, Fn.split("/", gateway.attr_gateway_url))
+        gateway_origin = origins.HttpOrigin(
+            gateway_host,
+            protocol_policy=cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+            read_timeout=ORIGIN_RESPONSE_TIMEOUT,
+            keepalive_timeout=Duration.seconds(60),
+        )
+        distribution = cloudfront.Distribution(
+            self,
+            "Distribution",
+            comment="GuppiGPT",
+            domain_names=[CHAT_HOST],
+            certificate=chat_cert,
+            default_root_object="index.html",
+            minimum_protocol_version=cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
+            http_version=cloudfront.HttpVersion.HTTP2_AND_3,
+            price_class=cloudfront.PriceClass.PRICE_CLASS_100,
+            default_behavior=cloudfront.BehaviorOptions(
+                origin=origins.S3BucketOrigin.with_origin_access_control(site_bucket),
+                viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                cache_policy=cloudfront.CachePolicy.CACHING_OPTIMIZED,
+            ),
+            additional_behaviors={
+                "/api/*": cloudfront.BehaviorOptions(
+                    origin=gateway_origin,
+                    viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
+                    allowed_methods=cloudfront.AllowedMethods.ALLOW_ALL,
+                    cache_policy=cloudfront.CachePolicy.CACHING_DISABLED,
+                    # Forwarding Host breaks the gateway's TLS and routing.
+                    origin_request_policy=cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+                    compress=False,
+                )
+            },
+        )
+        for record_type, record_class in (("A", route53.ARecord), ("AAAA", route53.AaaaRecord)):
+            record_class(
+                self,
+                f"Chat{record_type}Record",
+                zone=zone,
+                record_name="chat",
+                target=route53.RecordTarget.from_alias(targets.CloudFrontTarget(distribution)),
+            )
+
+        # ---- Outputs -------------------------------------------------------------------
+        cdk.CfnOutput(self, "SiteUrl", value=SITE_URL)
+        cdk.CfnOutput(self, "SiteBucketName", value=site_bucket.bucket_name)
+        cdk.CfnOutput(self, "DistributionId", value=distribution.distribution_id)
+        cdk.CfnOutput(self, "UserPoolId", value=user_pool.user_pool_id)
+        cdk.CfnOutput(self, "UserPoolClientId", value=client.user_pool_client_id)
+        cdk.CfnOutput(self, "AuthDomain", value=AUTH_HOST)
+        cdk.CfnOutput(self, "GatewayUrl", value=gateway.attr_gateway_url)
+        cdk.CfnOutput(self, "GatewayArn", value=gateway.attr_gateway_arn)
+        cdk.CfnOutput(self, "RuntimeArn", value=runtime.attr_agent_runtime_arn)
+        cdk.CfnOutput(self, "RuntimeProtocol", value=protocol)
+
+    def _runtime_role(self) -> iam.Role:
+        """Execution role for the runtime, following the AgentCore documented policy."""
+        role = iam.Role(
+            self,
+            "RuntimeRole",
+            assumed_by=iam.ServicePrincipal(
+                "bedrock-agentcore.amazonaws.com",
+                conditions={
+                    "StringEquals": {"aws:SourceAccount": self.account},
+                    "ArnLike": {
+                        "aws:SourceArn": f"arn:aws:bedrock-agentcore:{self.region}:{self.account}:*"
+                    },
+                },
+            ),
+            description="Execution role for the GuppiGPT agent runtime",
+        )
+        region, account = self.region, self.account
+        role.add_to_policy(
+            iam.PolicyStatement(actions=["ecr:GetAuthorizationToken"], resources=["*"])
+        )
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["logs:DescribeLogGroups"],
+                resources=[f"arn:aws:logs:{region}:{account}:log-group:*"],
+            )
+        )
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "logs:CreateLogGroup",
+                    "logs:CreateLogStream",
+                    "logs:DescribeLogStreams",
+                    "logs:PutLogEvents",
+                ],
+                resources=[
+                    f"arn:aws:logs:{region}:{account}:log-group:/aws/bedrock-agentcore/runtimes/*"
+                ],
+            )
+        )
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "xray:PutTraceSegments",
+                    "xray:PutTelemetryRecords",
+                    "xray:GetSamplingRules",
+                    "xray:GetSamplingTargets",
+                ],
+                resources=["*"],
+            )
+        )
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["cloudwatch:PutMetricData"],
+                resources=["*"],
+                conditions={"StringEquals": {"cloudwatch:namespace": "bedrock-agentcore"}},
+            )
+        )
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "bedrock-agentcore:GetWorkloadAccessToken",
+                    "bedrock-agentcore:GetWorkloadAccessTokenForJWT",
+                    "bedrock-agentcore:GetWorkloadAccessTokenForUserId",
+                ],
+                resources=[
+                    f"arn:aws:bedrock-agentcore:{region}:{account}:workload-identity-directory/default",
+                    f"arn:aws:bedrock-agentcore:{region}:{account}:workload-identity-directory/default/workload-identity/{RUNTIME_NAME}-*",
+                ],
+            )
+        )
+        # Model access is not used by the spike agent but costs nothing to grant now.
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+                resources=[
+                    "arn:aws:bedrock:*::foundation-model/*",
+                    f"arn:aws:bedrock:{region}:{account}:inference-profile/*",
+                ],
+            )
+        )
+        return role
