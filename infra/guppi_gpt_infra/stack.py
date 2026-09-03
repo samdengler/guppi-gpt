@@ -276,6 +276,12 @@ class GuppiGptStack(cdk.Stack):
                 custom_jwt_authorizer=agentcore.CfnRuntime.CustomJWTAuthorizerConfigurationProperty(
                     discovery_url=discovery_url,
                     allowed_clients=jwt_allowed_clients,
+                    # Binding the runtime to the gateway is off by default. With it on, the
+                    # runtime demands a transaction token, and the gateway only supplies
+                    # one when it signs the request itself (GATEWAY_IAM_ROLE), which a JWT
+                    # runtime then rejects as an authorization method mismatch. Token
+                    # passthrough forwards the user JWT with no transaction token, so the
+                    # two settings cannot be combined today (observed 2 Sep 2026).
                     allowed_workload_configuration=(
                         agentcore.CfnRuntime.AllowedWorkloadConfigurationProperty(
                             hosting_environments=[
@@ -284,6 +290,8 @@ class GuppiGptStack(cdk.Stack):
                                 )
                             ]
                         )
+                        if self.node.try_get_context("bind_runtime_to_gateway")
+                        else None
                     ),
                 )
             ),
@@ -321,7 +329,9 @@ class GuppiGptStack(cdk.Stack):
             ),
             credential_provider_configurations=[
                 agentcore.CfnGatewayTarget.CredentialProviderConfigurationProperty(
-                    credential_provider_type="JWT_PASSTHROUGH"
+                    credential_provider_type=(
+                        self.node.try_get_context("target_credentials") or "JWT_PASSTHROUGH"
+                    )
                 )
             ],
             metadata_configuration=agentcore.CfnGatewayTarget.MetadataConfigurationProperty(

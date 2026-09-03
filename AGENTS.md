@@ -66,6 +66,12 @@ uv run -- ruff check .
 writes `web/config.json` from the stack outputs, syncs `web/` to the site bucket, and
 invalidates CloudFront. Deploys run on Sam's Mac; the Docker image is built there for arm64.
 
+Two context keys exist for experiments and default off: `-c bind_runtime_to_gateway=true`
+adds `allowedWorkloadConfiguration` to the runtime authorizer, and
+`-c target_credentials=GATEWAY_IAM_ROLE` makes the gateway sign requests to the runtime
+instead of passing the user token through. Neither works against the deployed JWT runtime
+today; the decision log records why.
+
 ## Local Development
 
 ```sh

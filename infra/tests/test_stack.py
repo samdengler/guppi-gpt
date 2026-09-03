@@ -8,16 +8,21 @@ REGION = "us-east-1"
 ZONE_CONTEXT_KEY = f"hosted-zone:account={ACCOUNT}:domainName=dengler.io:region={REGION}"
 
 
-@pytest.fixture(scope="module")
-def template() -> Template:
+def synth(**extra_context) -> Template:
     app = cdk.App(
         context={
             ZONE_CONTEXT_KEY: {"Id": "/hostedzone/Z0000000000000", "Name": "dengler.io."},
             "image_uri": f"{ACCOUNT}.dkr.ecr.{REGION}.amazonaws.com/guppi-gpt:test",
+            **extra_context,
         }
     )
     stack = GuppiGptStack(app, "GuppiGpt", env=cdk.Environment(account=ACCOUNT, region=REGION))
     return Template.from_stack(stack)
+
+
+@pytest.fixture(scope="module")
+def template() -> Template:
+    return synth()
 
 
 def test_secret_parameter_is_no_echo(template):
@@ -47,12 +52,28 @@ def test_gateway_has_no_protocol_type_and_uses_cognito_jwt(template):
     assert gateway["Properties"]["AuthorizerType"] == "CUSTOM_JWT"
 
 
-def test_runtime_is_agui_and_bound_to_gateway(template):
+def test_runtime_is_agui_and_not_bound_to_gateway_by_default(template):
     template.has_resource_properties(
         "AWS::BedrockAgentCore::Runtime",
         {
             "ProtocolConfiguration": "AGUI",
             "NetworkConfiguration": {"NetworkMode": "PUBLIC"},
+            "AuthorizerConfiguration": {
+                "CustomJWTAuthorizer": Match.object_equals(
+                    {
+                        "DiscoveryUrl": Match.any_value(),
+                        "AllowedClients": Match.any_value(),
+                    }
+                )
+            },
+        },
+    )
+
+
+def test_runtime_binds_to_gateway_when_asked():
+    synth(bind_runtime_to_gateway=True).has_resource_properties(
+        "AWS::BedrockAgentCore::Runtime",
+        {
             "AuthorizerConfiguration": {
                 "CustomJWTAuthorizer": {
                     "AllowedWorkloadConfiguration": {
