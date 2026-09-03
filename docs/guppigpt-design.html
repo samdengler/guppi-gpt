@@ -243,7 +243,8 @@ h2:hover .anchor { opacity: 1; }
 <li>When the user submits a non-empty message, the system shall append the message to the visible thread and start an agent run.</li>
 <li>While a run is in progress, the system shall render each text delta as it arrives, and shall disable the send control.</li>
 <li>When the user submits a message, the system shall include every prior message of the current page session in the run, so that replies carry context.</li>
-<li>When the page is reloaded or closed, the system shall discard the conversation. No message shall be persisted on the server or in browser storage.</li>
+<li>While the <code>history</code> feature flag is off (the default), when the page is reloaded or closed the system shall discard the conversation, and no message shall be persisted on the server or in browser storage.</li>
+<li>While the <code>history</code> feature flag is on, the system shall keep threads in the browser's IndexedDB only, shall let the user open, delete, and clear them, shall clear them on sign out, and shall say so in the composer hint. No message shall be persisted on the server.</li>
 <li>When the user activates New chat, the system shall clear the thread and return to the empty state.</li>
 </ul>
 
@@ -302,7 +303,7 @@ h2:hover .anchor { opacity: 1; }
 
 <p><strong>Thread.</strong> User messages sit on the right in a filled bubble. Agent replies sit on the left with no bubble, a small label, and plain text with newlines preserved. When the agent calls the retrieval tool, a muted status line ("Searching the knowledge base") appears above the reply and settles to past tense when the tool returns. The thread scrolls to the bottom on every new delta unless the user has scrolled up, in which case a small "Jump to latest" pill appears.</p>
 
-<p><strong>Composer.</strong> A textarea that grows to a maximum of eight lines, a send button, and a one-line hint. The hint states the keyboard behavior and that nothing is saved; the second sentence is the only privacy notice the app needs, and it stays visible at all times.</p>
+<p><strong>Composer.</strong> A textarea that grows to a maximum of eight lines, a send button, and a one-line hint. With the <code>history</code> flag on, the hint's second sentence becomes "Chats are saved on this device only." and a Chats control joins the header. With the <code>feedback</code> flag on, two muted arrows under each finished reply take an up or down vote. The hint states the keyboard behavior and that nothing is saved; the second sentence is the only privacy notice the app needs, and it stays visible at all times.</p>
 
 <h3>States</h3>
 
@@ -558,6 +559,14 @@ data: {"type":"RUN_FINISHED","threadId":"...","runId":"..."}</code></pre>
 
 <p><strong>Accessibility.</strong> The thread is an <code>aria-live="polite"</code> region. The send button has a label. Focus returns to the textarea after each turn. Color contrast meets AA in both themes.</p>
 
+<p><strong>Feature flags.</strong> Product features ship dark behind flags whose defaults live in <code>web/features.json</code>; the deploy script copies them into <code>config.json</code>, so flipping one is an edit and a page-only deploy. The page reads them through the OpenFeature web SDK with a static provider, and a <code>?ff=history,feedback</code> query parameter (a leading dash turns one off) overrides them for one tab through <code>sessionStorage</code>, surviving the sign-in redirect. Observability code is never behind a flag. The Dynatrace OpenFeature hook can attach to the same client later so flag state reaches RUM sessions. Details: <code>docs/proposals/feature-flags.md</code>.</p>
+
+<p><strong>Chats (flag <code>history</code>, off).</strong> Threads are stored in IndexedDB through the <code>idb</code> wrapper as id, title, timestamps, and messages; never tokens or account claims. A Chats control lists them newest first with delete and clear all, the newest reopens on load, and sign out clears the store. AG-UI has no persistence of its own; the thread id is the stored id. Details: <code>docs/proposals/local-history.md</code>.</p>
+
+<p><strong>Feedback (flag <code>feedback</code>, off).</strong> Two arrows under a finished reply record an up or down vote, or withdraw it on a second click. The vote is stamped on the reply element, saved on the stored message when Chats is on, and dispatched as a <code>guppi:feedback</code> DOM event carrying the thread, run, trace, request, and message ids; nothing goes over the network. The Dynatrace RUM integration subscribes to that event and turns it into a custom action, which was chosen over an AWS-side sink. Details: <code>docs/proposals/feedback.md</code>.</p>
+
+<p><strong>Traceability.</strong> The page mints a W3C <code>traceparent</code> per run (the trace id opens with the epoch seconds so X-Ray accepts it) and sends it beside the bearer and the session id; the edge gateway target and the runtime allowlist pass it through. The container runs under <code>opentelemetry-instrument</code> with the AWS distro, so its spans, the MCP call to the tools gateway, and the agent's JSON log record all carry that trace id, and the log record also carries the runtime request id. The reply element holds the run, trace, and request ids as data attributes for support. CloudWatch Transaction Search, an account-wide setting the stack owns, is where the spans land. Details: <code>docs/proposals/traceability.md</code>.</p>
+
 <h2 id="agent">9. Agent design</h2>
 
 <p>One Python package (<code>app.py</code>, <code>agent.py</code>, <code>validation.py</code>, <code>keepalive.py</code>) in an arm64 container that the CDK stack registers on AgentCore Runtime with protocol <code>AGUI</code>. The runtime fronts the container, so the package contains a FastAPI app with <code>/invocations</code> and <code>/ping</code>, the Strands agent, and the AG-UI adapter. In order, per run:</p>
@@ -653,6 +662,10 @@ data: {"type":"RUN_FINISHED","threadId":"...","runId":"..."}</code></pre>
 <tr><td>Sync</td><td>A seed script writes to S3; EventBridge Scheduler calls <code>StartIngestionJob</code> nightly as a universal target</td><td>S3 event notification through Lambda or Step Functions; manual sync in the console</td><td>No code and no Lambda; ingestion is incremental so a nightly job costs nothing when nothing changed</td><td>Easy</td></tr>
 <tr><td>Frontend</td><td>Static HTML, CSS, and vanilla JavaScript with one esbuild step</td><td>React with CopilotKit</td><td>The page has one component. CopilotKit would be the choice if the UI grew beyond it</td><td>Easy: the protocol does not depend on the client</td></tr>
 <tr><td>Apex A record</td><td>Placeholder record at <code>dengler.io</code> pointing at <code>192.0.2.1</code></td><td>Add the apex as a second alias on the chat distribution and redirect it to <code>chat.dengler.io</code> with a CloudFront Function</td><td>Cognito only needs the apex to resolve. A redirect would add a certificate SAN, a function, and a second hostname to reason about, for a page nobody is expected to open at the apex</td><td>Easy: replace the record with an alias and add the function; Cognito does not recheck after the domain exists</td></tr>
+<tr><td>Feature flags</td><td>Defaults in a committed JSON file, read through the OpenFeature web SDK with a static provider and a per-tab query override</td><td>AWS AppConfig; a flag SaaS</td><td>AppConfig's data plane needs SigV4, which the browser does not hold, so it would need a proxy; a static file flips with a page-only deploy and OpenFeature keeps the call sites stable if a service comes later</td><td>Easy: swap the provider</td></tr>
+<tr><td>Chat history</td><td>IndexedDB in the browser through <code>idb</code>, behind a flag, cleared on sign out</td><td>localStorage; server-side history; a React chat runtime</td><td>No library models threads for a framework-free page, so the forty-line model is ours; IndexedDB has no practical size ceiling and asynchronous writes; server history would contradict the stateless design</td><td>Easy</td></tr>
+<tr><td>Feedback sink</td><td>A DOM event consumed by Dynatrace RUM, plus the vote on the stored message</td><td>An S3 object per vote written through the agent or a small API</td><td>No new infrastructure, and the vote joins the session and the trace by id; an AWS sink remains the option if votes must be queried without Dynatrace</td><td>Easy: one listener</td></tr>
+<tr><td>Trace context</td><td>W3C <code>traceparent</code> minted by the page, ADOT in the container, CloudWatch Transaction Search</td><td><code>X-Amzn-Trace-Id</code>; no browser-side trace</td><td>The runtime allowlist refuses <code>x-amzn-</code> headers, and a page-minted id is what ties a browser session to the backend trace later in Dynatrace</td><td>Easy</td></tr>
 <tr><td>Infrastructure</td><td>AWS CDK, one stack</td><td>The AgentCore starter toolkit alone; SAM; Terraform</td><td>The toolkit deploys the agent but not CloudFront, Cognito, or the bucket. CDK expresses all of it, with the runtime and gateway through L1 constructs where needed</td><td>Moderate</td></tr>
 </table>
 
@@ -695,6 +708,7 @@ data: {"type":"RUN_FINISHED","threadId":"...","runId":"..."}</code></pre>
 <li>Add the per-user rate limits on the edge gateway keyed on the JWT <code>sub</code> claim (section 11), which is the control that bounds spend per signed-in user while any Google account is admitted.</li>
 <li>Turn on AgentCore observability for the runtime and both gateways, and add alarms on gateway 4xx rate, runtime 5xx, and Bedrock throttling.</li>
 <li>Measure the edge gateway's idle handling on a long silent stream and record the result in section 13.</li>
+<li>Work the README backlog: Dynatrace RUM and the AWS integration, a Dynatrace dashboard, turning on the Chats and feedback flags once RUM carries them, and conversation logging to S3 per <code>docs/proposals/conversation-logging.md</code>.</li>
 </ol>
 
 <h2 id="glossary">Glossary</h2>
