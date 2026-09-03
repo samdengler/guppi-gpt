@@ -2,7 +2,9 @@
 // server call, nothing sent anywhere. Stores thread text only, never tokens.
 //
 // Schema: one object store "threads", keyed by "id", each record
-//   { id, title, createdAt, updatedAt, messages: [{ id, role, content }] }
+//   { id, title, createdAt, updatedAt, messages: [{ id, role, content, feedback? }] }
+// `feedback`, on an assistant message only, is "up", "down", or null; set by
+// setMessageFeedback below when the feedback control (web/src/feedback.js) is on.
 
 import { openDB } from "idb";
 
@@ -58,4 +60,17 @@ export async function listThreads() {
 export async function newestThread() {
   const threads = await listThreads();
   return threads[0] || null;
+}
+
+// Sets (or, with vote null, clears) the feedback field on one message of one stored
+// thread. A no-op when the thread has no stored record, so a vote on a reply from a
+// thread that was never persisted does not create a partial one.
+export async function setMessageFeedback(threadId, messageId, vote) {
+  const db = await openDb();
+  const thread = await db.get(STORE, threadId);
+  if (!thread) return;
+  thread.messages = thread.messages.map((message) =>
+    message.id === messageId ? { ...message, feedback: vote } : message,
+  );
+  await db.put(STORE, thread);
 }

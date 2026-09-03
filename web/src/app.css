@@ -168,6 +168,16 @@ body {
 .reply-error { color: var(--danger); }
 .reply-error a { color: var(--accent); margin-left: .3rem; }
 
+.feedback-controls { display: flex; gap: .3rem; margin: .4rem 0 0; }
+
+.feedback-btn {
+  background: none; border: none; color: var(--muted);
+  font: inherit; font-size: .8rem; line-height: 1; cursor: pointer;
+  padding: .2rem .35rem; border-radius: .3rem;
+}
+.feedback-btn:hover { color: var(--fg); }
+.feedback-btn[aria-pressed="true"] { color: var(--accent); }
+
 .jump-latest {
   position: sticky; bottom: .5rem; left: 50%; transform: translateX(-50%);
   display: block; margin: 0 auto; background: var(--surface); color: var(--fg);
