@@ -416,3 +416,17 @@ def test_runtime_role_can_let_xray_write_spans_to_its_own_log_group(template):
             }
         ),
     )
+
+
+def test_transaction_search_is_enabled_with_the_span_log_policy(template):
+    template.has_resource_properties(
+        "AWS::XRay::TransactionSearchConfig", {"IndexingPercentage": 1}
+    )
+    policies = template.find_resources("AWS::Logs::ResourcePolicy")
+    assert len(policies) == 1
+    (policy,) = policies.values()
+    document = policy["Properties"]["PolicyDocument"]
+    assert "xray.amazonaws.com" in document and "log-group:aws/spans:*" in document
+    searches = template.find_resources("AWS::XRay::TransactionSearchConfig")
+    (search,) = searches.values()
+    assert any(dep.startswith("TransactionSearchLogsPolicy") for dep in search.get("DependsOn", []))

@@ -203,9 +203,9 @@ Spans take about ten minutes to appear after enabling. Both steps have CloudForm
 resources (`AWS::Logs::ResourcePolicy` and
 [`AWS::XRay::TransactionSearchConfig`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-xray-transactionsearchconfig.html),
 which sets the indexing percentage), and CDK 2.268 exposes both as L1 constructs, so
-the setting can move into `stack.py` once the account owner has accepted it. It is left
-out of this change because it changes an account-wide setting that other workloads in
-the account would inherit.
+the setting moved into `stack.py` on 3 Sep 2026 after the first deploy showed the OTLP
+exporter answering 400 for every span batch while the destination was still X-Ray. It
+is an account-wide setting that other workloads in the account inherit.
 
 Log delivery for the two gateways and the runtime's `APPLICATION_LOGS` is configured per
 resource: a delivery source of type `APPLICATION_LOGS` (and `TRACES` for the gateways),

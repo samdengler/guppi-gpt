@@ -14,6 +14,7 @@ Resource ordering that matters:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import aws_cdk as cdk
@@ -55,6 +56,9 @@ from aws_cdk import (
     aws_iam as iam,
 )
 from aws_cdk import (
+    aws_logs as logs,
+)
+from aws_cdk import (
     aws_route53 as route53,
 )
 from aws_cdk import (
@@ -77,6 +81,9 @@ from aws_cdk import (
 )
 from aws_cdk import (
     aws_wafv2 as wafv2,
+)
+from aws_cdk import (
+    aws_xray as xray,
 )
 from constructs import Construct
 
@@ -197,6 +204,45 @@ class GuppiGptStack(cdk.Stack):
         )
 
         zone = route53.HostedZone.from_lookup(self, "Zone", domain_name=ZONE_NAME)
+
+        # ---- Transaction Search ----------------------------------------------------------
+        # Account-wide, and the one account-level switch this stack owns: the instrumented
+        # container sends spans to CloudWatch's OTLP endpoint, which answers 400 until the
+        # trace segment destination is CloudWatch Logs (observed 3 Sep 2026). The resource
+        # policy is the one the AgentCore observability guide gives for X-Ray to write the
+        # span log groups; the config resource flips the destination and indexes 1 percent.
+        span_policy = logs.CfnResourcePolicy(
+            self,
+            "TransactionSearchLogsPolicy",
+            policy_name="GuppiGptTransactionSearchXRayAccess",
+            policy_document=json.dumps(
+                {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Sid": "TransactionSearchXRayAccess",
+                            "Effect": "Allow",
+                            "Principal": {"Service": "xray.amazonaws.com"},
+                            "Action": "logs:PutLogEvents",
+                            "Resource": [
+                                f"arn:aws:logs:{self.region}:{self.account}:log-group:aws/spans:*",
+                                f"arn:aws:logs:{self.region}:{self.account}:log-group:/aws/application-signals/data:*",
+                            ],
+                            "Condition": {
+                                "ArnLike": {
+                                    "aws:SourceArn": f"arn:aws:xray:{self.region}:{self.account}:*"
+                                },
+                                "StringEquals": {"aws:SourceAccount": self.account},
+                            },
+                        }
+                    ],
+                }
+            ),
+        )
+        transaction_search = xray.CfnTransactionSearchConfig(
+            self, "TransactionSearch", indexing_percentage=1
+        )
+        transaction_search.node.add_dependency(span_policy)
 
         # ---- Alerting --------------------------------------------------------------------
         alarm_topic = sns.Topic(self, "AlarmTopic", display_name="GuppiGPT alarms")
@@ -413,9 +459,7 @@ class GuppiGptStack(cdk.Stack):
                             positional_constraint="EXACTLY",
                             search_string=origin_secret_value,
                             text_transformations=[
-                                wafv2.CfnWebACL.TextTransformationProperty(
-                                    priority=0, type="NONE"
-                                )
+                                wafv2.CfnWebACL.TextTransformationProperty(priority=0, type="NONE")
                             ],
                         )
                     )

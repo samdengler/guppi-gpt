@@ -614,6 +614,11 @@ import { renderFeedbackControls, FEEDBACK_EVENT } from "./feedback.js";
         resetStallTimer(); // every event counts, the CUSTOM ping included
       },
       onToolCallStartEvent: () => {
+        // Text streamed before a search is the model narrating its plan ("Let me correct
+        // that:"); the status line records the search, so only what follows the last
+        // search is kept as the reply.
+        draft = "";
+        schedulePaint();
         setStatusLine("Searching the knowledge base\u2026");
       },
       onToolCallEndEvent: () => {

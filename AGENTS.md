@@ -118,7 +118,9 @@ The edge gateway target's allowed request headers name the session id header and
 `MODEL_ID`, `RETRIEVE_TOOL`, `LOG_LEVEL`, and `OTEL_PYTHON_EXCLUDED_URLS` from the stack;
 the container starts under `opentelemetry-instrument` (`agent/Dockerfile`), and the
 runtime supplies the ADOT exporter settings itself. `docs/proposals/traceability.md`
-describes the identifiers and where each one is logged. The web ACL on the edge gateway keeps all three rules in COUNT
+describes the identifiers and where each one is logged. The stack also owns one account-wide setting, CloudWatch Transaction Search (the span
+destination and a 1 percent indexing rule), because the instrumented container's spans
+are refused until it is on. The web ACL on the edge gateway keeps all three rules in COUNT
 until `WAF_BLOCK` in `stack.py` is flipped after real traffic has been watched. The billing
 alarm reads `AWS/Billing EstimatedCharges`, which exists only after billing alerts are
 enabled in the account's billing preferences (a console setting, not in the stack).
