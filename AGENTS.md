@@ -38,10 +38,11 @@ agent/
   Dockerfile                     # arm64, uvicorn on 8080; built from the repo root so uv.lock is in context
   tests/
 web/
-  package.json            # esbuild, @ag-ui/client, @openfeature/web-sdk; `npm run build` writes dist/
+  package.json            # esbuild, @ag-ui/client, @openfeature/web-sdk, idb; `npm run build` writes dist/
   src/index.html          # the page; no inline script or style (CSP is default-src 'self')
   src/app.js              # PKCE sign-in by hand, HttpAgent subscriber, plain text rendering
   src/app.css
+  src/history.js          # local chat history: idb wrapper around one "threads" object store, behind the history flag
   src/features.js         # OpenFeature static provider; initFeatures() and isEnabled()
   src/flags-core.js       # pure override parsing and default/override overlay, tested without a DOM
   features.json           # committed feature flag defaults, merged into config.json at deploy time

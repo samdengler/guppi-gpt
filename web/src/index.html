@@ -12,6 +12,17 @@
   <header class="app-header">
     <span class="brand">GuppiGPT</span>
     <div class="header-actions">
+      <div class="history" hidden id="history-wrap">
+        <button id="history-btn" type="button" class="text-btn" aria-haspopup="true" aria-expanded="false">Chats</button>
+        <div id="history-panel" class="history-panel" hidden>
+          <div class="history-panel-head">
+            <span class="history-panel-title">Chats</span>
+            <button id="clear-history-btn" type="button" class="text-btn small">Clear all</button>
+          </div>
+          <ul id="history-list" class="history-list"></ul>
+          <p id="history-empty" class="history-empty" hidden>No saved chats yet.</p>
+        </div>
+      </div>
       <button id="new-chat-btn" type="button" class="text-btn" hidden>New chat</button>
       <div class="account" hidden id="account-wrap">
         <button id="account-btn" type="button" class="initials-btn" aria-haspopup="true" aria-expanded="false"></button>
@@ -36,7 +47,7 @@
     <div id="thread-wrap" class="thread-wrap">
       <div id="empty-state" class="empty-state" hidden>
         <h2 class="empty-title">What can I help with?</h2>
-        <p class="empty-copy">Ask anything. This conversation is not saved.</p>
+        <p id="empty-copy" class="empty-copy">Ask anything. This conversation is not saved.</p>
       </div>
       <div id="thread" class="thread" aria-live="polite"></div>
       <button id="jump-latest-btn" type="button" class="jump-latest" hidden>Jump to latest</button>
@@ -46,7 +57,7 @@
       <textarea id="composer-input" class="composer-input" placeholder="Ask GuppiGPT" rows="1"></textarea>
       <button id="send-btn" type="submit" class="send-btn" aria-label="Send message" disabled>&uarr;</button>
     </form>
-    <p class="hint">Enter to send, Shift+Enter for a new line. Nothing is saved.</p>
+    <p id="composer-hint" class="hint">Enter to send, Shift+Enter for a new line. Nothing is saved.</p>
 
   </section>
 
