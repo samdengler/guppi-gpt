@@ -66,6 +66,52 @@ body {
 }
 .text-btn:hover { color: var(--fg); }
 
+.text-btn.small { font-size: .78rem; padding: .1rem .2rem; }
+
+.history { position: relative; }
+
+.history-panel {
+  position: absolute; left: 0; top: 2.5rem; z-index: 10;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: .5rem; padding: .6rem; width: 17rem; max-width: 80vw;
+  box-shadow: 0 .25rem .75rem rgba(0, 0, 0, .15);
+}
+
+.history-panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: 0 0 .4rem; font-size: .85rem; font-weight: 600;
+}
+
+.history-list {
+  list-style: none; margin: 0; padding: 0;
+  max-height: 16rem; overflow-y: auto;
+  display: flex; flex-direction: column; gap: .2rem;
+}
+
+.history-item { display: flex; align-items: stretch; gap: .25rem; }
+
+.history-item-open {
+  flex: 1; min-width: 0; text-align: left;
+  background: none; border: none; border-radius: .4rem;
+  color: var(--fg); font: inherit; cursor: pointer;
+  padding: .35rem .4rem; display: flex; flex-direction: column; gap: .05rem;
+}
+.history-item-open:hover, .history-item.active .history-item-open { background: var(--bubble-user); }
+
+.history-item-title {
+  font-size: .85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.history-item-date { font-size: .72rem; color: var(--muted); }
+
+.history-item-delete {
+  background: none; border: none; color: var(--muted);
+  font: inherit; font-size: 1rem; line-height: 1; cursor: pointer;
+  padding: 0 .3rem; border-radius: .3rem;
+}
+.history-item-delete:hover { color: var(--danger); }
+
+.history-empty { color: var(--muted); font-size: .82rem; margin: .25rem .2rem; }
+
 .account { position: relative; }
 
 .initials-btn {

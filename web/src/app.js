@@ -1,9 +1,16 @@
 import { HttpAgent } from "@ag-ui/client";
+import * as chatHistory from "./history.js";
 
 (async () => {
   const $ = (id) => document.getElementById(id);
 
   const newChatBtn = $("new-chat-btn");
+  const historyWrap = $("history-wrap");
+  const historyBtn = $("history-btn");
+  const historyPanel = $("history-panel");
+  const historyList = $("history-list");
+  const historyEmpty = $("history-empty");
+  const clearHistoryBtn = $("clear-history-btn");
   const accountWrap = $("account-wrap");
   const accountBtn = $("account-btn");
   const accountMenu = $("account-menu");
@@ -38,6 +45,115 @@ import { HttpAgent } from "@ag-ui/client";
   let status = "idle-empty"; // idle-empty | idle | running | error
   let userScrolledUp = false;
   let lastFailedTurn = null; // {messageList, refs}, set on error, used by Retry
+
+  // ---- Local history: thread text only, stored in IndexedDB, never the tokens above ----
+  let threadCreatedAt = Date.now();
+  let threadTitle = null;
+  let historyThreads = [];   // cache of the list shown in the history panel
+
+  function titleFor(text) {
+    const collapsed = text.replace(/\s+/g, " ").trim();
+    if (!collapsed) return "New chat";
+    return collapsed.length > 60 ? `${collapsed.slice(0, 59)}…` : collapsed;
+  }
+
+  function formatWhen(epochMs) {
+    return new Date(epochMs).toLocaleString(undefined, {
+      month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+    });
+  }
+
+  async function persistCurrentThread() {
+    if (messages.length === 0) return; // an empty thread is not worth a record
+    if (!threadTitle) threadTitle = titleFor(messages[0].content);
+    const thread = {
+      id: threadId,
+      title: threadTitle,
+      createdAt: threadCreatedAt,
+      updatedAt: Date.now(),
+      messages: messages.map(({ id, role, content }) => ({ id, role, content })),
+    };
+    try {
+      await chatHistory.putThread(thread);
+    } catch (error) {
+      // IndexedDB unavailable (private mode, quota, disabled storage); the thread still
+      // works for this page load, it just will not resume next time.
+    }
+  }
+
+  function hydrateThread() {
+    threadEl.textContent = "";
+    for (let i = 0; i < messages.length; i++) {
+      const message = messages[i];
+      if (message.role !== "user") continue;
+      const refs = addTurn(message.content);
+      const next = messages[i + 1];
+      if (next && next.role === "assistant") {
+        refs.text.textContent = next.content;
+        i++;
+      }
+    }
+  }
+
+  function switchToThread(thread) {
+    threadId = thread.id;
+    threadCreatedAt = thread.createdAt;
+    threadTitle = thread.title;
+    messages = thread.messages.map(({ id, role, content }) => ({ id, role, content }));
+    status = messages.length > 0 ? "idle" : "idle-empty";
+    lastFailedTurn = null;
+    hydrateThread();
+    historyPanel.hidden = true;
+    render();
+    scrollToBottom();
+  }
+
+  async function renderHistoryList() {
+    try {
+      historyThreads = await chatHistory.listThreads();
+    } catch (error) {
+      historyThreads = [];
+    }
+    historyList.textContent = "";
+    historyEmpty.hidden = historyThreads.length > 0;
+    for (const thread of historyThreads) {
+      const item = document.createElement("li");
+      item.className = "history-item";
+      if (thread.id === threadId) item.classList.add("active");
+      item.dataset.id = thread.id;
+
+      const openBtn = document.createElement("button");
+      openBtn.type = "button";
+      openBtn.className = "history-item-open";
+      const titleSpan = document.createElement("span");
+      titleSpan.className = "history-item-title";
+      titleSpan.textContent = thread.title || "New chat";
+      const dateSpan = document.createElement("span");
+      dateSpan.className = "history-item-date";
+      dateSpan.textContent = formatWhen(thread.updatedAt);
+      openBtn.append(titleSpan, dateSpan);
+
+      const deleteBtn = document.createElement("button");
+      deleteBtn.type = "button";
+      deleteBtn.className = "history-item-delete";
+      deleteBtn.setAttribute("aria-label", "Delete this chat");
+      deleteBtn.textContent = "×";
+
+      item.append(openBtn, deleteBtn);
+      historyList.appendChild(item);
+    }
+  }
+
+  async function resumeHistory() {
+    try {
+      const newest = await chatHistory.newestThread();
+      if (newest && newest.messages && newest.messages.length > 0) {
+        switchToThread(newest);
+      }
+    } catch (error) {
+      // No stored thread, or IndexedDB unavailable; start from the empty state as before.
+    }
+  }
 
   function newSessionId() {
     // The runtime session id header must be at least 33 characters.
@@ -129,14 +245,22 @@ import { HttpAgent } from "@ag-ui/client";
     accountEmail.textContent = claims.email || claims.sub;
     accountWrap.hidden = false;
     newChatBtn.hidden = false;
+    historyWrap.hidden = false;
     signinScreen.hidden = true;
     chatScreen.hidden = false;
   }
 
-  function signOut() {
+  async function signOut() {
     Object.keys(tokens).forEach((key) => delete tokens[key]);
     tokenExpiresAt = 0;
     auth = "anonymous";
+    // The page stores nothing tied to the account, but a shared machine is the risk a
+    // saved thread creates, so signing out clears every stored thread with it.
+    try {
+      await chatHistory.clearAll();
+    } catch (error) {
+      // Storage was unavailable to begin with; there is nothing to clear.
+    }
     const params = new URLSearchParams({
       client_id: config.userPoolClientId,
       logout_uri: config.siteUrl,
@@ -153,16 +277,23 @@ import { HttpAgent } from "@ag-ui/client";
     input.placeholder = messages.length > 0 ? "Reply to GuppiGPT" : "Ask GuppiGPT";
   }
 
-  function resetThread() {
+  function clearThreadState() {
     messages = [];
     threadId = crypto.randomUUID();
+    threadCreatedAt = Date.now();
+    threadTitle = null;
     status = "idle-empty";
     lastFailedTurn = null;
     threadEl.textContent = "";
     input.value = "";
     autosize();
-    accountMenu.hidden = true;
     render();
+  }
+
+  function resetThread() {
+    clearThreadState();
+    accountMenu.hidden = true;
+    historyPanel.hidden = true;
   }
 
   // ---- Thread rendering ----
@@ -279,11 +410,50 @@ import { HttpAgent } from "@ag-ui/client";
       accountMenu.hidden = true;
       accountBtn.setAttribute("aria-expanded", "false");
     }
+    if (!historyWrap.contains(event.target)) {
+      historyPanel.hidden = true;
+      historyBtn.setAttribute("aria-expanded", "false");
+    }
   });
 
   signOutLink.addEventListener("click", (event) => {
     event.preventDefault();
     signOut();
+  });
+
+  historyBtn.addEventListener("click", async () => {
+    const open = historyPanel.hidden;
+    historyPanel.hidden = !open;
+    historyBtn.setAttribute("aria-expanded", String(open));
+    if (open) await renderHistoryList();
+  });
+
+  historyList.addEventListener("click", async (event) => {
+    const item = event.target.closest(".history-item");
+    if (!item) return;
+    const id = item.dataset.id;
+    if (event.target.closest(".history-item-delete")) {
+      try {
+        await chatHistory.deleteThread(id);
+      } catch (error) {
+        // Nothing to remove; the panel refresh below reflects whatever remains.
+      }
+      if (id === threadId) clearThreadState();
+      await renderHistoryList();
+      return;
+    }
+    const thread = historyThreads.find((t) => t.id === id);
+    if (thread) switchToThread(thread);
+  });
+
+  clearHistoryBtn.addEventListener("click", async () => {
+    try {
+      await chatHistory.clearAll();
+    } catch (error) {
+      // Nothing to clear.
+    }
+    clearThreadState();
+    await renderHistoryList();
   });
 
   googleBtn.addEventListener("click", startSignIn);
@@ -293,6 +463,7 @@ import { HttpAgent } from "@ag-ui/client";
   async function send(text) {
     const userMessage = { id: crypto.randomUUID(), role: "user", content: text };
     messages.push(userMessage);
+    await persistCurrentThread();
     const refs = addTurn(text);
     scrollIfFollowing();
     await runTurn(messages.slice(), refs);
@@ -410,6 +581,7 @@ import { HttpAgent } from "@ag-ui/client";
     }
     refs.text.textContent = draft;
     messages.push({ id: crypto.randomUUID(), role: "assistant", content: draft });
+    await persistCurrentThread();
     status = "idle";
     render();
   }
@@ -421,6 +593,7 @@ import { HttpAgent } from "@ag-ui/client";
     try {
       await finishSignIn(code);
       showChat();
+      await resumeHistory();
       render();
       return;
     } catch (error) {
