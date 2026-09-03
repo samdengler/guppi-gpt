@@ -35,6 +35,8 @@ web/
   index.html              # the page; reads config.json written by deploy.sh
 scripts/
   deploy.sh
+  seed-content.sh         # clone the docs repositories at pinned revisions, sync Markdown to S3
+  ingest.sh               # StartIngestionJob and wait
 ```
 
 ## Rules
@@ -65,6 +67,12 @@ uv run -- ruff check .
 (`op://Personal/GuppiGPT Google OAuth/...`, an API Credential item whose `username` is the client id and `credential` is the client secret), runs `cdk deploy` with them as parameters,
 writes `web/config.json` from the stack outputs, syncs `web/` to the site bucket, and
 invalidates CloudFront. Deploys run on Sam's Mac; the Docker image is built there for arm64.
+
+The knowledge base corpus is refreshed by `scripts/seed-content.sh` (three docs repositories
+at revisions pinned in the script, Markdown only, `aws s3 sync --delete` to `docs/<source>/`
+in the content bucket) followed by `scripts/ingest.sh`. A scheduler runs the same ingestion
+nightly. The tools gateway target is named `docs`, so the MCP tools are `docs___Retrieve` and
+`docs___AgenticRetrieveStream`.
 
 Two context keys exist for experiments and default off: `-c bind_runtime_to_gateway=true`
 adds `allowedWorkloadConfiguration` to the runtime authorizer, and

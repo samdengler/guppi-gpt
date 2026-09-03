@@ -24,6 +24,9 @@ from aws_cdk import (
     SecretValue,
 )
 from aws_cdk import (
+    aws_bedrock as bedrock,
+)
+from aws_cdk import (
     aws_bedrockagentcore as agentcore,
 )
 from aws_cdk import (
@@ -34,6 +37,9 @@ from aws_cdk import (
 )
 from aws_cdk import (
     aws_cloudfront_origins as origins,
+)
+from aws_cdk import (
+    aws_cloudwatch as cloudwatch,
 )
 from aws_cdk import (
     aws_cognito as cognito,
@@ -53,6 +59,12 @@ from aws_cdk import (
 from aws_cdk import (
     aws_s3 as s3,
 )
+from aws_cdk import (
+    aws_scheduler as scheduler,
+)
+from aws_cdk import (
+    aws_scheduler_targets as scheduler_targets,
+)
 from constructs import Construct
 
 ZONE_NAME = "dengler.io"
@@ -68,6 +80,11 @@ RUNTIME_NAME = "guppi_gpt"
 GATEWAY_NAME = "guppi-gpt-edge"
 TARGET_NAME = "api"  # makes the gateway path /api/invocations, matching the /api/* behavior
 SESSION_HEADER = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
+TOOLS_GATEWAY_NAME = "guppi-gpt-tools"
+KB_TARGET_NAME = "docs"  # tools are named docs___Retrieve and docs___AgenticRetrieveStream
+KB_NAME = "guppi-gpt-docs"
+CONTENT_PREFIX = "docs/"  # scripts/seed-content.sh writes docs/<source>/... to the content bucket
+RETRIEVE_RESULTS = 5
 ORIGIN_RESPONSE_TIMEOUT = Duration.seconds(60)
 CLOUDFRONT_HOSTED_ZONE_ID = "Z2FDTNDATAQYW2"  # the same for every CloudFront distribution
 
@@ -392,6 +409,221 @@ class GuppiGptStack(cdk.Stack):
                 target=route53.RecordTarget.from_alias(targets.CloudFrontTarget(distribution)),
             )
 
+        # ---- Knowledge base ------------------------------------------------------------
+        content_bucket = s3.Bucket(
+            self,
+            "ContentBucket",
+            versioned=True,
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            enforce_ssl=True,
+            removal_policy=RemovalPolicy.RETAIN,
+        )
+        kb_role = iam.Role(
+            self,
+            "KnowledgeBaseRole",
+            assumed_by=iam.ServicePrincipal(
+                "bedrock.amazonaws.com",
+                conditions={
+                    "StringEquals": {"aws:SourceAccount": self.account},
+                    "ArnLike": {
+                        "aws:SourceArn": (
+                            f"arn:aws:bedrock:{self.region}:{self.account}:knowledge-base/*"
+                        )
+                    },
+                },
+            ),
+            description="Lets the managed knowledge base list and read the content bucket",
+        )
+        content_bucket.grant_read(kb_role)
+        knowledge_base = bedrock.CfnKnowledgeBase(
+            self,
+            "KnowledgeBase",
+            name=KB_NAME,
+            description="MCP, Strands Agents, and AG-UI documentation",
+            role_arn=kb_role.role_arn,
+            knowledge_base_configuration=bedrock.CfnKnowledgeBase.KnowledgeBaseConfigurationProperty(
+                type="MANAGED",
+                managed_knowledge_base_configuration=(
+                    bedrock.CfnKnowledgeBase.ManagedKnowledgeBaseConfigurationProperty(
+                        embedding_model_type="MANAGED"
+                    )
+                ),
+            ),
+        )
+        knowledge_base.node.add_dependency(kb_role)
+        # Deletion protection is off so that a seed run that renames or removes many files
+        # is mirrored by the next ingestion instead of being skipped past a threshold.
+        data_source = bedrock.CfnDataSource(
+            self,
+            "ContentSource",
+            name="content-bucket",
+            description="Markdown synced by scripts/seed-content.sh",
+            knowledge_base_id=knowledge_base.attr_knowledge_base_id,
+            data_deletion_policy="DELETE",
+            data_source_configuration=bedrock.CfnDataSource.DataSourceConfigurationProperty(
+                type="MANAGED_KNOWLEDGE_BASE_CONNECTOR",
+                managed_knowledge_base_connector_configuration=(
+                    bedrock.CfnDataSource.ManagedKnowledgeBaseConnectorConfigurationProperty(
+                        connector_parameters={
+                            "type": "S3",
+                            "version": "1",
+                            "connectionConfiguration": {
+                                "bucketName": content_bucket.bucket_name,
+                                "bucketOwnerAccountId": self.account,
+                            },
+                            "filterConfiguration": {"inclusionPrefixes": [CONTENT_PREFIX]},
+                        },
+                        deletion_protection_configuration=(
+                            bedrock.CfnDataSource.DeletionProtectionConfigurationProperty(
+                                deletion_protection_status="DISABLED"
+                            )
+                        ),
+                    )
+                ),
+            ),
+        )
+
+        # Nightly incremental ingestion as a scheduler universal target: the SDK call is
+        # scheduler configuration, with no function between the schedule and the API.
+        ingestion = scheduler.Schedule(
+            self,
+            "NightlyIngestion",
+            description="Incremental ingestion of the content bucket into the knowledge base",
+            schedule=scheduler.ScheduleExpression.cron(minute="0", hour="9"),
+            target=scheduler_targets.Universal(
+                service="bedrockagent",  # SDK client name: aws-sdk:bedrockagent:startIngestionJob
+                action="startIngestionJob",
+                input=scheduler.ScheduleTargetInput.from_object(
+                    {
+                        "KnowledgeBaseId": knowledge_base.attr_knowledge_base_id,
+                        "DataSourceId": data_source.attr_data_source_id,
+                    }
+                ),
+                policy_statements=[
+                    iam.PolicyStatement(
+                        actions=["bedrock:StartIngestionJob"],
+                        resources=[knowledge_base.attr_knowledge_base_arn],
+                    )
+                ],
+            ),
+        )
+        cloudwatch.Alarm(
+            self,
+            "IngestionScheduleErrors",
+            alarm_description="The nightly StartIngestionJob call failed",
+            metric=scheduler.Schedule.metric_all_errors(period=Duration.days(1)),
+            threshold=1,
+            evaluation_periods=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
+        )
+
+        # ---- Tools gateway -------------------------------------------------------------
+        tools_gateway_role = iam.Role(
+            self,
+            "ToolsGatewayRole",
+            assumed_by=iam.ServicePrincipal(
+                "bedrock-agentcore.amazonaws.com",
+                conditions={
+                    "StringEquals": {"aws:SourceAccount": self.account},
+                    "ArnLike": {
+                        "aws:SourceArn": (
+                            f"arn:aws:bedrock-agentcore:{self.region}:{self.account}:gateway/*"
+                        )
+                    },
+                },
+            ),
+            description="Lets the tools gateway retrieve from the GuppiGPT knowledge base",
+        )
+        tools_gateway_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["bedrock:GetKnowledgeBase", "bedrock:Retrieve"],
+                resources=[knowledge_base.attr_knowledge_base_arn],
+            )
+        )
+        # AgenticRetrieveStream is not resource-scoped; the gateway target validation asks for it.
+        tools_gateway_role.add_to_policy(
+            iam.PolicyStatement(actions=["bedrock:AgenticRetrieveStream"], resources=["*"])
+        )
+        tools_gateway = agentcore.CfnGateway(
+            self,
+            "ToolsGateway",
+            name=TOOLS_GATEWAY_NAME,
+            description="GuppiGPT tools: the knowledge base as MCP tools, user JWT inbound",
+            role_arn=tools_gateway_role.role_arn,
+            protocol_type="MCP",
+            authorizer_type="CUSTOM_JWT",
+            authorizer_configuration=agentcore.CfnGateway.AuthorizerConfigurationProperty(
+                custom_jwt_authorizer=agentcore.CfnGateway.CustomJWTAuthorizerConfigurationProperty(
+                    discovery_url=discovery_url,
+                    allowed_clients=jwt_allowed_clients,
+                )
+            ),
+            exception_level="DEBUG",
+        )
+        kb_target = agentcore.CfnGatewayTarget(
+            self,
+            "KnowledgeBaseTarget",
+            gateway_identifier=tools_gateway.attr_gateway_identifier,
+            name=KB_TARGET_NAME,
+            description="GuppiGPT documentation knowledge base",
+            target_configuration=agentcore.CfnGatewayTarget.TargetConfigurationProperty(
+                mcp=agentcore.CfnGatewayTarget.McpTargetConfigurationProperty(
+                    connector=agentcore.CfnGatewayTarget.ConnectorTargetConfigurationProperty(
+                        source=agentcore.CfnGatewayTarget.ConnectorSourceProperty(
+                            connector_id="bedrock-knowledge-bases"
+                        ),
+                        configurations=[
+                            agentcore.CfnGatewayTarget.ConnectorConfigurationProperty(
+                                name="Retrieve",
+                                description=(
+                                    "Search the MCP, Strands Agents, and AG-UI documentation "
+                                    "and return the most relevant passages."
+                                ),
+                                parameter_values={
+                                    "knowledgeBaseId": knowledge_base.attr_knowledge_base_id,
+                                    "retrievalConfiguration": {
+                                        "managedSearchConfiguration": {
+                                            "numberOfResults": RETRIEVE_RESULTS
+                                        }
+                                    },
+                                },
+                            ),
+                            agentcore.CfnGatewayTarget.ConnectorConfigurationProperty(
+                                name="AgenticRetrieveStream",
+                                parameter_values={
+                                    "retrievers": [
+                                        {
+                                            "description": "MCP, Strands Agents, and AG-UI docs",
+                                            "configuration": {
+                                                "knowledgeBase": {
+                                                    "knowledgeBaseId": (
+                                                        knowledge_base.attr_knowledge_base_id
+                                                    )
+                                                }
+                                            },
+                                        }
+                                    ],
+                                    "agenticRetrieveConfiguration": {
+                                        "foundationModelType": "MANAGED",
+                                        "rerankingModelType": "MANAGED",
+                                    },
+                                },
+                            ),
+                        ],
+                    )
+                )
+            ),
+            credential_provider_configurations=[
+                agentcore.CfnGatewayTarget.CredentialProviderConfigurationProperty(
+                    credential_provider_type="GATEWAY_IAM_ROLE"
+                )
+            ],
+        )
+        kb_target.node.add_dependency(tools_gateway_role)
+        kb_target.node.add_dependency(data_source)
+
         # ---- Outputs -------------------------------------------------------------------
         cdk.CfnOutput(self, "SiteUrl", value=SITE_URL)
         cdk.CfnOutput(self, "SiteBucketName", value=site_bucket.bucket_name)
@@ -403,6 +635,11 @@ class GuppiGptStack(cdk.Stack):
         cdk.CfnOutput(self, "GatewayArn", value=gateway.attr_gateway_arn)
         cdk.CfnOutput(self, "RuntimeArn", value=runtime.attr_agent_runtime_arn)
         cdk.CfnOutput(self, "RuntimeProtocol", value=protocol)
+        cdk.CfnOutput(self, "ContentBucketName", value=content_bucket.bucket_name)
+        cdk.CfnOutput(self, "KnowledgeBaseId", value=knowledge_base.attr_knowledge_base_id)
+        cdk.CfnOutput(self, "DataSourceId", value=data_source.attr_data_source_id)
+        cdk.CfnOutput(self, "ToolsGatewayUrl", value=tools_gateway.attr_gateway_url)
+        cdk.CfnOutput(self, "IngestionScheduleName", value=ingestion.schedule_name)
 
     def _runtime_role(self) -> iam.Role:
         """Execution role for the runtime, following the AgentCore documented policy."""
