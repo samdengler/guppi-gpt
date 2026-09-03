@@ -4,182 +4,53 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GuppiGPT</title>
-<style>
-  :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
-  body { max-width: 48rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.45; }
-  header { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
-  h1 { font-size: 1.25rem; margin: 0; }
-  #thread { margin: 1.5rem 0; }
-  .msg { padding: .5rem .75rem; border-radius: .5rem; margin: .5rem 0; white-space: pre-wrap; }
-  .user { background: color-mix(in srgb, CanvasText 8%, Canvas); }
-  .assistant { background: color-mix(in srgb, CanvasText 4%, Canvas); }
-  form { display: grid; grid-template-columns: 1fr auto; gap: .5rem; }
-  textarea { grid-column: 1 / -1; font: inherit; padding: .5rem; min-height: 4rem; }
-  label.small { font-size: .85rem; opacity: .8; }
-  input[type=number] { width: 5rem; }
-  #status { font-size: .85rem; opacity: .8; min-height: 1.2rem; }
-  pre#log { font-size: .75rem; max-height: 14rem; overflow: auto; opacity: .7; }
-  [hidden] { display: none !important; }
-</style>
+<link rel="stylesheet" href="app.css">
 </head>
 <body>
-<header>
-  <h1>GuppiGPT <small>spike</small></h1>
-  <span id="who"></span>
-</header>
+<div class="page">
 
-<section id="signin" hidden>
-  <p>Sign in to talk to Guppi.</p>
-  <button id="google">Continue with Google</button>
-</section>
+  <header class="app-header">
+    <span class="brand">GuppiGPT</span>
+    <div class="header-actions">
+      <button id="new-chat-btn" type="button" class="text-btn" hidden>New chat</button>
+      <div class="account" hidden id="account-wrap">
+        <button id="account-btn" type="button" class="initials-btn" aria-haspopup="true" aria-expanded="false"></button>
+        <div id="account-menu" class="account-menu" hidden>
+          <p id="account-email" class="account-email"></p>
+          <a id="sign-out-link" href="#" class="sign-out-link">Sign out</a>
+        </div>
+      </div>
+    </div>
+  </header>
 
-<section id="chat" hidden>
-  <div id="thread"></div>
-  <form id="composer">
-    <textarea id="input" placeholder="Say something" required></textarea>
-    <label class="small">Silent seconds <input type="number" id="silent" value="0" min="0" max="300"></label>
-    <button id="send" type="submit">Send</button>
-  </form>
-  <p id="status"></p>
-  <details><summary>Event log</summary><pre id="log"></pre></details>
-</section>
+  <section id="signin-screen" class="signin-screen" hidden>
+    <div class="signin-card">
+      <h1 class="signin-title">GuppiGPT</h1>
+      <p class="signin-copy">Sign in to start a conversation.</p>
+      <button id="google-signin-btn" type="button" class="primary-btn">Continue with Google</button>
+    </div>
+  </section>
 
-<script>
-(async () => {
-  const $ = (id) => document.getElementById(id);
-  const config = await (await fetch("config.json", { cache: "no-store" })).json();
-  const authBase = `https://${config.authDomain}`;
-  const redirectUri = config.siteUrl;
-  const tokens = {};                       // page memory only, never persisted
-  const sessionId = crypto.randomUUID() + "-" + crypto.randomUUID(); // runtime wants >= 33 chars
-  const messages = [];
+  <section id="chat-screen" class="chat-screen" hidden>
 
-  const b64url = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)))
-    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  const randomString = () => b64url(crypto.getRandomValues(new Uint8Array(32)));
-  const sha256 = async (text) => crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  const decodeJwt = (jwt) => JSON.parse(atob(jwt.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
-  const log = (line) => { $("log").textContent += line + "\n"; };
+    <div id="thread-wrap" class="thread-wrap">
+      <div id="empty-state" class="empty-state" hidden>
+        <h2 class="empty-title">What can I help with?</h2>
+        <p class="empty-copy">Ask anything. This conversation is not saved.</p>
+      </div>
+      <div id="thread" class="thread" aria-live="polite"></div>
+      <button id="jump-latest-btn" type="button" class="jump-latest" hidden>Jump to latest</button>
+    </div>
 
-  async function startSignIn() {
-    const verifier = randomString();
-    sessionStorage.setItem("pkce_verifier", verifier);
-    const params = new URLSearchParams({
-      client_id: config.userPoolClientId,
-      response_type: "code",
-      scope: "openid email profile",
-      redirect_uri: redirectUri,
-      identity_provider: "Google",
-      code_challenge_method: "S256",
-      code_challenge: b64url(await sha256(verifier)),
-    });
-    location.assign(`${authBase}/oauth2/authorize?${params}`);
-  }
+    <form id="composer-form" class="composer">
+      <textarea id="composer-input" class="composer-input" placeholder="Ask GuppiGPT" rows="1"></textarea>
+      <button id="send-btn" type="submit" class="send-btn" aria-label="Send message" disabled>&uarr;</button>
+    </form>
+    <p class="hint">Enter to send, Shift+Enter for a new line. Nothing is saved.</p>
 
-  async function finishSignIn(code) {
-    const verifier = sessionStorage.getItem("pkce_verifier") || "";
-    sessionStorage.removeItem("pkce_verifier");
-    const body = new URLSearchParams({
-      grant_type: "authorization_code",
-      client_id: config.userPoolClientId,
-      code, redirect_uri: redirectUri, code_verifier: verifier,
-    });
-    const response = await fetch(`${authBase}/oauth2/token`, {
-      method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body,
-    });
-    if (!response.ok) throw new Error(`token exchange failed: ${response.status}`);
-    Object.assign(tokens, await response.json());
-    history.replaceState(null, "", location.pathname);
-  }
+  </section>
 
-  function showChat() {
-    const claims = decodeJwt(tokens.id_token);
-    $("who").textContent = claims.email || claims.sub;
-    $("signin").hidden = true;
-    $("chat").hidden = false;
-  }
-
-  function addMessage(role, text) {
-    const div = document.createElement("div");
-    div.className = `msg ${role}`;
-    div.textContent = text;
-    $("thread").appendChild(div);
-    return div;
-  }
-
-  async function run(text) {
-    messages.push({ id: crypto.randomUUID(), role: "user", content: text });
-    addMessage("user", text);
-    const reply = addMessage("assistant", "");
-    const runId = crypto.randomUUID();
-    $("status").textContent = "connecting";
-    $("send").disabled = true;
-    const started = performance.now();
-    let last = started;
-    try {
-      const response = await fetch("/api/invocations", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: "text/event-stream",
-          authorization: `Bearer ${tokens.access_token}`,
-          "x-amzn-bedrock-agentcore-runtime-session-id": sessionId,
-        },
-        body: JSON.stringify({
-          threadId: sessionId, runId, messages, tools: [], context: [], state: {},
-          forwardedProps: { silentSeconds: Number($("silent").value) || 0 },
-        }),
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let assistantText = "";
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let index;
-        while ((index = buffer.indexOf("\n\n")) >= 0) {
-          const chunk = buffer.slice(0, index); buffer = buffer.slice(index + 2);
-          for (const line of chunk.split("\n")) {
-            if (!line.startsWith("data:")) continue;
-            const event = JSON.parse(line.slice(5));
-            const now = performance.now();
-            log(`+${((now - started) / 1000).toFixed(2)}s (gap ${((now - last) / 1000).toFixed(2)}s) ${event.type}${event.name ? " " + event.name : ""}`);
-            last = now;
-            if (event.type === "TEXT_MESSAGE_CONTENT") { assistantText += event.delta; reply.textContent = assistantText; }
-            if (event.type === "RUN_STARTED") $("status").textContent = "running";
-            if (event.type === "RUN_ERROR") throw new Error(event.message);
-          }
-        }
-      }
-      messages.push({ id: crypto.randomUUID(), role: "assistant", content: assistantText });
-      $("status").textContent = `done in ${((performance.now() - started) / 1000).toFixed(1)}s`;
-    } catch (error) {
-      $("status").textContent = `error: ${error.message}`;
-      log(`ERROR ${error.message}`);
-    } finally {
-      $("send").disabled = false;
-    }
-  }
-
-  $("google").onclick = startSignIn;
-  $("composer").onsubmit = (event) => {
-    event.preventDefault();
-    const text = $("input").value.trim();
-    if (!text) return;
-    $("input").value = "";
-    run(text);
-  };
-
-  const code = new URLSearchParams(location.search).get("code");
-  if (code) {
-    try { await finishSignIn(code); showChat(); return; }
-    catch (error) { log(`ERROR ${error.message}`); }
-  }
-  $("signin").hidden = false;
-})();
-</script>
+</div>
+<script src="app.js"></script>
 </body>
 </html>

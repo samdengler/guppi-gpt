@@ -197,6 +197,135 @@ def test_nightly_ingestion_is_a_scheduler_universal_target(template):
     )
 
 
+def test_web_acl_has_three_count_rules_associated_with_the_edge_gateway(template):
+    acls = template.find_resources("AWS::WAFv2::WebACL")
+    (acl,) = acls.values()
+    assert acl["Properties"]["Scope"] == "REGIONAL"
+    rules = acl["Properties"]["Rules"]
+    assert len(rules) == 3
+    names = {rule["Name"] for rule in rules}
+    assert names == {"CloudFrontOnly", "AWSManagedRulesCommonRuleSet", "RateLimit"}
+    for rule in rules:
+        if rule["Name"] == "AWSManagedRulesCommonRuleSet":
+            assert rule["OverrideAction"] == {"Count": {}}
+        else:
+            assert rule["Action"] == {"Count": {}}
+    template.has_resource_properties(
+        "AWS::WAFv2::WebACLAssociation",
+        {
+            "ResourceArn": {
+                "Fn::GetAtt": [Match.string_like_regexp("EdgeGateway.*"), "GatewayArn"]
+            },
+        },
+    )
+
+
+def test_cloudfront_gateway_origin_carries_the_origin_verify_header(template):
+    rendered = json.dumps(template.to_json())
+    assert "X-Origin-Verify" in rendered
+    origins = template.find_resources("AWS::CloudFront::Distribution")
+    (distribution,) = origins.values()
+    custom_origins = [
+        origin
+        for origin in distribution["Properties"]["DistributionConfig"]["Origins"]
+        if "CustomOriginConfig" in origin
+    ]
+    (gateway_origin,) = custom_origins
+    (header,) = gateway_origin["OriginCustomHeaders"]
+    assert header["HeaderName"] == "X-Origin-Verify"
+    assert "resolve:secretsmanager" in json.dumps(header["HeaderValue"])
+
+
+def test_response_headers_policy_has_the_csp_and_is_on_the_default_behavior(template):
+    policies = template.find_resources("AWS::CloudFront::ResponseHeadersPolicy")
+    (policy_id, policy) = next(iter(policies.items()))
+    csp = policy["Properties"]["ResponseHeadersPolicyConfig"]["SecurityHeadersConfig"][
+        "ContentSecurityPolicy"
+    ]["ContentSecurityPolicy"]
+    assert csp == (
+        "default-src 'self'; connect-src 'self' https://auth.dengler.io; "
+        "img-src 'self' data:; style-src 'self'; script-src 'self'; "
+        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    )
+    template.has_resource_properties(
+        "AWS::CloudFront::Distribution",
+        {
+            "DistributionConfig": Match.object_like(
+                {
+                    "DefaultCacheBehavior": Match.object_like(
+                        {"ResponseHeadersPolicyId": {"Ref": policy_id}}
+                    )
+                }
+            )
+        },
+    )
+
+
+def test_billing_alarm_has_the_cost_limit_and_the_alarm_topic(template):
+    alarms = template.find_resources("AWS::CloudWatch::Alarm")
+    (alarm,) = [a for a in alarms.values() if a["Properties"]["MetricName"] == "EstimatedCharges"]
+    props = alarm["Properties"]
+    assert props["Namespace"] == "AWS/Billing"
+    assert props["Dimensions"] == [{"Name": "Currency", "Value": "USD"}]
+    assert props["Threshold"] == 50
+    assert len(props["AlarmActions"]) == 1
+
+
+def test_alarm_email_subscription_is_conditional(template):
+    template.has_parameter("AlarmEmail", {"Default": ""})
+    subscriptions = template.find_resources("AWS::SNS::Subscription")
+    (subscription,) = subscriptions.values()
+    assert subscription["Properties"]["Protocol"] == "email"
+    assert "Condition" in subscription
+    conditions = template.to_json().get("Conditions", {})
+    assert subscription["Condition"] in conditions
+
+
+def test_runtime_environment_variables_point_at_the_tools_gateway(template):
+    template.has_resource_properties(
+        "AWS::BedrockAgentCore::Runtime",
+        {
+            "EnvironmentVariables": {
+                "LOG_LEVEL": "INFO",
+                "MODEL_ID": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+                "RETRIEVE_TOOL": "docs___Retrieve",
+                "TOOLS_GATEWAY_URL": Match.any_value(),
+            }
+        },
+    )
+
+
+def test_runtime_role_grants_only_the_one_inference_profile(template):
+    template.has_resource_properties(
+        "AWS::IAM::Policy",
+        Match.object_like(
+            {
+                "PolicyDocument": {
+                    "Statement": Match.array_with(
+                        [
+                            Match.object_like(
+                                {
+                                    "Action": [
+                                        "bedrock:InvokeModel",
+                                        "bedrock:InvokeModelWithResponseStream",
+                                    ],
+                                    "Resource": [
+                                        "arn:aws:bedrock:*::foundation-model/*",
+                                        Match.string_like_regexp(
+                                            r"arn:aws:bedrock:.*:inference-profile/"
+                                            r"us\.anthropic\.claude-haiku-4-5-20251001-v1:0"
+                                        ),
+                                    ],
+                                }
+                            )
+                        ]
+                    )
+                }
+            }
+        ),
+    )
+
+
 def test_tools_gateway_is_mcp_with_cognito_jwt_and_kb_connector(template):
     template.has_resource_properties(
         "AWS::BedrockAgentCore::Gateway",
@@ -234,4 +363,11 @@ def test_tools_gateway_is_mcp_with_cognito_jwt_and_kb_connector(template):
                 }
             }
         ),
+    )
+
+
+def test_runtime_forwards_the_bearer_to_the_container(template):
+    template.has_resource_properties(
+        "AWS::BedrockAgentCore::Runtime",
+        {"RequestHeaderConfiguration": {"RequestHeaderAllowlist": ["Authorization"]}},
     )

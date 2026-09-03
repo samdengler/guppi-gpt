@@ -1,20 +1,20 @@
 """GuppiGPT agent on the AgentCore Runtime AG-UI contract.
 
-Spike stage: no model call yet. The run echoes the last user message word by word so the
-streaming path (CloudFront, edge gateway, runtime) can be exercised end to end. Two
-`forwardedProps` keys drive the timing tests:
-
-* ``silentSeconds``: stay silent for this long after RUN_STARTED, so the keepalive ping is
-  the only traffic. Used to prove that a silent stretch longer than the CloudFront origin
-  timeout survives.
-* ``wordDelay``: seconds between words (default 0.05).
+POST /invocations takes an AG-UI run input and streams AG-UI events as server-sent events;
+GET /ping reports health. Per run: read the caller's bearer token, validate and trim the
+thread, hand it to the Strands agent (agent.py) with the token forwarded to the tools
+gateway, and keep the stream alive with ping events while the model or a tool is silent.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import json
 import logging
-import uuid
+import os
+import time
 from collections.abc import AsyncIterator
 
 from ag_ui.core import (
@@ -22,18 +22,17 @@ from ag_ui.core import (
     EventType,
     RunAgentInput,
     RunErrorEvent,
-    RunFinishedEvent,
     RunStartedEvent,
-    TextMessageContentEvent,
-    TextMessageEndEvent,
-    TextMessageStartEvent,
 )
 from ag_ui.encoder import EventEncoder
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from guppi_agent import agent as agent_module
 from guppi_agent.keepalive import DEFAULT_PING_INTERVAL, with_keepalive
+from guppi_agent.validation import trim_messages, validate_run
 
+logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 log = logging.getLogger("guppi_agent")
 
 app = FastAPI(title="guppi-agent")
@@ -41,77 +40,144 @@ app = FastAPI(title="guppi-agent")
 SESSION_HEADER = "x-amzn-bedrock-agentcore-runtime-session-id"
 
 
-def last_user_text(run: RunAgentInput) -> str:
-    for message in reversed(run.messages):
-        if message.role == "user" and isinstance(message.content, str):
-            return message.content
-    return ""
+def bearer_token(request: Request) -> str | None:
+    header = request.headers.get("authorization", "")
+    scheme, _, token = header.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        return None
+    return token.strip()
 
 
-async def run_agent(run: RunAgentInput) -> AsyncIterator[BaseEvent]:
-    """Produce the AG-UI events for one run. RUN_STARTED is first, before any work."""
-    yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run.thread_id, run_id=run.run_id)
+def subject_hash(token: str) -> str:
+    """First 12 hex characters of the hashed sub claim; the token is not verified here.
 
-    props = run.forwarded_props if isinstance(run.forwarded_props, dict) else {}
-    silent = float(props.get("silentSeconds", 0) or 0)
-    word_delay = float(props.get("wordDelay", 0.05) or 0)
-
-    if silent > 0:
-        await asyncio.sleep(silent)
-
-    message_id = str(uuid.uuid4())
-    yield TextMessageStartEvent(
-        type=EventType.TEXT_MESSAGE_START, message_id=message_id, role="assistant"
-    )
-    reply = f"Guppi here. You said: {last_user_text(run) or '(nothing)'}"
-    for index, word in enumerate(reply.split(" ")):
-        delta = word if index == 0 else f" {word}"
-        yield TextMessageContentEvent(
-            type=EventType.TEXT_MESSAGE_CONTENT, message_id=message_id, delta=delta
-        )
-        if word_delay:
-            await asyncio.sleep(word_delay)
-    yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
-    yield RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=run.thread_id, run_id=run.run_id)
-
-
-async def event_stream(run: RunAgentInput, encoder: EventEncoder) -> AsyncIterator[str]:
+    The runtime validated the token before the request reached the container.
+    """
     try:
-        async for event in with_keepalive(run_agent(run), DEFAULT_PING_INTERVAL):
-            yield encoder.encode(event)
+        payload = token.split(".")[1]
+        padded = payload + "=" * (-len(payload) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(padded))
+        sub = str(claims.get("sub", ""))
+    except Exception:
+        sub = ""
+    if not sub:
+        return "unknown"
+    return hashlib.sha256(sub.encode()).hexdigest()[:12]
+
+
+def started_then_error(run: RunAgentInput, message: str, code: str) -> list[BaseEvent]:
+    return [
+        RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run.thread_id, run_id=run.run_id),
+        RunErrorEvent(type=EventType.RUN_ERROR, message=message, code=code),
+    ]
+
+
+async def run_agent(run: RunAgentInput, token: str, record: dict) -> AsyncIterator[BaseEvent]:
+    """Produce the AG-UI events for one run and fill in the log record as they pass."""
+    reason = validate_run(run)
+    if reason is not None:
+        record["outcome"] = "error"
+        for event in started_then_error(run, reason, "BAD_INPUT"):
+            yield event
+        return
+
+    messages = trim_messages(run.messages)
+    record["messages"] = len(messages)
+    run = run.model_copy(update={"messages": messages})
+
+    runner = agent_module.build_strands_agent(token)
+    started = False
+    try:
+        async for event in runner.run(run):
+            if event.type == EventType.RUN_STARTED:
+                started = True
+            elif event.type == EventType.TOOL_CALL_START:
+                record["tool_calls"] = record.get("tool_calls", 0) + 1
+            elif event.type == EventType.TEXT_MESSAGE_CONTENT and "first_delta_ms" not in record:
+                record["first_delta_ms"] = elapsed_ms(record)
+            elif event.type == EventType.RUN_ERROR:
+                record["outcome"] = "error"
+            yield event
     except Exception:
         log.exception("run failed thread=%s run=%s", run.thread_id, run.run_id)
-        yield encoder.encode(
-            RunErrorEvent(type=EventType.RUN_ERROR, message="agent run failed", code="AGENT_ERROR")
+        record["outcome"] = "error"
+        if not started:
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED, thread_id=run.thread_id, run_id=run.run_id
+            )
+        yield RunErrorEvent(
+            type=EventType.RUN_ERROR, message="agent run failed", code="AGENT_ERROR"
         )
+    finally:
+        usage = getattr(runner, "usage", None)
+        if callable(usage):
+            record.update(usage())
+
+
+def elapsed_ms(record: dict) -> int:
+    return int((time.monotonic() - record["_t0"]) * 1000)
+
+
+async def event_stream(
+    run: RunAgentInput, token: str, encoder: EventEncoder, record: dict
+) -> AsyncIterator[str]:
+    record["_t0"] = time.monotonic()
+    record.setdefault("outcome", "finished")
+    try:
+        async for event in with_keepalive(run_agent(run, token, record), DEFAULT_PING_INTERVAL):
+            yield encoder.encode(event)
+    except asyncio.CancelledError:
+        record["outcome"] = "client_disconnected"
+        raise
+    finally:
+        record["total_ms"] = elapsed_ms(record)
+        record.pop("_t0", None)
+        log.info(json.dumps(record, sort_keys=True))
 
 
 @app.post("/invocations")
 async def invocations(request: Request) -> StreamingResponse:
     body = await request.json()
     encoder = EventEncoder(accept=request.headers.get("accept"))
+    media_type = encoder.get_content_type()
     try:
         run = RunAgentInput.model_validate(body)
     except Exception as exc:
         # The contract wants errors on the stream, so a bad body still answers with SSE.
         reason = str(exc)
 
-        async def bad_input() -> AsyncIterator[str]:
+        async def bad_body() -> AsyncIterator[str]:
             yield encoder.encode(
                 RunErrorEvent(type=EventType.RUN_ERROR, message=reason, code="BAD_INPUT")
             )
 
-        return StreamingResponse(bad_input(), media_type=encoder.get_content_type())
+        return StreamingResponse(bad_body(), media_type=media_type)
 
-    log.info(
-        "run thread=%s run=%s session=%s",
-        run.thread_id,
-        run.run_id,
-        request.headers.get(SESSION_HEADER, "-"),
-    )
+    token = bearer_token(request)
+    if token is None:
+        # Header names only: the runtime forwards Authorization solely when its request
+        # header allowlist names it, and this line is what shows that it did not.
+        log.warning(
+            "no bearer token; headers present: %s", sorted(set(request.headers.keys()))
+        )
+
+        async def unauthorized() -> AsyncIterator[str]:
+            for event in started_then_error(run, "bearer token required", "UNAUTHORIZED"):
+                yield encoder.encode(event)
+
+        return StreamingResponse(unauthorized(), media_type=media_type)
+
+    record = {
+        "sub": subject_hash(token),
+        "session": request.headers.get(SESSION_HEADER, "-"),
+        "thread": run.thread_id,
+        "run": run.run_id,
+        "messages": len(run.messages),
+        "tool_calls": 0,
+    }
     return StreamingResponse(
-        event_stream(run, encoder),
-        media_type=encoder.get_content_type(),
+        event_stream(run, token, encoder, record),
+        media_type=media_type,
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 

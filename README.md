@@ -37,9 +37,20 @@ scripts/ingest.sh            # start one ingestion job and wait for it
 
 ## Status
 
-The streaming path is deployed and proven: DNS, certificates, Cognito with Google
-federation, the runtime with a hello-world AG-UI agent, the edge gateway, and CloudFront.
-The knowledge base is deployed: a content bucket, a managed knowledge base with an S3
-connector, a nightly ingestion schedule, and the tools gateway exposing `Retrieve` and
-`AgenticRetrieveStream` as MCP tools behind the same Cognito JWT. Still to come: the Strands
-agent that calls the tools gateway, the final page, WAF, and the billing alarm.
+Design steps 1 to 7 are implemented. The streaming path (DNS, certificates, Cognito with
+Google federation, the runtime, the edge gateway, CloudFront) and the knowledge base
+(content bucket, managed knowledge base, nightly ingestion, tools gateway) are deployed
+and verified. The Strands agent, the final page, the web ACL, the alarms, and the
+Content Security Policy are deployed and were verified in the browser on 3 Sep 2026: a
+question about MCP transports ran one retrieval and streamed a plain text answer in about
+six seconds, and a follow-up turn kept the context.
+
+Billing alerts were enabled in the account's billing preferences on 3 Sep 2026, so the
+estimated charges metric will exist. Flipping `WAF_BLOCK` in the stack stays manual, once
+the rules have been watched in COUNT.
+
+TODO: the alarm topic's email subscription for the address passed as `AlarmEmail` is stuck
+in PendingConfirmation. SNS sent two confirmation requests on 3 Sep 2026 and neither
+reached Gmail, spam included. Until one is confirmed no alarm delivers anywhere. Options:
+confirm from the SNS console (Subscriptions, Request confirmation), or subscribe a
+different address.

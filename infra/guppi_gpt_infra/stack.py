@@ -1,14 +1,15 @@
 """The GuppiGpt stack.
 
-Spike stage: the streaming path only. DNS and certificates, Cognito with Google
-federation, the agent runtime, the edge gateway with a runtime target, and CloudFront
-serving the page and proxying /api/* to the gateway. No knowledge base, tools gateway,
-WAF, or alarms yet.
+DNS and certificates, Cognito with Google federation, the agent runtime, the edge
+gateway with a runtime target, the tools gateway in front of the knowledge base,
+CloudFront serving the page and proxying /api/* to the gateway, a regional web ACL on
+the edge gateway, and the billing and WAF alarms.
 
 Resource ordering that matters:
   apex A record -> user pool custom domain (Cognito refuses the domain without an A record)
   gateway -> runtime (runtime authorizer names the gateway as its allowed workload)
   runtime -> gateway role policy -> gateway target
+  tools gateway -> runtime environment variables (the runtime needs the tools gateway url)
 """
 
 from __future__ import annotations
@@ -42,6 +43,9 @@ from aws_cdk import (
     aws_cloudwatch as cloudwatch,
 )
 from aws_cdk import (
+    aws_cloudwatch_actions as cloudwatch_actions,
+)
+from aws_cdk import (
     aws_cognito as cognito,
 )
 from aws_cdk import (
@@ -65,6 +69,15 @@ from aws_cdk import (
 from aws_cdk import (
     aws_scheduler_targets as scheduler_targets,
 )
+from aws_cdk import (
+    aws_secretsmanager as secretsmanager,
+)
+from aws_cdk import (
+    aws_sns as sns,
+)
+from aws_cdk import (
+    aws_wafv2 as wafv2,
+)
 from constructs import Construct
 
 ZONE_NAME = "dengler.io"
@@ -86,6 +99,18 @@ KB_NAME = "guppi-gpt-docs"
 CONTENT_PREFIX = "docs/"  # scripts/seed-content.sh writes docs/<source>/... to the content bucket
 ORIGIN_RESPONSE_TIMEOUT = Duration.seconds(60)
 CLOUDFRONT_HOSTED_ZONE_ID = "Z2FDTNDATAQYW2"  # the same for every CloudFront distribution
+RETRIEVE_TOOL = f"{KB_TARGET_NAME}___Retrieve"
+
+MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+
+ORIGIN_HEADER_NAME = "X-Origin-Verify"
+
+# Both WAF rules below start in COUNT so real traffic can be watched before anything is
+# blocked. Flip this once the common rule set has been checked against real prompts.
+WAF_BLOCK = False
+
+# Twice the expected monthly figure (design section 11).
+BILLING_ALARM_USD = 50
 
 
 @jsii.implements(route53.IAliasRecordTarget)
@@ -108,6 +133,20 @@ class CognitoDomainAlias:
         )
 
 
+def _waf_rule_action() -> wafv2.CfnWebACL.RuleActionProperty:
+    """The action for the byte-match and rate-based WAF rules: Count until WAF_BLOCK flips."""
+    if WAF_BLOCK:
+        return wafv2.CfnWebACL.RuleActionProperty(block=wafv2.CfnWebACL.BlockActionProperty())
+    return wafv2.CfnWebACL.RuleActionProperty(count=wafv2.CfnWebACL.CountActionProperty())
+
+
+def _waf_override_action() -> wafv2.CfnWebACL.OverrideActionProperty:
+    """The override for the managed rule group: Count every finding until WAF_BLOCK flips."""
+    if WAF_BLOCK:
+        return wafv2.CfnWebACL.OverrideActionProperty(none={})
+    return wafv2.CfnWebACL.OverrideActionProperty(count={})
+
+
 class GuppiGptStack(cdk.Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -125,8 +164,53 @@ class GuppiGptStack(cdk.Stack):
             no_echo=True,
             description="OAuth client secret; supplied by scripts/deploy.sh from 1Password",
         )
+        alarm_email = cdk.CfnParameter(
+            self,
+            "AlarmEmail",
+            type="String",
+            default="",
+            description="Address subscribed to the alarm topic; left blank to subscribe no one",
+        )
+        has_alarm_email = cdk.CfnCondition(
+            self,
+            "HasAlarmEmail",
+            expression=cdk.Fn.condition_not(
+                cdk.Fn.condition_equals(alarm_email.value_as_string, "")
+            ),
+        )
 
         zone = route53.HostedZone.from_lookup(self, "Zone", domain_name=ZONE_NAME)
+
+        # ---- Alerting --------------------------------------------------------------------
+        alarm_topic = sns.Topic(self, "AlarmTopic", display_name="GuppiGPT alarms")
+        email_subscription = sns.CfnSubscription(
+            self,
+            "AlarmEmailSubscription",
+            protocol="email",
+            topic_arn=alarm_topic.topic_arn,
+            endpoint=alarm_email.value_as_string,
+        )
+        email_subscription.cfn_options.condition = has_alarm_email
+
+        # Billing metrics exist only in us-east-1, which is also where this stack deploys.
+        billing_alarm = cloudwatch.Alarm(
+            self,
+            "BillingAlarm",
+            alarm_description="Estimated month-to-date charges crossed the cost limit",
+            metric=cloudwatch.Metric(
+                namespace="AWS/Billing",
+                metric_name="EstimatedCharges",
+                dimensions_map={"Currency": "USD"},
+                region="us-east-1",
+                statistic="Maximum",
+                period=Duration.hours(6),
+            ),
+            threshold=BILLING_ALARM_USD,
+            evaluation_periods=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
+        )
+        billing_alarm.add_alarm_action(cloudwatch_actions.SnsAction(alarm_topic))
 
         # ---- DNS and certificates ------------------------------------------------------
         apex_record = route53.ARecord(
@@ -269,7 +353,135 @@ class GuppiGptStack(cdk.Stack):
             # protocol_type is left unset on purpose: runtime targets cannot be added to
             # MCP protocol gateways.
             exception_level="DEBUG",
+            # waf_configuration is left unset: the CfnGateway default failure mode is
+            # FAIL_CLOSE (AWS WAF docs, "Configuring the AWS WAF failure mode"), which is
+            # the fail-closed behavior design section 11 asks for.
         )
+
+        # ---- WAF -------------------------------------------------------------------------
+        # The shared value goes into the template only as a secretsmanager dynamic reference
+        # (through unsafe_unwrap() below), never as a literal, so it stays out of both the
+        # WAF rule and the CloudFront origin header in plain text. This is a deploy-time
+        # value the stack itself generates rather than a CloudFormation parameter, which
+        # departs from the AGENTS.md line on secrets; recorded in the decision log.
+        origin_secret = secretsmanager.Secret(
+            self,
+            "OriginVerifySecret",
+            description=f"Value CloudFront sends as the {ORIGIN_HEADER_NAME} header to the gateway",
+            generate_secret_string=secretsmanager.SecretStringGenerator(
+                exclude_punctuation=True, password_length=40
+            ),
+        )
+        origin_secret_value = origin_secret.secret_value.unsafe_unwrap()
+
+        cloudfront_only_rule = wafv2.CfnWebACL.RuleProperty(
+            name="CloudFrontOnly",
+            priority=0,
+            statement=wafv2.CfnWebACL.StatementProperty(
+                not_statement=wafv2.CfnWebACL.NotStatementProperty(
+                    statement=wafv2.CfnWebACL.StatementProperty(
+                        byte_match_statement=wafv2.CfnWebACL.ByteMatchStatementProperty(
+                            field_to_match=wafv2.CfnWebACL.FieldToMatchProperty(
+                                # single_header is typed as Any, so CDK does not translate
+                                # this dict's casing the way it does typed properties: the
+                                # key must already match the CloudFormation shape.
+                                single_header={"Name": ORIGIN_HEADER_NAME}
+                            ),
+                            positional_constraint="EXACTLY",
+                            search_string=origin_secret_value,
+                            text_transformations=[
+                                wafv2.CfnWebACL.TextTransformationProperty(
+                                    priority=0, type="NONE"
+                                )
+                            ],
+                        )
+                    )
+                )
+            ),
+            action=_waf_rule_action(),
+            visibility_config=wafv2.CfnWebACL.VisibilityConfigProperty(
+                sampled_requests_enabled=True,
+                cloud_watch_metrics_enabled=True,
+                metric_name="GuppiGptCloudFrontOnly",
+            ),
+        )
+        common_rule_set_rule = wafv2.CfnWebACL.RuleProperty(
+            name="AWSManagedRulesCommonRuleSet",
+            priority=1,
+            statement=wafv2.CfnWebACL.StatementProperty(
+                managed_rule_group_statement=wafv2.CfnWebACL.ManagedRuleGroupStatementProperty(
+                    vendor_name="AWS", name="AWSManagedRulesCommonRuleSet"
+                )
+            ),
+            override_action=_waf_override_action(),
+            visibility_config=wafv2.CfnWebACL.VisibilityConfigProperty(
+                sampled_requests_enabled=True,
+                cloud_watch_metrics_enabled=True,
+                metric_name="GuppiGptCommonRuleSet",
+            ),
+        )
+        rate_limit_rule = wafv2.CfnWebACL.RuleProperty(
+            name="RateLimit",
+            priority=2,
+            statement=wafv2.CfnWebACL.StatementProperty(
+                rate_based_statement=wafv2.CfnWebACL.RateBasedStatementProperty(
+                    limit=60,
+                    evaluation_window_sec=300,
+                    aggregate_key_type="FORWARDED_IP",
+                    forwarded_ip_config=wafv2.CfnWebACL.ForwardedIPConfigurationProperty(
+                        header_name="X-Forwarded-For", fallback_behavior="NO_MATCH"
+                    ),
+                )
+            ),
+            action=_waf_rule_action(),
+            visibility_config=wafv2.CfnWebACL.VisibilityConfigProperty(
+                sampled_requests_enabled=True,
+                cloud_watch_metrics_enabled=True,
+                metric_name="GuppiGptRateLimit",
+            ),
+        )
+        web_acl = wafv2.CfnWebACL(
+            self,
+            "EdgeWebAcl",
+            scope="REGIONAL",
+            default_action=wafv2.CfnWebACL.DefaultActionProperty(
+                allow=wafv2.CfnWebACL.AllowActionProperty()
+            ),
+            visibility_config=wafv2.CfnWebACL.VisibilityConfigProperty(
+                sampled_requests_enabled=True,
+                cloud_watch_metrics_enabled=True,
+                metric_name="GuppiGptEdgeWebAcl",
+            ),
+            rules=[cloudfront_only_rule, common_rule_set_rule, rate_limit_rule],
+        )
+        wafv2.CfnWebACLAssociation(
+            self,
+            "EdgeWebAclAssociation",
+            resource_arn=gateway.attr_gateway_arn,
+            web_acl_arn=web_acl.attr_arn,
+        )
+
+        # The gateway-waf devguide page does not list a dimension for these three metrics
+        # (unlike the general invocation metrics, which use "Resource"); GatewayId with the
+        # gateway identifier is an assumption, not something the docs state outright.
+        for metric_name in ("WafBlocks", "WafFailCloses", "WafFailOpens"):
+            waf_alarm = cloudwatch.Alarm(
+                self,
+                f"{metric_name}Alarm",
+                alarm_description=f"{metric_name} on the GuppiGPT edge gateway crossed zero",
+                metric=cloudwatch.Metric(
+                    namespace="AWS/Bedrock-AgentCore",
+                    metric_name=metric_name,
+                    dimensions_map={"GatewayId": gateway.attr_gateway_identifier},
+                    statistic="Sum",
+                    period=Duration.minutes(5),
+                ),
+                threshold=1,
+                evaluation_periods=1,
+                comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+                treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
+            )
+            waf_alarm.add_alarm_action(cloudwatch_actions.SnsAction(alarm_topic))
 
         # ---- Runtime -------------------------------------------------------------------
         protocol = self.node.try_get_context("runtime_protocol") or "AGUI"
@@ -288,6 +500,12 @@ class GuppiGptStack(cdk.Stack):
                 network_mode="PUBLIC"
             ),
             protocol_configuration=protocol,
+            # Without this allowlist the runtime validates the bearer and drops it; the
+            # container then has no token to present to the tools gateway (observed 3 Sep
+            # 2026 as RUN_ERROR UNAUTHORIZED on the first run of the real agent).
+            request_header_configuration=agentcore.CfnRuntime.RequestHeaderConfigurationProperty(
+                request_header_allowlist=["Authorization"]
+            ),
             authorizer_configuration=agentcore.CfnRuntime.AuthorizerConfigurationProperty(
                 custom_jwt_authorizer=agentcore.CfnRuntime.CustomJWTAuthorizerConfigurationProperty(
                     discovery_url=discovery_url,
@@ -311,6 +529,8 @@ class GuppiGptStack(cdk.Stack):
                     ),
                 )
             ),
+            # TOOLS_GATEWAY_URL, MODEL_ID, and RETRIEVE_TOOL are set below, once the tools
+            # gateway exists; it is defined later in this file.
             environment_variables={"LOG_LEVEL": "INFO"},
         )
 
@@ -371,6 +591,43 @@ class GuppiGptStack(cdk.Stack):
             protocol_policy=cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
             read_timeout=ORIGIN_RESPONSE_TIMEOUT,
             keepalive_timeout=Duration.seconds(60),
+            # Lets the CloudFrontOnly WAF rule tell CloudFront's traffic from anyone who
+            # calls the gateway hostname directly; the value is a secretsmanager dynamic
+            # reference (see OriginVerifySecret above), never a literal in the template.
+            custom_headers={ORIGIN_HEADER_NAME: origin_secret_value},
+        )
+        security_headers_policy = cloudfront.ResponseHeadersPolicy(
+            self,
+            "SecurityHeadersPolicy",
+            comment="CSP and security headers for the static page",
+            security_headers_behavior=cloudfront.ResponseSecurityHeadersBehavior(
+                content_security_policy=cloudfront.ResponseHeadersContentSecurityPolicy(
+                    content_security_policy=(
+                        "default-src 'self'; "
+                        f"connect-src 'self' https://{AUTH_HOST}; "
+                        "img-src 'self' data:; "
+                        "style-src 'self'; "
+                        "script-src 'self'; "
+                        "frame-ancestors 'none'; "
+                        "base-uri 'self'; "
+                        "form-action 'self'"
+                    ),
+                    override=True,
+                ),
+                strict_transport_security=cloudfront.ResponseHeadersStrictTransportSecurity(
+                    access_control_max_age=Duration.days(365),
+                    include_subdomains=True,
+                    override=True,
+                ),
+                content_type_options=cloudfront.ResponseHeadersContentTypeOptions(override=True),
+                referrer_policy=cloudfront.ResponseHeadersReferrerPolicy(
+                    referrer_policy=cloudfront.HeadersReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN,
+                    override=True,
+                ),
+                frame_options=cloudfront.ResponseHeadersFrameOptions(
+                    frame_option=cloudfront.HeadersFrameOption.DENY, override=True
+                ),
+            ),
         )
         distribution = cloudfront.Distribution(
             self,
@@ -386,6 +643,7 @@ class GuppiGptStack(cdk.Stack):
                 origin=origins.S3BucketOrigin.with_origin_access_control(site_bucket),
                 viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                 cache_policy=cloudfront.CachePolicy.CACHING_OPTIMIZED,
+                response_headers_policy=security_headers_policy,
             ),
             additional_behaviors={
                 "/api/*": cloudfront.BehaviorOptions(
@@ -507,7 +765,7 @@ class GuppiGptStack(cdk.Stack):
                 ],
             ),
         )
-        cloudwatch.Alarm(
+        ingestion_alarm = cloudwatch.Alarm(
             self,
             "IngestionScheduleErrors",
             alarm_description="The nightly StartIngestionJob call failed",
@@ -517,6 +775,7 @@ class GuppiGptStack(cdk.Stack):
             comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
             treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
         )
+        ingestion_alarm.add_alarm_action(cloudwatch_actions.SnsAction(alarm_topic))
 
         # ---- Tools gateway -------------------------------------------------------------
         tools_gateway_role = iam.Role(
@@ -621,6 +880,14 @@ class GuppiGptStack(cdk.Stack):
         kb_target.node.add_dependency(tools_gateway_role)
         kb_target.node.add_dependency(data_source)
 
+        # The tools gateway now exists, so the runtime's environment can point at it.
+        runtime.environment_variables = {
+            "LOG_LEVEL": "INFO",
+            "TOOLS_GATEWAY_URL": tools_gateway.attr_gateway_url,
+            "MODEL_ID": MODEL_ID,
+            "RETRIEVE_TOOL": RETRIEVE_TOOL,
+        }
+
         # ---- Outputs -------------------------------------------------------------------
         cdk.CfnOutput(self, "SiteUrl", value=SITE_URL)
         cdk.CfnOutput(self, "SiteBucketName", value=site_bucket.bucket_name)
@@ -637,6 +904,7 @@ class GuppiGptStack(cdk.Stack):
         cdk.CfnOutput(self, "DataSourceId", value=data_source.attr_data_source_id)
         cdk.CfnOutput(self, "ToolsGatewayUrl", value=tools_gateway.attr_gateway_url)
         cdk.CfnOutput(self, "IngestionScheduleName", value=ingestion.schedule_name)
+        cdk.CfnOutput(self, "AlarmTopicArn", value=alarm_topic.topic_arn)
 
     def _runtime_role(self) -> iam.Role:
         """Execution role for the runtime, following the AgentCore documented policy."""
@@ -708,13 +976,15 @@ class GuppiGptStack(cdk.Stack):
                 ],
             )
         )
-        # Model access is not used by the spike agent but costs nothing to grant now.
         role.add_to_policy(
             iam.PolicyStatement(
                 actions=["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
                 resources=[
+                    # A cross-region inference profile fans out to models in several
+                    # regions, so the foundation-model wildcard stays broad; the profile
+                    # itself is narrowed to the one MODEL_ID the agent calls.
                     "arn:aws:bedrock:*::foundation-model/*",
-                    f"arn:aws:bedrock:{region}:{account}:inference-profile/*",
+                    f"arn:aws:bedrock:{region}:{account}:inference-profile/{MODEL_ID}",
                 ],
             )
         )

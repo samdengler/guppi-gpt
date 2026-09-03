@@ -13,18 +13,26 @@ done
 
 export AWS_REGION="${AWS_REGION:-us-east-1}"
 
-client_id="$(op read "$ITEM/username")"
-client_secret="$(op read "$ITEM/credential")"
-if [[ -z "$client_id" || -z "$client_secret" ]]; then
-  echo "could not read the Google OAuth client from 1Password ($ITEM)" >&2
-  echo "check the vault, item title, and field labels with: op item get 'GuppiGPT Google OAuth' --format json | jq '.vault.name, [.fields[].label]'" >&2
-  exit 1
+param_args=()
+if op whoami >/dev/null 2>&1; then
+  client_id="$(op read "$ITEM/username")"
+  client_secret="$(op read "$ITEM/credential")"
+  if [[ -z "$client_id" || -z "$client_secret" ]]; then
+    echo "could not read the Google OAuth client from 1Password ($ITEM)" >&2
+    echo "check the vault, item title, and field labels with: op item get 'GuppiGPT Google OAuth' --format json | jq '.vault.name, [.fields[].label]'" >&2
+    exit 1
+  fi
+  param_args+=(--parameters "GoogleClientId=$client_id" --parameters "GoogleClientSecret=$client_secret")
+else
+  echo "not signed in to 1Password (op whoami failed); reusing the stack's existing Google OAuth parameters" >&2
+fi
+if [[ -n "${GUPPI_ALARM_EMAIL:-}" ]]; then
+  param_args+=(--parameters "AlarmEmail=$GUPPI_ALARM_EMAIL")
 fi
 
 cd "$ROOT/infra"
 npx --yes aws-cdk@2 deploy GuppiGpt \
-  --parameters "GoogleClientId=$client_id" \
-  --parameters "GoogleClientSecret=$client_secret" \
+  "${param_args[@]+"${param_args[@]}"}" \
   --outputs-file "$OUTPUTS" \
   "$@"
 
