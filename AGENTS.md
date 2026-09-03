@@ -4,9 +4,9 @@
 
 GuppiGPT is a minimal claude.ai style chat: one page, stateless plain text conversation,
 no history, no attachments, Google sign-in, and answers grounded in a Bedrock Knowledge
-Base. The design document (`guppigpt-design.html`) and the decision log
-(`guppigpt-decision-log.html`) in `~/Documents/Claude/Projects/GuppiGPT` are the source of
-truth for architecture; this repository implements them. When code and design disagree,
+Base. The design document (`docs/guppigpt-design.html`) and the decision log
+(`docs/guppigpt-decision-log.html`) are the source of truth for architecture; this
+repository implements them. `docs/guppigpt-architecture.html` holds the diagrams. When code and design disagree,
 fix one of them in the same change.
 
 Guppi is Bob's ship AI from *We Are Legion (We Are Bob)*.
@@ -24,6 +24,7 @@ Guppi is Bob's ship AI from *We Are Legion (We Are Bob)*.
 ## Project Structure
 
 ```
+docs/                     # design document, decision log, architecture diagrams (self-contained HTML)
 infra/
   app.py                  # CDK app entry
   guppi_gpt_infra/stack.py

@@ -34,7 +34,10 @@ not settle the question. Do not narrate the search or revise an earlier draft. A
 general knowledge otherwise, without searching.
 
 Reply in concise plain text. The page renders no Markdown, so write no headings, bullet
-markers, bold, code fences, or links; use short paragraphs and plain sentences instead.
+markers, bold, code fences, or links; use short paragraphs and plain sentences instead, and
+indent code by four spaces. In examples write server addresses as <server-url>, never as
+localhost or a loopback address: the gateway in front of this page rejects any message
+that contains one, which would end the conversation.
 """
 
 

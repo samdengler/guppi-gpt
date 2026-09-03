@@ -4,13 +4,27 @@ A one page, stateless, plain text chat behind Google sign-in. The page is served
 CloudFront, the stream runs through an AgentCore Gateway to a Strands agent on AgentCore
 Runtime, and the agent reads a Bedrock Knowledge Base through a second gateway.
 
-The design document and decision log live in the Claude project folder
-(`~/Documents/Claude/Projects/GuppiGPT`). This repository holds the implementation.
+![GuppiGPT runtime architecture](docs/guppigpt-architecture-runtime.png)
+
+## Documentation
+
+The architecture, requirements, wire format, security controls, and remaining work are in
+the design document. This README covers only how to build and deploy.
+
+| Document | Contents |
+| --- | --- |
+| [`docs/guppigpt-design.html`](docs/guppigpt-design.html) | The design as it stands: requirements, architecture, request flow, wire format, agent and page design, knowledge base sync, security and cost limits, decisions, next steps |
+| [`docs/guppigpt-decision-log.html`](docs/guppigpt-decision-log.html) | Revision history, decisions that were reversed and why, review answers |
+| [`docs/guppigpt-architecture.html`](docs/guppigpt-architecture.html) | The architecture diagrams with AWS icons; PNG exports sit beside it |
+
+The HTML documents are self-contained; open them in a browser. When code and design
+disagree, fix one of them in the same change.
 
 ## Layout
 
 | Path | Contents |
 | --- | --- |
+| `docs/` | Design document, decision log, architecture diagrams |
 | `infra/` | AWS CDK app (Python), one stack named `GuppiGpt` |
 | `agent/` | The agent container: FastAPI serving AG-UI over SSE on the AgentCore Runtime contract |
 | `web/` | The static page: sources in `src/`, esbuild bundle in `dist/` |
@@ -37,20 +51,18 @@ scripts/ingest.sh            # start one ingestion job and wait for it
 
 ## Status
 
-Design steps 1 to 7 are implemented. The streaming path (DNS, certificates, Cognito with
-Google federation, the runtime, the edge gateway, CloudFront) and the knowledge base
-(content bucket, managed knowledge base, nightly ingestion, tools gateway) are deployed
-and verified. The Strands agent, the final page, the web ACL, the alarms, and the
-Content Security Policy are deployed and were verified in the browser on 3 Sep 2026: a
-question about MCP transports ran one retrieval and streamed a plain text answer in about
-six seconds, and a follow-up turn kept the context.
+Deployed and verified in the browser on 3 Sep 2026. Remaining work is listed in the
+design document, section 15. Operational notes:
 
-Billing alerts were enabled in the account's billing preferences on 3 Sep 2026, so the
-estimated charges metric will exist. Flipping `WAF_BLOCK` in the stack stays manual, once
-the rules have been watched in COUNT.
-
-TODO: the alarm topic's email subscription for the address passed as `AlarmEmail` is stuck
-in PendingConfirmation. SNS sent two confirmation requests on 3 Sep 2026 and neither
-reached Gmail, spam included. Until one is confirmed no alarm delivers anywhere. Options:
-confirm from the SNS console (Subscriptions, Request confirmation), or subscribe a
-different address.
+* `WAF_BLOCK` in `infra/guppi_gpt_infra/stack.py` stays `False` until the web ACL rules
+  have been watched in COUNT against real prompts.
+* The edge gateway's front door answers 403 from its load balancer, before any of the
+  stack's WAF rules run, for any request body containing an http or https URL whose host
+  is localhost, 127.0.0.1, or 169.254.169.254. Because the page resends the whole thread,
+  one such URL in an earlier message ends the conversation. The system prompt asks the
+  model for `<server-url>` placeholders, the page explains the 403 without offering Retry,
+  and New chat is the way out.
+* The alarm topic's email subscription for the address passed as `AlarmEmail` is stuck in
+  PendingConfirmation: SNS sent two confirmation requests on 3 Sep 2026 and neither reached
+  Gmail, spam included. Until one is confirmed no alarm delivers anywhere. Confirm from the
+  SNS console (Subscriptions, Request confirmation) or subscribe a different address.

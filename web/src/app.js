@@ -199,7 +199,9 @@ import { HttpAgent } from "@ag-ui/client";
     const retryLink = document.createElement("a");
     retryLink.href = "#";
     retryLink.textContent = "Retry";
-    errorLine.append("The reply was interrupted. ", retryLink);
+    const errorText = document.createElement("span");
+    errorText.textContent = "The reply was interrupted.";
+    errorLine.append(errorText, " ", retryLink);
     reply.appendChild(errorLine);
 
     turn.appendChild(reply);
@@ -210,7 +212,7 @@ import { HttpAgent } from "@ag-ui/client";
       retry();
     });
 
-    return { statusLine, text, errorLine };
+    return { statusLine, text, errorLine, errorText, retryLink };
   }
 
   // ---- Auto-scroll ----
@@ -318,6 +320,7 @@ import { HttpAgent } from "@ag-ui/client";
     let stallTimer = null;
     let finished = false;
     let errored = false;
+    let refused = false;
     const resetStallTimer = () => {
       if (stallTimer) clearTimeout(stallTimer);
       stallTimer = setTimeout(() => controller.abort(), 30000);
@@ -335,9 +338,15 @@ import { HttpAgent } from "@ag-ui/client";
       refs.statusLine.textContent = line;
       refs.statusLine.hidden = false;
     };
-    const showError = () => {
+    const showError = (refused) => {
       status = "error";
-      lastFailedTurn = { messageList, refs };
+      // A 403 comes from the gateway's front door, which rejects any body containing a
+      // localhost or loopback URL; resending the same thread cannot succeed.
+      lastFailedTurn = refused ? null : { messageList, refs };
+      refs.errorText.textContent = refused
+        ? "The gateway refused this message. Messages that contain a localhost or loopback address are rejected; start a new chat."
+        : "The reply was interrupted.";
+      refs.retryLink.hidden = Boolean(refused);
       refs.errorLine.hidden = false;
       render();
     };
@@ -355,7 +364,7 @@ import { HttpAgent } from "@ag-ui/client";
       },
       fetch: async (url, init) => {
         const response = await fetch(url, init);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        if (!response.ok) throw Object.assign(new Error(`HTTP ${response.status}`), { status: response.status });
         return response;
       },
     });
@@ -390,12 +399,13 @@ import { HttpAgent } from "@ag-ui/client";
       await agent.runAgent({ runId: crypto.randomUUID(), abortController: controller }, subscriber);
     } catch (error) {
       errored = true; // transport failure, a stall abort, or an event the client refused
+      refused = error && error.status === 403;
     } finally {
       if (stallTimer) clearTimeout(stallTimer);
       input.focus();
     }
     if (errored || !finished) {
-      showError();
+      showError(refused);
       return;
     }
     refs.text.textContent = draft;

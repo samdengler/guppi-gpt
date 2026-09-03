@@ -1,0 +1,1221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GuppiGPT single page chat</title>
+<style>
+/* dg core styles — copy verbatim into a <style> tag */
+[data-diagram] { position: relative; --dg-stroke: #546170; --dg-bg: #ffffff; --dg-accent: #eef2f7; }
+[data-sequence] { --dg-stroke: #546170; --dg-bg: #ffffff; --dg-accent: #eef2f7; }
+.dg-grid { display: grid; gap: 64px 56px; justify-content: center; align-items: center; justify-items: center; padding: 12px; }
+.dg-node { border: 1.5px solid #546170; border-radius: 8px; background: #eef2f7; padding: 10px 18px;
+           font-size: 13px; font-weight: 600; text-align: center; min-width: 110px; box-sizing: border-box; }
+.dg-node small { display: block; font-weight: 400; color: #5b6a7a; margin-top: 2px; font-size: 11px; }
+.dg-diamond { border: none; background: none; padding: 24px 20px; position: relative; min-width: 130px; }
+.dg-diamond::before { content: ''; position: absolute; inset: 0; background: #fdf3dc; border: 1.5px solid #b9985a;
+                      clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); z-index: -1; }
+.dg-group { border: 1.5px dashed #8a97a5; border-radius: 10px; padding: 30px 20px 20px; position: relative; }
+.dg-group-label { position: absolute; top: 8px; left: 12px; font-size: 11px; font-weight: 700;
+                  text-transform: uppercase; letter-spacing: .06em; color: #6b7887; }
+
+/* ---- document theme ---- */
+:root {
+  --navy: #003366;
+  --navy-deep: #00274D;
+  --red: #C01933;
+  --red-bright: #E3132C;
+  --ink: #26313c;
+  --muted: #5b6a7a;
+  --light: #E9EEF5;
+  --rule: #d8e0ea;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: "Segoe UI", system-ui, -apple-system, Helvetica, Arial, sans-serif;
+       color: var(--ink); background: #f6f8fb; line-height: 1.65; }
+
+/* layout: sticky sidebar + page */
+.shell { display: grid; grid-template-columns: 232px minmax(0, 960px); gap: 28px;
+         justify-content: center; align-items: start; padding: 0 20px; }
+nav.toc { position: sticky; top: 0; max-height: 100vh; overflow-y: auto; padding: 28px 0 40px; }
+nav.toc .toc-title { font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+                     color: var(--muted); margin: 0 0 10px 12px; }
+nav.toc a { display: block; padding: 5px 12px; font-size: 13px; line-height: 1.35; color: var(--muted);
+            text-decoration: none; border-left: 2px solid transparent; }
+nav.toc a:hover { color: var(--navy); background: #eef2f7; }
+nav.toc a.active { color: var(--navy-deep); font-weight: 600; border-left-color: var(--red-bright); background: #eef2f7; }
+nav.toc a.tail { color: #8494a5; }
+
+.page { background: #fff; box-shadow: 0 1px 8px rgba(0,38,77,.08); }
+header.doc { background: linear-gradient(135deg, var(--navy-deep), var(--navy)); color: #fff;
+             padding: 42px 48px 34px; border-bottom: 5px solid var(--red-bright); }
+header.doc .kicker { font-size: 12px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase;
+                     color: #9fb6d1; margin-bottom: 10px; }
+header.doc h1 { margin: 0 0 12px; font-size: 32px; line-height: 1.18; font-weight: 700; }
+header.doc p { margin: 0; color: #c9d6e6; font-size: 15.5px; max-width: 46em; }
+main { padding: 34px 48px 56px; }
+h2 { color: var(--navy); font-size: 21px; margin: 46px 0 12px; padding-bottom: 6px;
+     border-bottom: 2px solid var(--rule); scroll-margin-top: 20px; }
+h3 { color: var(--navy); font-size: 16px; margin: 28px 0 8px; }
+p { margin: 11px 0; }
+a { color: var(--navy); }
+strong { color: var(--navy-deep); }
+code { background: var(--light); color: var(--navy-deep); padding: 1px 5px; border-radius: 4px;
+       font-size: .88em; font-family: ui-monospace, "SF Mono", Consolas, monospace; }
+pre { background: #f2f5f9; border: 1px solid var(--rule); border-radius: 8px; padding: 13px 15px;
+      overflow-x: auto; font-size: 12.5px; line-height: 1.55; }
+pre code { background: none; color: var(--ink); padding: 0; }
+ul, ol { margin: 11px 0; padding-left: 24px; }
+li { margin: 7px 0; }
+ol > li { padding-left: 4px; }
+table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 14px; }
+th { background: var(--light); color: var(--navy-deep); text-align: left; padding: 8px 10px; border: 1px solid var(--rule); }
+td { padding: 8px 10px; border: 1px solid var(--rule); vertical-align: top; }
+.callout { background: var(--light); border-left: 4px solid var(--navy); padding: 15px 20px;
+           border-radius: 0 8px 8px 0; margin: 22px 0; }
+.callout p { margin: 0; }
+.callout.red { border-left-color: var(--red); background: #FBEDEF; }
+.figure { margin: 28px 0; padding: 18px 8px 10px; border: 1px solid var(--rule); border-radius: 10px; background: #fff; }
+.figure figcaption { text-align: center; font-size: 12.5px; color: var(--muted); margin-top: 12px;
+                     font-weight: 600; letter-spacing: .02em; }
+footer.doc { padding: 20px 48px; background: var(--navy-deep); color: #9fb6d1; font-size: 12.5px;
+             border-top: 4px solid var(--red-bright); }
+.sources { font-size: 14px; }
+.sources li { font-size: 14px; }
+a.ref { font-size: .72em; vertical-align: super; text-decoration: none; color: var(--red);
+        font-weight: 600; padding: 0 1px; }
+a.ref:hover { text-decoration: underline; }
+.sources li:target { background: #FBEDEF; outline: 3px solid #FBEDEF; border-radius: 3px; }
+.toc-top { margin: 22px 0 6px; padding: 18px 22px 16px; border: 1px solid var(--rule);
+           border-radius: 10px; background: #fbfcfe; }
+.toc-top .toc-title { font-size: 11px; font-weight: 700; letter-spacing: .12em;
+                      text-transform: uppercase; color: var(--muted); margin: 0 0 10px; }
+.toc-top ol { list-style: none; margin: 0; padding: 0;
+              columns: 2; column-gap: 40px; }
+.toc-top li { margin: 0 0 6px; break-inside: avoid; font-size: 14px; }
+.toc-top a { text-decoration: none; }
+.toc-top a:hover { text-decoration: underline; }
+.toc-top .num { display: inline-block; min-width: 1.6em; color: var(--muted); }
+.toc-top .back { margin: 10px 0 0; padding-top: 10px; border-top: 1px solid var(--rule);
+                 font-size: 13px; color: var(--muted); }
+.toc-top .back a { color: var(--muted); margin-right: 14px; }
+@media (max-width: 640px) { .toc-top ol { columns: 1; } }
+h2 .anchor { opacity: 0; text-decoration: none; color: var(--rule); font-weight: 400; margin-left: 8px; }
+h2:hover .anchor { opacity: 1; }
+
+/* diagram palette */
+[data-diagram] { --dg-stroke: #4a5d74; }
+[data-sequence] { --dg-stroke: #4a5d74; --dg-accent: #E9EEF5; }
+.dg-node { border-color: var(--navy); background: var(--light); color: var(--navy-deep); }
+.dg-node small { color: #4a5d74; }
+.dg-node.red { border-color: var(--red); background: #FBEDEF; color: #7c0f22; }
+.dg-node.red small { color: #962b3b; }
+
+@media (max-width: 1180px) { .shell { grid-template-columns: minmax(0, 960px); } nav.toc { display: none; } }
+@media print { body { background: #fff; } .page { box-shadow: none; } nav.toc { display: none; }
+               .shell { grid-template-columns: 1fr; padding: 0; } h2 { page-break-after: avoid; }
+               .figure, table, pre { page-break-inside: avoid; } }
+
+</style>
+</head>
+<body>
+<div class="shell">
+<nav class="toc">
+  <p class="toc-title">Contents</p>
+  <a href="#problem">1. The problem</a>
+  <a href="#requirements">2. Requirements</a>
+  <a href="#page-design">3. Page design</a>
+  <a href="#architecture">4. Architecture</a>
+  <a href="#request-flow">5. Request flow</a>
+  <a href="#wire-format">6. Wire format</a>
+  <a href="#protocols">7. Client-to-agent protocols and libraries</a>
+  <a href="#frontend">8. Frontend design</a>
+  <a href="#agent">9. Agent design</a>
+  <a href="#content">10. Knowledge base content and sync</a>
+  <a href="#security">11. Security and cost limits</a>
+  <a href="#decisions">12. Decisions and alternatives</a>
+  <a href="#open-questions">13. Stream timing and open items</a>
+  <a href="#risks">14. Risks</a>
+  <a href="#next-steps">15. Next steps</a>
+  <a href="#glossary" class="tail">Glossary</a>
+  <a href="#references" class="tail">References</a>
+</nav>
+<style>
+/* UI mockup styles, scoped to .mock */
+.mock { max-width: 760px; margin: 0 auto; border: 1px solid #d8e0ea; border-radius: 12px; overflow: hidden;
+        background: #faf9f5; font-family: "Segoe UI", system-ui, -apple-system, Helvetica, Arial, sans-serif; }
+.mock .bar { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px;
+             background: #fff; border-bottom: 1px solid #e6e2d8; }
+.mock .brand { font-weight: 700; font-size: 15px; color: #26313c; letter-spacing: .01em; }
+.mock .brand span { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #d97757; margin-right: 8px; }
+.mock .right { display: flex; align-items: center; gap: 10px; }
+.mock .newchat { font-size: 12.5px; color: #5b6a7a; border: 1px solid #d8d3c7; border-radius: 6px; padding: 4px 10px; background: #fff; }
+.mock .avatar { width: 26px; height: 26px; border-radius: 50%; background: #003366; color: #fff; font-size: 11px; font-weight: 700;
+                display: flex; align-items: center; justify-content: center; }
+.mock .thread { padding: 22px 28px; min-height: 250px; display: flex; flex-direction: column; gap: 16px; }
+.mock .msg { max-width: 82%; font-size: 14px; line-height: 1.55; }
+.mock .msg.user { align-self: flex-end; background: #ece8dc; color: #26313c; padding: 10px 14px; border-radius: 14px 14px 4px 14px; }
+.mock .msg.bot { align-self: flex-start; color: #26313c; padding: 2px 0; }
+.mock .msg.bot .who { font-size: 11px; font-weight: 700; color: #d97757; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 4px; }
+.mock .tool { font-size: 12px; color: #5b6a7a; background: #f1efe8; border-radius: 6px; padding: 4px 10px; display: inline-block; margin-bottom: 6px; }
+.mock .caret { display: inline-block; width: 7px; height: 14px; background: #d97757; vertical-align: -2px; margin-left: 2px; border-radius: 1px; }
+.mock .composer { margin: 0 20px 18px; background: #fff; border: 1px solid #d8d3c7; border-radius: 12px; padding: 12px 12px 10px;
+                  box-shadow: 0 1px 4px rgba(0,0,0,.05); }
+.mock .composer .input { font-size: 14px; color: #8a8f98; min-height: 40px; }
+.mock .composer .row { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
+.mock .composer .hint { font-size: 11.5px; color: #9aa3ae; }
+.mock .send { width: 30px; height: 30px; border-radius: 8px; background: #d97757; color: #fff; display: flex; align-items: center;
+              justify-content: center; font-size: 15px; }
+.mock .send.off { background: #e6e2d8; color: #b8b2a5; }
+.mock .empty { text-align: center; color: #5b6a7a; margin: auto; }
+.mock .empty h4 { margin: 0 0 6px; font-size: 22px; color: #26313c; font-weight: 600; }
+.mock .empty p { margin: 0; font-size: 13.5px; }
+.mock .signin { margin: auto; text-align: center; }
+.mock .signin h4 { margin: 0 0 4px; font-size: 22px; color: #26313c; font-weight: 600; }
+.mock .signin p { margin: 0 0 16px; font-size: 13.5px; color: #5b6a7a; }
+.mock .gbtn { display: inline-block; font-size: 13.5px; font-weight: 600; color: #26313c; background: #fff; border: 1px solid #d8d3c7;
+              border-radius: 8px; padding: 9px 18px; }
+.mock .gbtn span { display: inline-block; width: 14px; height: 14px; border-radius: 50%; margin-right: 8px; vertical-align: -2px;
+                   background: conic-gradient(#4285f4 0 25%, #34a853 0 50%, #fbbc05 0 75%, #ea4335 0); }
+.mock .err { align-self: flex-start; font-size: 13px; color: #7c0f22; background: #FBEDEF; border: 1px solid #f0c8ce;
+             padding: 8px 12px; border-radius: 8px; }
+.mock .err a { color: #7c0f22; font-weight: 600; }
+.mockrow { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.mockrow .mock { max-width: none; }
+.mockrow .thread { min-height: 200px; }
+@media (max-width: 720px) { .mockrow { grid-template-columns: 1fr; } }
+</style>
+
+<div class="page">
+<header class="doc">
+  <div class="kicker">Design &middot; GuppiGPT &middot; September 2026</div>
+  <h1>GuppiGPT single page chat</h1>
+  <p>A one page, stateless, plain text conversational interface behind Google sign-in, served from CloudFront, streamed through AgentCore Gateway from a Strands agent on AgentCore Runtime that reads a Bedrock Knowledge Base through a second AgentCore Gateway.</p>
+</header>
+<main>
+
+<div class="callout"><p><strong>Status.</strong> Everything in this document is deployed in <code>us-east-1</code> and was verified in the browser on 3 September 2026, except the items listed in section 15. The implementation lives in the <code>guppi-gpt</code> repository. There is no Lambda function anywhere in the request path or in the content sync path. The alternatives that were considered and set aside on the way to this design are in the companion decision log; this document describes only the design as it stands.</p></div>
+
+<div class="toc-top">
+  <p class="toc-title">Contents</p>
+  <ol>
+    <li><span class="num">1.</span><a href="#problem">The problem</a></li>
+    <li><span class="num">2.</span><a href="#requirements">Requirements</a></li>
+    <li><span class="num">3.</span><a href="#page-design">Page design</a></li>
+    <li><span class="num">4.</span><a href="#architecture">Architecture</a></li>
+    <li><span class="num">5.</span><a href="#request-flow">Request flow</a></li>
+    <li><span class="num">6.</span><a href="#wire-format">Wire format</a></li>
+    <li><span class="num">7.</span><a href="#protocols">Client-to-agent protocols and libraries</a></li>
+    <li><span class="num">8.</span><a href="#frontend">Frontend design</a></li>
+    <li><span class="num">9.</span><a href="#agent">Agent design</a></li>
+    <li><span class="num">10.</span><a href="#content">Knowledge base content and sync</a></li>
+    <li><span class="num">11.</span><a href="#security">Security and cost limits</a></li>
+    <li><span class="num">12.</span><a href="#decisions">Decisions and alternatives</a></li>
+    <li><span class="num">13.</span><a href="#open-questions">Stream timing and open items</a></li>
+    <li><span class="num">14.</span><a href="#risks">Risks</a></li>
+    <li><span class="num">15.</span><a href="#next-steps">Next steps</a></li>
+  </ol>
+  <p class="back"><a href="#glossary">Glossary</a> <a href="#references">References</a></p>
+</div>
+
+<h2 id="problem">1. The problem</h2>
+
+<p>A person opens <code>chat.dengler.io</code>, signs in with Google, sees a greeting and a text box, types a question, and watches the answer appear word by word. When the question touches material in the knowledge base, the agent looks it up first and a short status line says so. They ask a follow-up and the answer accounts for what was said before. They close the tab and the conversation is gone. The next visit starts from a blank page, signed in.</p>
+
+<p>That is the whole product. The claude.ai interface carries a great deal more: conversation history, projects, attachments, artifacts, model selection. GuppiGPT keeps the conversational core, adds one retrieval tool, and drops the rest. The value of the exercise is a system small enough to hold in one head that still exercises the managed agent stack end to end: identity, runtime, gateway, knowledge base.</p>
+
+<p>The design has to answer five questions: what the page looks like and how it behaves, how a user is identified, how the browser talks to the agent, which AWS services sit between the browser and the model, and what protocol carries the stream.</p>
+
+<h2 id="requirements">2. Requirements</h2>
+
+<p>Requirements are written in EARS form<a class="ref" href="#r1">[1]</a> so that each one maps to a testable behavior.</p>
+
+<h3>Identity</h3>
+<ul>
+<li>When an unauthenticated user opens the page, the system shall show a sign-in screen with a single Google option and no other content.</li>
+<li>When the user completes Google sign-in, the system shall hold a bearer token in page memory and shall show the chat screen.</li>
+<li>When the token expires during a page session, the system shall obtain a new one without showing the sign-in screen, provided the identity provider session is still valid.</li>
+<li>The system shall reject any agent request that does not carry a valid token issued for this application.</li>
+</ul>
+
+<h3>Conversation</h3>
+<ul>
+<li>When the user submits a non-empty message, the system shall append the message to the visible thread and start an agent run.</li>
+<li>While a run is in progress, the system shall render each text delta as it arrives, and shall disable the send control.</li>
+<li>When the user submits a message, the system shall include every prior message of the current page session in the run, so that replies carry context.</li>
+<li>When the page is reloaded or closed, the system shall discard the conversation. No message shall be persisted on the server or in browser storage.</li>
+<li>When the user activates New chat, the system shall clear the thread and return to the empty state.</li>
+</ul>
+
+<h3>Retrieval</h3>
+<ul>
+<li>When a question can be answered from the knowledge base, the agent shall retrieve relevant passages through AgentCore Gateway before answering.</li>
+<li>While a retrieval is in progress, the system shall show a short status line in place of the reply.</li>
+<li>All model output shall stream to the page; no component in the path shall buffer a complete reply before forwarding it.</li>
+</ul>
+
+<h3>Input</h3>
+<ul>
+<li>The system shall accept plain text only. Attachments, images, and file drops shall be ignored.</li>
+<li>The system shall render replies as plain text with newlines preserved. No Markdown or HTML shall be interpreted.</li>
+<li>When the user presses Enter, the system shall send the message; when the user presses Shift+Enter, the system shall insert a newline.</li>
+<li>If a message exceeds 4,000 characters, then the system shall refuse to send it and shall show the limit inline.</li>
+</ul>
+
+<h3>Failure</h3>
+<ul>
+<li>If a run fails or the stream ends without a finished event, then the system shall show an inline error with a Retry control, and shall keep the user's message in the thread.</li>
+<li>If the stream stalls for more than 30 seconds without an event, then the client shall abort the run and treat it as a failure.</li>
+</ul>
+
+<h3>Operations</h3>
+<ul>
+<li>The system shall serve the page and the agent endpoint from one domain, with no cross-origin request from the browser.</li>
+<li>The system shall be deployable from one infrastructure definition with one command.</li>
+</ul>
+
+<h2 id="page-design">3. Page design</h2>
+
+<p>The page has three regions stacked vertically: a header bar, the message thread, and the composer. There is no sidebar, because there is nothing to put in one. The layout is a single centered column, 760px at most, so it reads the same on a laptop and a phone.</p>
+
+<figure class="figure">
+<div class="mock">
+  <div class="bar"><div class="brand"><span></span>GuppiGPT</div><div class="right"><div class="newchat">New chat</div><div class="avatar">SD</div></div></div>
+  <div class="thread">
+    <div class="msg user">What does our travel policy say about booking hotels outside the preferred list?</div>
+    <div class="msg bot"><div class="who">GuppiGPT</div>
+      <div class="tool">Searched the knowledge base</div><br>
+      Hotels outside the preferred list can be booked when no preferred property is available within 10 miles of the work location, or when the preferred rate is more than 20% above the best available rate. The booking needs a note in the expense report and manager approval above $250 per night<span class="caret"></span>
+    </div>
+  </div>
+  <div class="composer">
+    <div class="input">Reply to GuppiGPT</div>
+    <div class="row"><div class="hint">Enter to send, Shift+Enter for a new line. Nothing is saved.</div><div class="send off">&#8593;</div></div>
+  </div>
+</div>
+<figcaption>Figure 1. The page mid-reply after a knowledge base lookup. The status line records the tool call and the reply streams in as plain text.</figcaption>
+</figure>
+
+<h3>Regions</h3>
+
+<p><strong>Header bar.</strong> The product name on the left; New chat and the signed-in user's initials on the right. New chat resets in-memory state; it does not navigate. Clicking the initials shows the account email and a Sign out link. Sign out clears page state and redirects to the Cognito logout endpoint.</p>
+
+<p><strong>Thread.</strong> User messages sit on the right in a filled bubble. Agent replies sit on the left with no bubble, a small label, and plain text with newlines preserved. When the agent calls the retrieval tool, a muted status line ("Searching the knowledge base") appears above the reply and settles to past tense when the tool returns. The thread scrolls to the bottom on every new delta unless the user has scrolled up, in which case a small "Jump to latest" pill appears.</p>
+
+<p><strong>Composer.</strong> A textarea that grows to a maximum of eight lines, a send button, and a one-line hint. The hint states the keyboard behavior and that nothing is saved; the second sentence is the only privacy notice the app needs, and it stays visible at all times.</p>
+
+<h3>States</h3>
+
+<figure class="figure">
+<div class="mockrow">
+<div class="mock">
+  <div class="bar"><div class="brand"><span></span>GuppiGPT</div><div></div></div>
+  <div class="thread"><div class="signin"><h4>GuppiGPT</h4><p>Sign in to start a conversation.</p><div class="gbtn"><span></span>Continue with Google</div></div></div>
+</div>
+<div class="mock">
+  <div class="bar"><div class="brand"><span></span>GuppiGPT</div><div class="right"><div class="avatar">SD</div></div></div>
+  <div class="thread"><div class="empty"><h4>What can I help with?</h4><p>Ask anything. This conversation is not saved.</p></div></div>
+  <div class="composer"><div class="input">Ask GuppiGPT</div>
+    <div class="row"><div class="hint">Enter to send, Shift+Enter for a new line.</div><div class="send off">&#8593;</div></div></div>
+</div>
+<div class="mock">
+  <div class="bar"><div class="brand"><span></span>GuppiGPT</div><div class="right"><div class="newchat">New chat</div><div class="avatar">SD</div></div></div>
+  <div class="thread">
+    <div class="msg user">Which regions is the knowledge base replicated to?</div>
+    <div class="msg bot"><div class="who">GuppiGPT</div><div class="tool">Searching the knowledge base&hellip;</div></div>
+  </div>
+  <div class="composer"><div class="input">Reply to GuppiGPT</div>
+    <div class="row"><div class="hint">Enter to send, Shift+Enter for a new line.</div><div class="send off">&#8593;</div></div></div>
+</div>
+<div class="mock">
+  <div class="bar"><div class="brand"><span></span>GuppiGPT</div><div class="right"><div class="newchat">New chat</div><div class="avatar">SD</div></div></div>
+  <div class="thread">
+    <div class="msg user">Summarize the Converse API in two sentences.</div>
+    <div class="err">The reply was interrupted. <a>Retry</a></div>
+  </div>
+  <div class="composer"><div class="input">Reply to GuppiGPT</div>
+    <div class="row"><div class="hint">Enter to send, Shift+Enter for a new line.</div><div class="send">&#8593;</div></div></div>
+</div>
+</div>
+<figcaption>Figure 2. Clockwise from top left: sign-in, empty thread after sign-in, a retrieval in progress, and a failed run with Retry.</figcaption>
+</figure>
+
+<p>The client tracks two variables. <code>auth</code> is <code>anonymous</code> or <code>signed-in</code>. <code>status</code> is <code>idle-empty</code>, <code>idle</code>, <code>running</code>, or <code>error</code>; within <code>running</code>, a tool-call flag drives the status line. Retry re-sends the same message list that produced the failure. Send is enabled only in the two idle states with non-empty input.</p>
+
+<h3>Visual treatment</h3>
+
+<p>Warm off-white background, a single accent color for the caret and send button, system font stack, no icons beyond the arrow and the Google mark. Dark mode follows <code>prefers-color-scheme</code> with the same accent values. The visual target is a page that looks finished with about 150 lines of CSS.</p>
+
+<h2 id="architecture">4. Architecture</h2>
+
+<p>The browser talks to two hosts under one domain: <code>chat.dengler.io</code>, the CloudFront distribution, for everything in the app, and <code>auth.dengler.io</code>, the Cognito managed login, for sign-in redirects. CloudFront serves the static page from S3 and forwards <code>POST /api/invocations</code> to the edge gateway, an AgentCore Gateway whose one target is the AgentCore Runtime<a class="ref" href="#r14">[14]</a>. The edge gateway validates the user's JWT, applies WAF and per-user rate limits, and forwards the request and the SSE stream to the runtime unchanged. The runtime validates the JWT again and runs a Strands agent that streams AG-UI events back. When the agent needs the knowledge base it calls the tools gateway, a second AgentCore Gateway, over MCP; that gateway exposes the Bedrock Knowledge Base as MCP tools with no code in between<a class="ref" href="#r2">[2]</a>.</p>
+
+<p>The request path is therefore WAF, edge gateway, runtime, tools gateway, knowledge base. Section 4.2 explains why the last two hops are a choice rather than a requirement.</p>
+
+<figure class="figure">
+<style>
+/* AWS icon nodes for figures 3 and 5 */
+.figure:has(.aws-fig) { overflow-x: auto; }
+.dg-grid.aws-grid { gap: 58px 64px; padding: 12px 30px; }
+.figure [data-diagram].aws-fig { padding-bottom: 26px; }
+.dg-node.aws { background: #fff; border-color: #c9d1da; width: 142px; padding: 10px 8px 9px;
+               display: flex; flex-direction: column; align-items: center; box-shadow: 0 1px 2px rgba(0,0,0,.05);
+               position: relative; z-index: 1; min-width: 0; }
+.dg-node.aws img { width: 38px; height: 38px; margin-bottom: 5px; }
+.dg-node.aws.res img { width: 34px; height: 34px; }
+.dg-node.aws .name { font-size: 12px; font-weight: 600; line-height: 1.25; }
+.dg-node.aws small { font-size: 10px; line-height: 1.3; margin-top: 3px; }
+.cloud { grid-area: 2 / 1 / 7 / 5; margin: -22px -24px; border: 1.5px dashed #8a97a5; border-radius: 10px;
+         position: relative; z-index: 0; align-self: stretch; justify-self: stretch; }
+.cloud .dg-group-label { top: -8px; left: 14px; background: #fff; padding: 0 6px; }
+</style>
+
+<div data-diagram class="aws-fig">
+  <div class="dg-grid aws-grid" style="grid-template-columns: repeat(4, auto);">
+    <div class="cloud"><span class="dg-group-label">AWS Cloud &middot; us-east-1</span></div>
+<div class="dg-node aws res" id="browser" style="grid-area: 1 / 2;"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+PHRpdGxlPkljb24tUmVzb3VyY2UvR2VuZXJhbC1SZXNvdXJjZS9SZXNfQ2xpZW50XzQ4X0xpZ2h0PC90aXRsZT48cGF0aCBmaWxsPSIjMjMyZjNkIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiIGQ9Ik00Mi4yOTkgMzguNzczdjEuOTIzYS43OTMuNzkzIDAgMCAxLS43OTMuNzk0SDMwLjc2MmEuNzk0Ljc5NCAwIDAgMS0uNzk0LS43OTR2LTEuOTIzYzAtLjQzOC4zNTUtLjc5My43OTQtLjc5M2gxMC43NDRjLjQzOSAwIC43OTMuMzU1Ljc5My43OTNtMS40OTggMy42MjZhLjY0Ni42NDYgMCAwIDEtLjY0NC42NDVINC42NDVBLjY0Ni42NDYgMCAwIDEgNCA0Mi4zOTl2LTUuMzg4YzAtLjM1NS4yODktLjY0NC42NDUtLjY0NGgzOC41MDhjLjM1NSAwIC42NDQuMjg5LjY0NC42NDR6bS0uNjQ0LTguMDMySDQuNjQ1QTIuNjUgMi42NSAwIDAgMCAyIDM3LjAxMXY1LjM4OGEyLjY1IDIuNjUgMCAwIDAgMi42NDUgMi42NDVoMzguNTA4YTIuNjUgMi42NSAwIDAgMCAyLjY0NC0yLjY0NXYtNS4zODhhMi42NDcgMi42NDcgMCAwIDAtMi42NDQtMi42NDRNNy41MDEgMjcuMjFoMzIuNzYzVjcuNTAySDcuNTAxek00MC44NDIgNS41MDJINi45MjRjLS43ODQgMC0xLjQyMy42MzctMS40MjMgMS40MjF2MjAuODY1YzAgLjc4NC42MzkgMS40MjIgMS40MjMgMS40MjJoMzMuOTE4Yy43ODQgMCAxLjQyMi0uNjM4IDEuNDIyLTEuNDIyVjYuOTIzYzAtLjc4NC0uNjM4LTEuNDIxLTEuNDIyLTEuNDIxbTIuOTU1IDI0LjU2NWEuNjQ1LjY0NSAwIDAgMS0uNjQ0LjY0NEg0LjY0NUEuNjQ1LjY0NSAwIDAgMSA0IDMwLjA2N1Y0LjY0NEM0IDQuMjg5IDQuMjg5IDQgNC42NDUgNGgzOC41MDhjLjM1NSAwIC42NDQuMjg5LjY0NC42NDR6TTQzLjE1MyAySDQuNjQ1QTIuNjUgMi42NSAwIDAgMCAyIDQuNjQ0djI1LjQyM2EyLjY1IDIuNjUgMCAwIDAgMi42NDUgMi42NDRoMzguNTA4YTIuNjQ3IDIuNjQ3IDAgMCAwIDIuNjQ0LTIuNjQ0VjQuNjQ0QTIuNjQ3IDIuNjQ3IDAgMCAwIDQzLjE1MyAyIi8+PC9zdmc+" alt=""><span class="name">Browser</span><small>static page, in-memory thread, @ag-ui/client</small></div>
+<div class="dg-node aws res" id="google" style="grid-area: 1 / 4;"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+PHRpdGxlPkljb24tUmVzb3VyY2UvR2VuZXJhbC1SZXNvdXJjZS9SZXNfR2xvYmVfNDhfTGlnaHQ8L3RpdGxlPjxwYXRoIGZpbGw9IiMyMzJmM2QiIGZpbGwtcnVsZT0iZXZlbm9kZCIgZD0iTTM3LjMyMiA5Ljc2MmMtMS4zODUuNjgtMy4wMiAxLjI0LTQuODM2IDEuNjU3LS44MjItMi43MDgtMS45MzYtNC45NDItMy4yNjQtNi41NTlhMTkuNSAxOS41IDAgMCAxIDguMSA0LjkwMk0zNC4wMzMgMjJjLS4wNjQtMy4xNDYtLjQyNC02LjA2OC0xLjAzMy04LjY1NiAyLjE1My0uNTAxIDQuMDg4LTEuMTkgNS42OTMtMi4wMzlBMTkuNCAxOS40IDAgMCAxIDQyLjkyNCAyMnpNMzIuNzEgMzMuODgzYy43ODEtMi45MDkgMS4yNDgtNi4yNjQgMS4zMjMtOS44ODNoOC45NDFhMTkuNCAxOS40IDAgMCAxLTQuNDMxIDExLjg5NGMtMS42NDUtLjg0Ny0zLjYzNy0xLjUyMi01LjgzMy0yLjAxMW0tLjU4IDEuOTEzYzEuODY3LjQwNSAzLjU1NS45NTcgNC45ODcgMS42MzZhMTkuNSAxOS41IDAgMCAxLTguNjQgNC45YzEuNDYtMS41MTUgMi43MDgtMy43NTkgMy42NTMtNi41MzZtLTE2LjA5Ni4xNTNjMS4wMDkgMi45MDkgMi4zNTEgNS4yMyAzLjkyMiA2LjcxM2ExOS40MyAxOS40MyAwIDAgMS05LjM5MS00LjYwOWMxLjQ2OC0uODc0IDMuMzM4LTEuNTg3IDUuNDY5LTIuMTA0TTE0LjA3OCAyNGMuMDc2IDMuNjg4LjU2MSA3LjEwMSAxLjM2OCAxMC4wNDctMi40ODYuNjE3LTQuNjYyIDEuNDg3LTYuMzQxIDIuNTYxQTE5LjQgMTkuNCAwIDAgMSA0LjAyNSAyNHptMS4wNzMtMTAuODM2Yy0uNjM0IDIuNjMxLTEuMDA3IDUuNjE4LTEuMDczIDguODM2SDQuMDc2YTE5LjQgMTkuNCAwIDAgMSA0Ljg2OC0xMS40MzFjMS42MzQgMS4wODEgMy43NjIgMS45NjIgNi4yMDcgMi41OTVtLjUyMi0xLjkxNmMtMi4wNzMtLjUzMS0zLjg4Ny0xLjI1LTUuMy0yLjEyNmExOS40NCAxOS40NCAwIDAgMSA4LjgwNS00LjYyM2MtMS40MyAxLjYwNC0yLjYyOCAzLjkxOS0zLjUwNSA2Ljc0OU0xNi4wNzggMjJjLjA2NS0zLjE2Mi40MjgtNS45ODQgMS4wMTEtOC4zOTYgMi4yODguNDQzIDQuNzgxLjY4MiA3LjM1NS42ODIgMi4yODkgMCA0LjUyMi0uMTkxIDYuNjA3LS41NDcuNTY1IDIuMzgyLjkxOCA1LjE1Ni45ODIgOC4yNjF6bTE0LjA4NSAxMy40MzRjLTEuNTY0IDQuNDQ3LTMuODc5IDcuMDY2LTYuMTA4IDcuMDY2LTIuMjEgMC00LjUwNy0yLjU3NC02LjA3MS02Ljk1NWEzOCAzOCAwIDAgMSA2LjQ2LS41NDVjMS45ODMgMCAzLjkwNi4xNTcgNS43MTkuNDM0TTI0LjQ0NCAzM2MtMi40NjQgMC00Ljg1MS4yMjItNy4wNTcuNjI5QTM5LjMgMzkuMyAwIDAgMSAxNiAyNGgxNmMtLjA3NSAzLjYwMy0uNTEgNi44MTEtMS4yNDMgOS41MDZBMzkuNiAzOS42IDAgMCAwIDI0LjQ0NCAzM20uMDM4LTI4Ljk1YzIuMjY3LjMxMiA0LjU4MyAzLjA3MSA2LjA0NiA3Ljc1MWEzOCAzOCAwIDAgMS02LjA4NC40ODVjLTIuMzk3IDAtNC43MDgtLjIxMy02LjgyLS42MDYgMS41MjItNC43ODEgMy45MzUtNy41MzMgNi4yNjMtNy42Ni4yLjAwNC4zOTcuMDIuNTk1LjAzbS4xNTQtMS45OTJjLS4xOTMtLjAyMi0uMzg0LS4wNTgtLjU4MS0uMDU4LS4wNjMgMC0uMTI0LjAxNi0uMTg3LjAxOUMyMy43NDQgMi4wMTcgMjMuNjI0IDIgMjMuNSAyIDExLjY0NSAyIDIgMTEuNjQ1IDIgMjMuNVMxMS42NDUgNDUgMjMuNSA0NSA0NSAzNS4zNTUgNDUgMjMuNWMwLTExLjQ3Mi05LjAzOS0yMC44NDYtMjAuMzY0LTIxLjQ0MiIvPjwvc3ZnPg==" alt=""><span class="name">Google</span><small>OIDC identity provider</small></div>
+<div class="dg-node aws res" id="s3" style="grid-area: 2 / 1;"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+PHRpdGxlPkljb24tUmVzb3VyY2UvU3RvcmFnZS9SZXNfQW1hem9uLVNpbXBsZS1TdG9yYWdlLVNlcnZpY2VfQnVja2V0XzQ4PC90aXRsZT48cGF0aCBmaWxsPSIjN2FhMTE2IiBmaWxsLXJ1bGU9ImV2ZW5vZGQiIGQ9Im00MC41MDQgMjYuMTYuMjI0LTEuNjY2YzEuNzg0IDEuMDg3IDIuMzM1IDEuNzE1IDIuNDk1IDEuOTgtLjQ3My4xNDMtMS40MjguMDE3LTIuNzItLjMxNG0tMTcuNzAyLTYuMDQ5YzAtLjA1My4wNDMtLjA5Ni4wOTYtLjA5Ni4wMTUgMCAuMDI2LjAxLjAzOS4wMTdsLS4wNzMuMTQ3Yy0uMDMzLS4wMS0uMDYyLS4wMy0uMDYyLS4wNjhtMTMuNzEyIDIwLjY4N2ExIDEgMCAwIDAtLjAxLjEzM2MwIC4xNTUtLjM3OC43NDQtMi4wNjMgMS40MS0uNzUxLjI5Ni0xLjYzOC41NjItMi42MzguNzkyLTIuNTc1LjU5Ni01Ljc0LjkyNC04LjkwNy45MjQtOC40NjYgMC0xMy42MDctMi4xNy0xMy42MDctMy4xMjZxMC0uMDY2LS4wMS0uMTMzTDUuNDQyIDEyLjI4NXEuMzcyLjIxNS43OS40MTVjLjA3OS4wMzguMTY1LjA3NC4yNDcuMTEyYTE2IDE2IDAgMCAwIDEuMDg5LjQ1M3EuNDEzLjE1Ni44NTYuM2MuMDg3LjAzLjE3LjA2LjI1OC4wODZhMjcgMjcgMCAwIDAgMS41MjIuNDI3IDMwIDMwIDAgMCAwIDEuMzc4LjMycS41NDguMTE2IDEuMTE3LjIybC4yNDQuMDQ2cS42ODguMTIgMS40MDMuMjI0LjIwMS4wMjguNDA2LjA1NC41NC4wNzUgMS4wOTMuMTRsLjQ1My4wNTFxLjY2Ni4wNyAxLjM0My4xMy4wOC4wMDYuMTYyLjAxMy43NTYuMDYgMS41MTkuMTA0LjIxNy4wMTEuNDM2LjAyMS41NzYuMDI5IDEuMTUyLjA0N2wuNDUuMDE0cS43Ny4wMTggMS41MzcuMDJhNzIgNzIgMCAwIDAgMS45ODctLjAzNHEuNTc3LS4wMTkgMS4xNS0uMDQ3bC40MzktLjAycS43NjQtLjA0NCAxLjUxOC0uMTA1bC4xNjYtLjAxNHEuNjc1LS4wNTggMS4zMzgtLjEyOWwuNDU3LS4wNTJxLjU1LS4wNjUgMS4wODktLjEzOC4yMDctLjAyNy40MS0uMDU2YTUwIDUwIDAgMCAwIDEuNDAyLS4yMjNxLjEyMy0uMDIyLjI0Ny0uMDQ3YTM4IDM4IDAgMCAwIDIuNDkzLS41MzlsLjM0NC0uMDg2cS42MS0uMTYzIDEuMTc4LS4zNGMuMDg3LS4wMjguMTY5LS4wNTcuMjU0LS4wODZhMTkgMTkgMCAwIDAgMS45NTQtLjc1NmMuMDc5LS4wMzcuMTYzLS4wNzIuMjQtLjEwOXEuNDItLjIuNzkyLS40MTZsLTEuNzkyIDEzLjMwNmMtMy42MzctMS4xNjctOC43NDUtMy4yODQtMTMuNTgtNS41ODNhMi4wOSAyLjA5IDAgMCAwLTIuMDg0LTEuOTkzIDIuMSAyLjEgMCAwIDAtMi4wOTYgMi4wOTZjMCAxLjE1NS45NCAyLjA5NSAyLjA5NiAyLjA5NS40NTQgMCAuODcyLS4xNDkgMS4yMTUtLjM5NiA0LjMzMiAyLjA4IDkuODYzIDQuNTMyIDE0LjE4IDUuNzc4ek0yMi44OTYgNGMxMC40MTkgMCAxNy43NiAzLjIyOCAxNy44OTYgNS4wMjFsLS4wMjYuMjA4Yy0uMDE4LjA2Mi0uMDU3LjEyNS0uMDkuMTktLjAyNy4wNTEtLjA0Ny4xMDEtLjA4NC4xNTQtLjA0NC4wNjItLjExLjEyNS0uMTY2LjE4OC0uMDUxLjA1NS0uMDk0LjExLS4xNTUuMTY2LS4wNjguMDYxLS4xNTUuMTI0LS4yMzYuMTg2LS4wNzUuMDU4LS4xNDEuMTE1LS4yMjcuMTc0LS4wOTEuMDYtLjIuMTIyLS4zMDIuMTg0LS4xLjA2LS4xOS4xMi0uMzAxLjE3OC0uMTEuMDYtLjI0LjExOC0uMzYuMTc4LS4xMjQuMDYxLS4yNC4xMjEtLjM3Ni4xODItLjEzLjA1Ny0uMjc2LjExNC0uNDE0LjE3MS0uMTUuMDYtLjI5MS4xMjItLjQ1MS4xODEtLjE0OC4wNTYtLjMxNC4xMS0uNDcxLjE2NC0uMTcxLjA2LS4zMzUuMTItLjUxNy4xNzctLjE3LjA1NC0uMzU1LjEwNC0uNTM0LjE1Ny0uMTkuMDU2LS4zNzMuMTEzLS41NzMuMTY3LS4xOTIuMDUyLS40LjEtLjYuMTUtLjIwNi4wNTEtLjQwNi4xMDQtLjYyMy4xNTRzLS40NDguMDk0LS42NzQuMTQxYy0uMjE4LjA0NS0uNDMuMDkzLS42NTguMTM2LS4yNC4wNDYtLjQ5Ny4wODctLjc0Ny4xMy0uMjMuMDQtLjQ1My4wODEtLjY5Mi4xMTgtLjI2LjA0LS41MzYuMDc2LS44MDYuMTEzLS4yNDQuMDMzLS40ODIuMDctLjczNC4xLS4yOTMuMDM2LS42MDIuMDY2LS45MDUuMDk3LS4yNDQuMDI2LS40OC4wNTUtLjczLjA3Ny0uMzM2LjAzMS0uNjg4LjA1NC0xLjAzNC4wNzgtLjIzMy4wMTgtLjQ1OC4wMzgtLjY5Ni4wNTMtLjM4LjAyMi0uNzc2LjAzNi0xLjE3LjA1My0uMjE1LjAwOC0uNDI1LjAyMS0uNjQ2LjAyOGE2NSA2NSAwIDAgMS0zLjc5NyAwYy0uMjIyLS4wMDctLjQzNC0uMDItLjY1NC0uMDI5LS4zOS0uMDE2LS43ODMtLjAzLTEuMTYxLS4wNTItLjI1LS4wMTYtLjQ4OC0uMDM3LS43MzMtLjA1NS0uMzMzLS4wMjQtLjY3My0uMDQ2LS45OTYtLjA3Ni0uMjUxLS4wMjItLjQ4Ny0uMDUyLS43MzItLjA3Ny0uMzAzLS4wMy0uNjEyLS4wNi0uOTA0LS4wOTctLjI1LS4wMy0uNDg3LS4wNjYtLjczLS4xLS4yNy0uMDM3LS41NDgtLjA3Mi0uODEtLjExMy0uMjQ3LS4wMzgtLjQ4LS4wODItLjcxOC0uMTIzLS4yNDEtLjA0Mi0uNDg4LS4wOC0uNzItLjEyNS0uMjMxLS4wNDQtLjQ0Ni0uMDkyLS42Ny0uMTM4LS4yMjItLjA0Ny0uNDUtLjA5LS42NjMtLjE0LS4yMTYtLjA0OS0uNDE1LS4xMDItLjYyMi0uMTUzLS4yLS4wNS0uNDA4LS4wOTgtLjYtLjE1LS4yMDItLjA1NC0uMzg3LS4xMTItLjU4LS4xNjktLjE3Ni0uMDUtLjM2LS4xMDItLjUyNi0uMTU1LS4xODUtLjA1OS0uMzUxLS4xMTktLjUyNC0uMTgtLjE1NS0uMDUzLS4zMTgtLjEwNi0uNDYzLS4xNi0uMTYyLS4wNi0uMzAzLS4xMjMtLjQ1My0uMTgzLS4xMzgtLjA1Ny0uMjg1LS4xMTQtLjQxMy0uMTctLjEzNC0uMDYtLjI1MS0uMTItLjM3NS0uMTgyLS4xMjEtLjA2LS4yNTEtLjExOC0uMzYxLS4xNzktLjExLS4wNTktLjIwMi0uMTE5LS4zMDItLjE3OS0uMTAxLS4wNi0uMjEtLjEyMi0uMy0uMTgyLS4wODctLjA2LS4xNTUtLjExOC0uMjMxLS4xNzctLjA4LS4wNi0uMTY1LS4xMjMtLjIzMS0uMTgzLS4wNjMtLjA1Ny0uMTA3LS4xMTQtLjE2LS4xNjktLjA1NS0uMDYyLS4xMTgtLjEyNC0uMTYyLS4xODUtLjAzOC0uMDU0LS4wNTctLjEwNi0uMDg1LS4xNi0uMDMyLS4wNjItLjA3MS0uMTI0LS4wODgtLjE4NGwtLjAyOC0uMjA5QzUuMTQgNy4yMjcgMTIuNDggNCAyMi44OTYgNG0yMi4zNTkgMjIuMjU3Yy0uMjEzLTEuMTUtMS41MzgtMi4zNjgtNC4yMzctMy45MWwxLjcxNi0xMi43NTJ2LS4wMDRsLjA1LS4zOWExIDEgMCAwIDAgLjAxLS4xM2MwLTQuMTY3LTEwLjQ4Ni03LjA3LTE5Ljg5OC03LjA3UzMgNC45MDMgMyA5LjA3cTAgLjA2Ni4wMDkuMTMybC4wNTIuMzl2LjAwMkw3LjI5IDQxLjAxYy4xMyAzLjY3NiA5LjYxMyA1LjA0OCAxNS42MDYgNS4wNDggMy4zMTUgMCA2LjYzOC0uMzQ2IDkuMzU3LS45NzVhMjEgMjEgMCAwIDAgMi45MjItLjg4MmMyLjE2Ni0uODU1IDMuMjg1LTEuOTI5IDMuMzI5LTMuMTlsMS43NC0xMi45M2MuOTUzLjIwMiAxLjgxOC4zMjUgMi41MzcuMzI1Ljk2OSAwIDEuNjk0LS4yMDUgMi4wODYtLjY3My4zNS0uNDE2LjQ4OC0uOTQuMzg4LTEuNDc1Ii8+PC9zdmc+" alt=""><span class="name">S3 site bucket</span><small>index.html, app.js, app.css; OAC, private</small></div>
+<div class="dg-node aws svc" id="cf" style="grid-area: 2 / 2;"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHRpdGxlPkljb24tQXJjaGl0ZWN0dXJlLzQ4L0FyY2hfQW1hem9uLUNsb3VkRnJvbnRfNDg8L3RpdGxlPjxnIGZpbGw9Im5vbmUiIGZpbGwtcnVsZT0iZXZlbm9kZCI+PHBhdGggZmlsbD0iIzhjNGZmZiIgZD0iTTAgMGg2NHY2NEgweiIvPjxwYXRoIGZpbGw9IiNmZmYiIGQ9Ik00MS41IDQzLjVjLTEuMTAzIDAtMi0uODk3LTItMnMuODk3LTIgMi0yIDIgLjg5NyAyIDItLjg5NyAyLTIgMm0wLTZjLTIuMjA2IDAtNCAxLjc5NC00IDRzMS43OTQgNCA0IDQgNC0xLjc5NCA0LTQtMS43OTQtNC00LTRtLTE5LTVjLTEuMTAzIDAtMi0uODk3LTItMnMuODk3LTIgMi0yIDIgLjg5NyAyIDItLjg5NyAyLTIgMm0wLTZjLTIuMjA2IDAtNCAxLjc5NC00IDRzMS43OTQgNCA0IDQgNC0xLjc5NCA0LTQtMS43OTQtNC00LTRtMjIuODg5IDIwLjYyNGEyOSAyOSAwIDAgMC0uNzA0LTEuNTMzbC0xLjc4OS44OTVjLjI3NC41NDkuNTI0IDEuMTEzLjc2IDEuNjc5YTE5IDE5IDAgMCAxLTIuNjI4IDEuNTc1Yy4zNTYtLjg3NS42NjYtMS43NjUuOTQ2LTIuNzI4bC0xLjkyLS41NThhMjUuMiAyNS4yIDAgMCAxLTEuODcgNC42NzlBMTkuMiAxOS4yIDAgMCAxIDMyLjUgNTJjLTMuMDM1IDAtNS45MzMtLjY4Ni04LjYyOS0yLjAyNC0xLjM2OC0zLjM2MS0yLjAzMy02LjQ0Mi0yLjAzMy05LjQxNyAwLTEuMjkyLjIyNS0yLjM2My40ODQtMy42MDNxLjA5Ni0uNDU1LjE5Mi0uOTMybC0xLjk2My0uMzg2cS0uMDkyLjQ2NS0uMTg2LjkwN2MtLjI3MSAxLjI5My0uNTI3IDIuNTE1LS41MjcgNC4wMTQgMCAyLjUxNS40MzYgNS4wODUgMS4zMTYgNy43OTVBMTkuNDYgMTkuNDYgMCAwIDEgMTMgMzIuNWMwLS4xMTEuMDEtLjIyNy4wMTItLjMzOWEyNCAyNCAwIDAgMSA0Ljg0Mi0uNTlsLS4wNS0xLjk5OWMtMS42MzUuMDQtMy4xMS4yMDctNC42NDEuNTEyLjkxOC03LjQwMSA2LjA0OS0xMy42OSAxMy4xNi0xNi4wNjUgMS41NS43OTkgMi42OTcgMS41MDUgMy44MTIgMi4zNTFsMS4yMDktMS41OTRhMjQgMjQgMCAwIDAtMi4xOTgtMS40NzdBMTkuNiAxOS42IDAgMCAxIDMyLjUgMTNjMi41MzIgMCA1LjAzMi40OTQgNy4zNDkgMS40MzlhMzMgMzMgMCAwIDAtMS42MDYuNTMybC42OCAxLjg4MWMxLjM5My0uNTAzIDIuNDg1LS44MTIgMy42NDgtMS4wMzFDNDguMzk5IDE5LjM0MSA1MiAyNS42NjcgNTIgMzIuNWExOS4zNiAxOS4zNiAwIDAgMS02LjYxMSAxNC42MjRtLTIuMzgxLTMzLjM3NUEyMS40IDIxLjQgMCAwIDAgMzIuNSAxMWMtMi4xMDggMC00LjE3Ni4zMDEtNi4xNDMuODk1LTguNjM0IDIuNTY5LTE0Ljc4OSAxMC4zMzUtMTUuMzEyIDE5LjMwMS0uMDM1LjQyOS0uMDQ1Ljg2Ni0uMDQ1IDEuMzA0YTIxLjQ3IDIxLjQ3IDAgMCAwIDExLjM1NCAxOC45NTVBMjEuNTQgMjEuNTQgMCAwIDAgMzIuNSA1NGEyMS4xIDIxLjEgMCAwIDAgNi45MzctMS4xNTcgMjEgMjEgMCAwIDAgNi4yMDktMy4zMzZDNTAuOTU1IDQ1LjM5OSA1NCAzOS4yIDU0IDMyLjVhMjEuNTIgMjEuNTIgMCAwIDAtMTAuOTkyLTE4Ljc1MW0tNC42MjQgMjMuNjYyLTEuMzgxIDEuNDQ3Yy0yLjk4MS0yLjg0My01Ljk1Ni00LjcxMi05LjM2Ni01Ljg4M2wuNjUtMS44OTJjMy42OTIgMS4yNjggNi45MDEgMy4yNzkgMTAuMDk3IDYuMzI4bS4wNi0xNS4wNDdjMi44MzggNC4zMjggNC40MzYgOS4wOCA0Ljc0OSAxNC4xMjRsLTEuOTk2LjEyNGMtLjI5Mi00LjY5My0xLjc4LTkuMTE3LTQuNDI1LTEzLjE1MnptLTExLjk5MyA0LjQzMy0xLjY3OC0xLjA4OWMxLjU0My0yLjM3NiAyLjg2Ni0zLjk1IDQuNTYzLTUuNDNsMS4zMTQgMS41MDhjLTEuNTQ3IDEuMzQ5LTIuNzY0IDIuODAxLTQuMTk5IDUuMDExTTM0LjUgMTYuNWMxLjEwMyAwIDIgLjg5NyAyIDJzLS44OTcgMi0yIDItMi0uODk3LTItMiAuODk3LTIgMi0ybTAgNmMyLjIwNiAwIDQtMS43OTQgNC00cy0xLjc5NC00LTQtNC00IDEuNzk0LTQgNCAxLjc5NCA0IDQgNCIvPjwvZz48L3N2Zz4=" alt=""><span class="name">CloudFront</span><small>chat.dengler.io; two origins, CSP headers</small></div>
+<div class="dg-node aws svc" id="cognito" style="grid-area: 2 / 4;"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHRpdGxlPkljb24tQXJjaGl0ZWN0dXJlLzQ4L0FyY2hfQW1hem9uLUNvZ25pdG9fNDg8L3RpdGxlPjxnIGZpbGw9Im5vbmUiIGZpbGwtcnVsZT0iZXZlbm9kZCI+PHBhdGggZmlsbD0iI2RkMzQ0YyIgZD0iTTAgMGg2NHY2NEgweiIvPjxwYXRoIGZpbGw9IiNmZmYiIGQ9Ik00OC4zODUgMjEuMDA2di01LjMwM2MwLS45MjItLjYxOC0xLjcwMi0xLjM1LTEuNzAySDEzLjM3Yy0uNzMzIDAtMS4zNS43OC0xLjM1IDEuNzAydjUuMzAzaDE1LjE1MXYtNC4wMDJjMC0uNTUzLjQ1Mi0xLjAwMSAxLjAxLTEuMDAxaDE3LjE3M2MuNTU4IDAgMS4wMS40NDggMS4wMSAxdjQuMDAzem0tNC4wNC0zLjAwMkgyOS4xOTN2MTIuMzg0YTguNiA4LjYgMCAwIDEgNC41MzMtMy45ODUgNC40MiA0LjQyIDAgMCAxLS45NTQtMi43MzdjMC0yLjQ2NyAyLjAzOS00LjQ3NCA0LjU0Ni00LjQ3NCAyLjUwNiAwIDQuNTQ2IDIuMDA3IDQuNTQ2IDQuNDc0YTQuNDIgNC40MiAwIDAgMS0xLjA4IDIuODggOC43IDguNyAwIDAgMSAzLjU2IDIuODQ1em0tNC41MDIgNS42NjJjMC0xLjM2NC0xLjEzMi0yLjQ3Mi0yLjUyNS0yLjQ3MnMtMi41MjUgMS4xMDgtMi41MjUgMi40NzJjMCAuODk3LjQ5OCAxLjcyMyAxLjMgMi4xNThhMi41OSAyLjU5IDAgMCAwIDIuNDQ1LS4wMDEgMi40NiAyLjQ2IDAgMCAwIDEuMzA1LTIuMTU3bTguNTQzIDkuMzQ5VjIzLjAwOGgtMi4wMjF2Ny4wMDVoLTEuNzEzbC0xLjY0Ni45ODVhNi43IDYuNyAwIDAgMC0zLjc1NS0yLjg5NCA1LjQyIDUuNDIgMCAwIDEtNC4zMzYgMCA2LjU4IDYuNTggMCAwIDAtNC42OCA1LjkxMmg2LjAyOXYyLjAwMWgtOC4wODJjLS41NTggMC0xLjAxLS40NDgtMS4wMS0xdi0xMi4wMUgxMi4wMnYxNC4zMWMwIC45MjMuNjE4IDEuNzAyIDEuMzUgMS43MDJoMTkuODYzdjIuMDAySDEzLjM3MWMtMS44NTkgMC0zLjM3MS0xLjY2Mi0zLjM3MS0zLjcwM1YxNS43MDNDMTAgMTMuNjYgMTEuNTEyIDEyIDEzLjM3IDEyaDMzLjY2NWMxLjg1OCAwIDMuMzcgMS42NjEgMy4zNyAzLjcwM3YxNy4zMTJ6bS01LjA4IDEzLjk3OSA1LjYyNi01LjU3NC0xLjQyOS0xLjQxNS00LjkxMiA0Ljg2Ni0yLjExNS0yLjA5NS0xLjQyOSAxLjQxNSAyLjgzIDIuODAzYTEuMDE0IDEuMDE0IDAgMCAwIDEuNDI4IDBtMi4wMTEtMTEuMDMxYTcuNTggNy41OCAwIDAgMSA1LjgzMyA0LjA1N2MuNjkgMS4zNC45NTcgMi44NDMuNzczIDQuMzQ0YTcuNSA3LjUgMCAwIDEtMS43NjUgMy45OTcgNy42NSA3LjY1IDAgMCAxLTIuNTI2IDEuOTE4IDcuNTYgNy41NiAwIDAgMS00LjE0My42NjUgNy42IDcuNiAwIDAgMS0zLjc4LTEuNTY3IDcuNDggNy40OCAwIDAgMS0yLjgyNS02LjgzNCA3LjU1IDcuNTUgMCAwIDEgNC4wNjQtNS44MDYgNy41NSA3LjU1IDAgMCAxIDQuMzctLjc3NG0zLjE4MSAxNi4xMjRhOS43IDkuNyAwIDAgMCAzLjE5Ni0yLjQyNiA5LjUgOS41IDAgMCAwIDIuMjM1LTUuMDU2IDkuNDYgOS40NiAwIDAgMC0uOTgtNS40OTUgOS42IDkuNiAwIDAgMC03LjM4Ny01LjEzMyA5LjU3IDkuNTcgMCAwIDAtNS41NDIuOTgzIDkuNTUgOS41NSAwIDAgMC01LjE0MiA3LjM0MWMtLjQwNiAzLjMyOS45MyA2LjU2IDMuNTc0IDguNjQzQTkuNiA5LjYgMCAwIDAgNDQuNDEgNTNjMS40MTMgMCAyLjgwNy0uMzEgNC4wODgtLjkxM00yMS4xMTEgMzMuMDE1aDMuMDN2LTIuMDAyaC0zLjAzem0tNy4wNyAwaDYuMDZ2LTIuMDAyaC02LjA2em0wLTUuMDA0aDkuMDlWMjYuMDFoLTkuMDl6Ii8+PC9nPjwvc3ZnPg==" alt=""><span class="name">Cognito user pool</span><small>auth.dengler.io; managed login, Google federation, issues JWT</small></div>
+<div class="dg-node aws svc" id="waf" style="grid-area: 3 / 1;"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHRpdGxlPkljb24tQXJjaGl0ZWN0dXJlLzQ4L0FyY2hfQVdTLVdBRl80ODwvdGl0bGU+PGcgZmlsbD0ibm9uZSIgZmlsbC1ydWxlPSJldmVub2RkIj48cGF0aCBmaWxsPSIjZGQzNDRjIiBkPSJNMCAwaDY0djY0SDB6Ii8+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTI2LjkyOSA0MC4zOTdhMTguNiAxOC42IDAgMCAwIDMuMDQgMS42OTJjLS40NzctMi4zNzYtLjc5NC02LjQ4NyAxLjM0My0xMC40MTggMS41OTMtMi45MjggMS44NTYtNi4yNTQuNjg4LTguNjgxYTUuOSA1LjkgMCAwIDAtMS45MjItMi4yOTJjLjc2MiAxLjc1OSAxLjE5IDQuMjk5LjAzOCA3LjU3MmExIDEgMCAwIDEtMS44MjUuMTQyYy0uMzMxLS42MTYtMS4yNDItMi4wMDQtMi4yODMtMi44MzMuNDA4IDEuODc2LjY2NyA0LjY4My0uNjczIDYuNzg4YTggOCAwIDAgMC0uMjAxLjMzNGMtMS40NyAyLjU4OS0uNjgyIDUuOTcgMS43OTUgNy42OTZtNy41NDItMTYuMjQyYy41NjUgMi42NDkuMDkyIDUuNzI1LTEuNDAxIDguNDcxLTIuMTY1IDMuOTgxLTEuMzYzIDguMzE5LS45MSAxMC4wMjUgMS45NTctLjMyOSA2LjkwMy0xLjU1NyA3Ljk1OS01LjY0OSAxLjAxNC0zLjkyNi40LTYuMTk5LS4zMS03LjQyNC0uNzA4IDIuNTQ0LTIuMDA3IDMuNjE1LTIuMDc0IDMuNjY5YTEuMDAyIDEuMDAyIDAgMCAxLTEuNjE0LS45MzhjLjYwNi0zLjc2OC0uMzYtNi4zOS0xLjY1LTguMTU0TTIzLjY1IDMxLjI5YzEuNjA5LTIuNTI3LS4wNzQtNi45NjUtLjA5MS03LjAxYTEgMSAwIDAgMSAuOTMyLTEuMzYxYzEuNzUgMCAzLjI0OCAxLjM1NSA0LjI1IDIuNTkzLjUyOS0zLjk4OS0xLjg3Ny02LjA4NC0xLjk5Ny02LjE4NGExLjAwNCAxLjAwNCAwIDAgMS0uMjYtMS4xOTEuOTkuOTkgMCAwIDEgMS4wNzctLjU2MWMxLjQ3NC4yNjEgMi43NzMuODIyIDMuODUgMS42MzMuOTU1LjQyNyA1LjcyNiAyLjgzOSA2LjcxNCA4LjdxLjA0LS4yNjQuMDcyLS41NWExIDEgMCAwIDEgMS40NzQtLjc3NGMuMTg3LjEwMyA0LjUzMyAyLjU5NSAyLjM4NCAxMC45MTctMS42NzUgNi40ODgtMTAuMTggNy4yMjctMTAuNTQxIDcuMjU1bC0uMDAxLS4wMWMtLjAyMi4wMDItLjA0MS4wMTMtLjA2My4wMTNhMSAxIDAgMCAxLS4zMzUtLjA1OWMtMi4wNTQtLjczNC0zLjg0Ny0xLjYzLTUuMzMtMi42NjMtMy4zMTQtMi4zMS00LjM2NC02Ljg0Ny0yLjM5LTEwLjMyN2ExMCAxMCAwIDAgMSAuMjU1LS40MjFtLTguMTYgMTIuNjYgMS42Mi0xLjE3M0ExOC4yIDE4LjIgMCAwIDEgMTMuNjc3IDMzSDE2di0yaC0yLjMyMWExOC4xNiAxOC4xNiAwIDAgMSAzLjQzMi05LjcxOWwtMS42MjEtMS4xNzNBMjAuMTYgMjAuMTYgMCAwIDAgMTEuNjc5IDMxaC0xLjY4djJoMS42NzdjLjE4NiAzLjk2MiAxLjQ4NCA3LjczMSAzLjgxNCAxMC45NW0yNy4yNTcgMi45NjhBMTguMiAxOC4yIDAgMCAxIDMzIDUwLjM1MVY0OGgtMnYyLjM1MWExOC4yIDE4LjIgMCAwIDEtOS43NS0zLjQzM2wtMS4xNzIgMS42MjFBMjAuMiAyMC4yIDAgMCAwIDMxIDUyLjM1MVY1NGgydi0xLjY0OWMzLjk1LS4xOTEgNy43MDktMS40ODkgMTAuOTE5LTMuODEyek0yMS4yNSAxNy4xNEExOC4yIDE4LjIgMCAwIDEgMzEgMTMuNzA4VjE2aDJ2LTIuMjkyYTE4LjIgMTguMiAwIDAgMSA5Ljc0NyAzLjQzMmwxLjE3Mi0xLjYyYTIwLjE1IDIwLjE1IDAgMCAwLTEwLjkyLTMuODEyVjEwaC0ydjEuNzA4YTIwLjE2IDIwLjE2IDAgMCAwLTEwLjkyMSAzLjgxMnpNNTIuMzIgMzFhMjAuMiAyMC4yIDAgMCAwLTMuODExLTEwLjg5MmwtMS42MjEgMS4xNzNBMTguMiAxOC4yIDAgMCAxIDUwLjMyIDMxSDQ4djJoMi4zMjNhMTguMiAxOC4yIDAgMCAxLTMuNDM1IDkuNzc3bDEuNjIgMS4xNzNjMi4zMy0zLjIxOSAzLjYyOS02Ljk4OCAzLjgxNS0xMC45NUg1NHYtMnptLTcuMjkzLTEwLjU4NCA2LjE1OS02LjE2LTEuNDE0LTEuNDE0LTYuMTYgNi4xNnpNMTguOTcyIDQzLjY0MmwtNi4xNiA2LjE2IDEuNDE0IDEuNDE0IDYuMTYtNi4xNnptMy40NDItMjIuNjQxTDExLjU4NiAxMC4xNzNsLTEuNDE0IDEuNDE0TDIxIDIyLjQxNXpNNDMgNDEuNTg2bDEwLjgyNiAxMC44MjctMS40MTQgMS40MTRMNDEuNTg2IDQzeiIvPjwvZz48L3N2Zz4=" alt=""><span class="name">AWS WAF</span><small>regional web ACL: CloudFront-only header, common rules, rate rule</small></div>
+<div class="dg-node aws svc" id="edgegw" style="grid-area: 3 / 2;"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIGZpbGw9Im5vbmUiIHZpZXdCb3g9IjAgMCA2NCA2NCI+PGcgY2xpcC1wYXRoPSJ1cmwoI3N2Zy00ZDM5MTZhOC1hYmEwLTQ5ZmEtODFmNC1mZTkxNWIwNWFiYmQtYSkiPjxwYXRoIGZpbGw9IiMwMWE4OGQiIGQ9Ik0wIDBoNjR2NjRIMHoiLz48cGF0aCBmaWxsPSIjZmZmIiBkPSJtNTMuMzcyIDIxLjA3My0yLjQ3NS0uOTkzLS45NjQtMi40NDZhMSAxIDAgMCAwLTEuODYyLjAwMmwtLjk3MyAyLjQ4LTIuNDYuOTU0YTEgMSAwIDAgMCAuMDA1IDEuODY2bDIuNTEyLjk2MS45MDcgMi40NTFhMSAxIDAgMCAwIC45MjMuNjUzSDQ5YTEgMSAwIDAgMCAuOTI4LS42MjZsMS4wMS0yLjUwNiAyLjQyMi0uOTM1YTEuMDAyIDEuMDAyIDAgMCAwIC4wMTItMS44NjFtLTMuNTU5IDEuMDg2Yy0uMjU3LjEtLjQ2My4zMDItLjU2Ny41NmwtLjIwNi41MS0uMTY3LS40NTJhMSAxIDAgMCAwLS41OC0uNTg3bC0uNTEtLjE5NS40NDctLjE3NGExIDEgMCAwIDAgLjU2OS0uNTY3bC4yMDUtLjUyMi4xNTUuMzk1Yy4wOTEuMzEuMzMuNTU5LjYzNC42NjVsLjQ3Ny4xOTF6bTEuNDAyIDguNjk0LTcuMjA3LTIuODktMi44MS03LjEyNWExLjI0IDEuMjQgMCAwIDAtMS4xNjQtLjc5MmMtLjUxNyAwLS45NzUuMzExLTEuMTY0Ljc5M2wtMi44MzkgNy4yMzYtMy4wMyAxLjE3NlYxMy45OThhMSAxIDAgMCAwLS41NTItLjg5NGwtNi4wMDItMi45OThhMSAxIDAgMCAwLS45MzIuMDJsLTkgNUExIDEgMCAwIDAgMTYgMTZ2Ny4zODJsLTUuNDQ3IDIuNzIzQTEgMSAwIDAgMCAxMCAyN3YxMGExIDEgMCAwIDAgLjQ4NS44NTdMMTUgNDAuNTY3VjQ3YTEgMSAwIDAgMCAuNTIxLjg3OGwxMSA2YTEgMSAwIDAgMCAuOTk0LS4wMmw1LTNBMSAxIDAgMCAwIDMzIDUwVjM0Ljc2NWwzLjIxNCAxLjIyOCAyLjY1MiA3LjE2OWMuMTguNDg3LjYzMy44MDggMS4xNTMuODE2aC4wMmMuNTEyIDAgLjk2NS0uMzA1IDEuMTYtLjc4M2wyLjk0LTcuMjkgNy4wNi0yLjcyNWMuNDgzLS4xODYuNzk3LS42NC44MDEtMS4xNThhMS4yNCAxLjI0IDAgMCAwLS43ODUtMS4xNjlNMjYuOTc3IDUxLjg0OGwtMy4yMDMtMS43NDYgMy43NC0yLjI0NS0xLjAyOS0xLjcxNC00Ljc0NyAyLjg0OEwxNyA0Ni40MDZ2LTUuODRsNC41MTUtMi43MDktMS4wMy0xLjcxNEwxNiAzOC44MzNsLTQtMi40di0zLjgxNWw1LjQ0Ny0yLjcyNC0uODk0LTEuNzg4TDEyIDMwLjM4MnYtMi43NjRsNC45NTYtMi40NzhMMjEgMjcuNTY2djIuODE2bC0zLjQ0NyAxLjcyMy44OTQgMS43OSAzLjU1Ni0xLjc3OCAzLjU1NCAxLjc2Ljg4Ni0xLjc5MkwyMyAzMC4zOHYtMi44MTRsNC41MTUtMi43MDlBMSAxIDAgMCAwIDI4IDI0di01aC0ydjQuNDM0bC00IDIuNC00LTIuNHYtNi44NDZsMy0xLjY2NlYyMWgydi03LjE5bDMuMDI0LTEuNjggNC45NzggMi40ODZMMzEgMzYuNDVsLTEwLjUzOCA2LjcwNiAxLjA3NCAxLjY4OCA5LjQ2NC02LjAyM0wzMSA0OS40MzV6bTE2LjAzOC0xNy42NTNjLS4yNTguMS0uNDY0LjMwMy0uNTY4LjU2bC0yLjM3OSA1Ljg5NC0yLjEzNi01Ljc3NmExIDEgMCAwIDAtLjU4LS41ODZMMzMgMzIuNjI0di0xLjIyOWw0LjE2Mi0xLjYxNWExIDEgMCAwIDAgLjU3LS41NjdsMi4zMDMtNS44NyAyLjIwNyA1LjU5NmMuMDc1LjM1Mi4zNDIuNjM2LjY4My43NDVMNDguNzAyIDMyeiIvPjwvZz48ZGVmcz48Y2xpcFBhdGggaWQ9InN2Zy00ZDM5MTZhOC1hYmEwLTQ5ZmEtODFmNC1mZTkxNWIwNWFiYmQtYSI+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMGg2NHY2NEgweiIvPjwvY2xpcFBhdGg+PC9kZWZzPjwvc3ZnPg==" alt=""><span class="name">Edge gateway</span><small>AgentCore Gateway; runtime target api, JWT inbound, token passthrough</small></div>
+<div class="dg-node aws svc" id="runtime" style="grid-area: 4 / 2;"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIGZpbGw9Im5vbmUiIHZpZXdCb3g9IjAgMCA2NCA2NCI+PGcgY2xpcC1wYXRoPSJ1cmwoI3N2Zy00ZDM5MTZhOC1hYmEwLTQ5ZmEtODFmNC1mZTkxNWIwNWFiYmQtYSkiPjxwYXRoIGZpbGw9IiMwMWE4OGQiIGQ9Ik0wIDBoNjR2NjRIMHoiLz48cGF0aCBmaWxsPSIjZmZmIiBkPSJtNTMuMzcyIDIxLjA3My0yLjQ3NS0uOTkzLS45NjQtMi40NDZhMSAxIDAgMCAwLTEuODYyLjAwMmwtLjk3MyAyLjQ4LTIuNDYuOTU0YTEgMSAwIDAgMCAuMDA1IDEuODY2bDIuNTEyLjk2MS45MDcgMi40NTFhMSAxIDAgMCAwIC45MjMuNjUzSDQ5YTEgMSAwIDAgMCAuOTI4LS42MjZsMS4wMS0yLjUwNiAyLjQyMi0uOTM1YTEuMDAyIDEuMDAyIDAgMCAwIC4wMTItMS44NjFtLTMuNTU5IDEuMDg2Yy0uMjU3LjEtLjQ2My4zMDItLjU2Ny41NmwtLjIwNi41MS0uMTY3LS40NTJhMSAxIDAgMCAwLS41OC0uNTg3bC0uNTEtLjE5NS40NDctLjE3NGExIDEgMCAwIDAgLjU2OS0uNTY3bC4yMDUtLjUyMi4xNTUuMzk1Yy4wOTEuMzEuMzMuNTU5LjYzNC42NjVsLjQ3Ny4xOTF6bTEuNDAyIDguNjk0LTcuMjA3LTIuODktMi44MS03LjEyNWExLjI0IDEuMjQgMCAwIDAtMS4xNjQtLjc5MmMtLjUxNyAwLS45NzUuMzExLTEuMTY0Ljc5M2wtMi44MzkgNy4yMzYtMy4wMyAxLjE3NlYxMy45OThhMSAxIDAgMCAwLS41NTItLjg5NGwtNi4wMDItMi45OThhMSAxIDAgMCAwLS45MzIuMDJsLTkgNUExIDEgMCAwIDAgMTYgMTZ2Ny4zODJsLTUuNDQ3IDIuNzIzQTEgMSAwIDAgMCAxMCAyN3YxMGExIDEgMCAwIDAgLjQ4NS44NTdMMTUgNDAuNTY3VjQ3YTEgMSAwIDAgMCAuNTIxLjg3OGwxMSA2YTEgMSAwIDAgMCAuOTk0LS4wMmw1LTNBMSAxIDAgMCAwIDMzIDUwVjM0Ljc2NWwzLjIxNCAxLjIyOCAyLjY1MiA3LjE2OWMuMTguNDg3LjYzMy44MDggMS4xNTMuODE2aC4wMmMuNTEyIDAgLjk2NS0uMzA1IDEuMTYtLjc4M2wyLjk0LTcuMjkgNy4wNi0yLjcyNWMuNDgzLS4xODYuNzk3LS42NC44MDEtMS4xNThhMS4yNCAxLjI0IDAgMCAwLS43ODUtMS4xNjlNMjYuOTc3IDUxLjg0OGwtMy4yMDMtMS43NDYgMy43NC0yLjI0NS0xLjAyOS0xLjcxNC00Ljc0NyAyLjg0OEwxNyA0Ni40MDZ2LTUuODRsNC41MTUtMi43MDktMS4wMy0xLjcxNEwxNiAzOC44MzNsLTQtMi40di0zLjgxNWw1LjQ0Ny0yLjcyNC0uODk0LTEuNzg4TDEyIDMwLjM4MnYtMi43NjRsNC45NTYtMi40NzhMMjEgMjcuNTY2djIuODE2bC0zLjQ0NyAxLjcyMy44OTQgMS43OSAzLjU1Ni0xLjc3OCAzLjU1NCAxLjc2Ljg4Ni0xLjc5MkwyMyAzMC4zOHYtMi44MTRsNC41MTUtMi43MDlBMSAxIDAgMCAwIDI4IDI0di01aC0ydjQuNDM0bC00IDIuNC00LTIuNHYtNi44NDZsMy0xLjY2NlYyMWgydi03LjE5bDMuMDI0LTEuNjggNC45NzggMi40ODZMMzEgMzYuNDVsLTEwLjUzOCA2LjcwNiAxLjA3NCAxLjY4OCA5LjQ2NC02LjAyM0wzMSA0OS40MzV6bTE2LjAzOC0xNy42NTNjLS4yNTguMS0uNDY0LjMwMy0uNTY4LjU2bC0yLjM3OSA1Ljg5NC0yLjEzNi01Ljc3NmExIDEgMCAwIDAtLjU4LS41ODZMMzMgMzIuNjI0di0xLjIyOWw0LjE2Mi0xLjYxNWExIDEgMCAwIDAgLjU3LS41NjdsMi4zMDMtNS44NyAyLjIwNyA1LjU5NmMuMDc1LjM1Mi4zNDIuNjM2LjY4My43NDVMNDguNzAyIDMyeiIvPjwvZz48ZGVmcz48Y2xpcFBhdGggaWQ9InN2Zy00ZDM5MTZhOC1hYmEwLTQ5ZmEtODFmNC1mZTkxNWIwNWFiYmQtYSI+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMGg2NHY2NEgweiIvPjwvY2xpcFBhdGg+PC9kZWZzPjwvc3ZnPg==" alt=""><span class="name">AgentCore Runtime</span><small>Strands agent, protocol AGUI, JWT authorizer</small></div>
+<div class="dg-node aws svc" id="model" style="grid-area: 5 / 1;"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHRpdGxlPkljb24tQXJjaGl0ZWN0dXJlLzQ4L0FyY2hfQW1hem9uLUJlZHJvY2tfNDg8L3RpdGxlPjxnIGZpbGw9Im5vbmUiIGZpbGwtcnVsZT0iZXZlbm9kZCI+PHBhdGggZmlsbD0iIzAxYTg4ZCIgZD0iTTAgMGg2NHY2NEgweiIvPjxwYXRoIGZpbGw9IiNmZmYiIGQ9Ik01MSAzMWExLjAwMSAxLjAwMSAwIDAgMSAwLTIgMS4wMDEgMS4wMDEgMCAwIDEgMCAyTTI2Ljk3NyA1MS44NDhsLTMuMjAzLTEuNzQ2IDMuNzQxLTIuMjQ1LTEuMDMtMS43MTQtNC43NDcgMi44NDhMMTcgNDYuNDA2di01Ljg0bDQuNTE1LTIuNzEtMS4wMy0xLjcxM0wxNiAzOC44MzNsLTQtMi40di0zLjgxNWw1LjQ0Ny0yLjcyMy0uODk0LTEuNzlMMTIgMzAuMzgydi0yLjc2NGw0Ljk1Ni0yLjQ3OEwyMSAyNy41NjZ2Mi44MTZsLTMuNDQ3IDEuNzIzLjg5NCAxLjc5IDMuNTU2LTEuNzc4IDMuNTU0IDEuNzYuODg2LTEuNzkyTDIzIDMwLjM4di0yLjgxNGw0LjUxNS0yLjcxQTEgMSAwIDAgMCAyOCAyNHYtNWgtMnY0LjQzNGwtNCAyLjQtNC0yLjR2LTYuODQ2bDMtMS42NjZWMjFoMnYtNy4xOWwzLjAyNC0xLjY4IDQuOTc4IDIuNDg2LS4wMDEgMjEuODM0LTEwLjUzOCA2LjcwNiAxLjA3NCAxLjY4OCA5LjQ2NC02LjAyMkwzMSA0OS40MzR6TTQ4IDM5YTEuMDAxIDEuMDAxIDAgMCAxIDAgMiAxLjAwMSAxLjAwMSAwIDAgMSAwLTJtLTggMTBhMS4wMDEgMS4wMDEgMCAwIDEgMC0yIDEuMDAxIDEuMDAxIDAgMCAxIDAgMm0yLTMzYTEuMDAxIDEuMDAxIDAgMCAxIDAgMiAxLjAwMSAxLjAwMSAwIDAgMSAwLTJtOSAxMWEzIDMgMCAwIDAtMi44MTYgMkgzMy4wMDF2LTRINDJhMSAxIDAgMCAwIDEtMXYtNC4xODRBMyAzIDAgMCAwIDQ1IDE3YzAtMS42NTQtMS4zNDYtMy0zLTNzLTMgMS4zNDYtMyAzYzAgMS4zMDIuODM5IDIuNDAyIDIgMi44MTZWMjNoLTcuOTk5bC4wMDEtOS4wMDJhMSAxIDAgMCAwLS41NTMtLjg5NGwtNi4wMDItM2ExIDEgMCAwIDAtLjkzMi4wMjJsLTkgNUExIDEgMCAwIDAgMTYgMTZ2Ny4zODJsLTUuNDQ3IDIuNzIzYy0uMzM5LjE3LS41NTMuNTE2LS41NTMuODk1djEwYTEgMSAwIDAgMCAuNDg1Ljg1N0wxNSA0MC41NjZWNDdhMSAxIDAgMCAwIC41MjEuODc4bDExIDZhMSAxIDAgMCAwIC45OTQtLjAyMWw1LTNBMSAxIDAgMCAwIDMzIDUwdi03aDZ2Mi4xODRBMyAzIDAgMCAwIDM3IDQ4YzAgMS42NTQgMS4zNDYgMyAzIDNzMy0xLjM0NiAzLTNhMyAzIDAgMCAwLTItMi44MTZWNDJhMSAxIDAgMCAwLTEtMWgtN2wuMDAxLTRoMTAuNTg1bDEuNzE1IDEuNzE1QTIuOTUgMi45NSAwIDAgMCA0NSA0MGMwIDEuNjU0IDEuMzQ2IDMgMyAzczMtMS4zNDYgMy0zLTEuMzQ2LTMtMy0zYTIuOTUgMi45NSAwIDAgMC0xLjI4NS4zbC0yLjAwOC0yLjAwN0ExIDEgMCAwIDAgNDQgMzVIMzMuMDAxdi00aDE1LjE4M0EzIDMgMCAwIDAgNTEgMzNjMS42NTQgMCAzLTEuMzQ2IDMtM3MtMS4zNDYtMy0zLTMiLz48L2c+PC9zdmc+" alt=""><span class="name">Bedrock model</span><small>Claude Haiku, cross-region inference profile</small></div>
+<div class="dg-node aws svc" id="toolsgw" style="grid-area: 5 / 3;"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIGZpbGw9Im5vbmUiIHZpZXdCb3g9IjAgMCA2NCA2NCI+PGcgY2xpcC1wYXRoPSJ1cmwoI3N2Zy00ZDM5MTZhOC1hYmEwLTQ5ZmEtODFmNC1mZTkxNWIwNWFiYmQtYSkiPjxwYXRoIGZpbGw9IiMwMWE4OGQiIGQ9Ik0wIDBoNjR2NjRIMHoiLz48cGF0aCBmaWxsPSIjZmZmIiBkPSJtNTMuMzcyIDIxLjA3My0yLjQ3NS0uOTkzLS45NjQtMi40NDZhMSAxIDAgMCAwLTEuODYyLjAwMmwtLjk3MyAyLjQ4LTIuNDYuOTU0YTEgMSAwIDAgMCAuMDA1IDEuODY2bDIuNTEyLjk2MS45MDcgMi40NTFhMSAxIDAgMCAwIC45MjMuNjUzSDQ5YTEgMSAwIDAgMCAuOTI4LS42MjZsMS4wMS0yLjUwNiAyLjQyMi0uOTM1YTEuMDAyIDEuMDAyIDAgMCAwIC4wMTItMS44NjFtLTMuNTU5IDEuMDg2Yy0uMjU3LjEtLjQ2My4zMDItLjU2Ny41NmwtLjIwNi41MS0uMTY3LS40NTJhMSAxIDAgMCAwLS41OC0uNTg3bC0uNTEtLjE5NS40NDctLjE3NGExIDEgMCAwIDAgLjU2OS0uNTY3bC4yMDUtLjUyMi4xNTUuMzk1Yy4wOTEuMzEuMzMuNTU5LjYzNC42NjVsLjQ3Ny4xOTF6bTEuNDAyIDguNjk0LTcuMjA3LTIuODktMi44MS03LjEyNWExLjI0IDEuMjQgMCAwIDAtMS4xNjQtLjc5MmMtLjUxNyAwLS45NzUuMzExLTEuMTY0Ljc5M2wtMi44MzkgNy4yMzYtMy4wMyAxLjE3NlYxMy45OThhMSAxIDAgMCAwLS41NTItLjg5NGwtNi4wMDItMi45OThhMSAxIDAgMCAwLS45MzIuMDJsLTkgNUExIDEgMCAwIDAgMTYgMTZ2Ny4zODJsLTUuNDQ3IDIuNzIzQTEgMSAwIDAgMCAxMCAyN3YxMGExIDEgMCAwIDAgLjQ4NS44NTdMMTUgNDAuNTY3VjQ3YTEgMSAwIDAgMCAuNTIxLjg3OGwxMSA2YTEgMSAwIDAgMCAuOTk0LS4wMmw1LTNBMSAxIDAgMCAwIDMzIDUwVjM0Ljc2NWwzLjIxNCAxLjIyOCAyLjY1MiA3LjE2OWMuMTguNDg3LjYzMy44MDggMS4xNTMuODE2aC4wMmMuNTEyIDAgLjk2NS0uMzA1IDEuMTYtLjc4M2wyLjk0LTcuMjkgNy4wNi0yLjcyNWMuNDgzLS4xODYuNzk3LS42NC44MDEtMS4xNThhMS4yNCAxLjI0IDAgMCAwLS43ODUtMS4xNjlNMjYuOTc3IDUxLjg0OGwtMy4yMDMtMS43NDYgMy43NC0yLjI0NS0xLjAyOS0xLjcxNC00Ljc0NyAyLjg0OEwxNyA0Ni40MDZ2LTUuODRsNC41MTUtMi43MDktMS4wMy0xLjcxNEwxNiAzOC44MzNsLTQtMi40di0zLjgxNWw1LjQ0Ny0yLjcyNC0uODk0LTEuNzg4TDEyIDMwLjM4MnYtMi43NjRsNC45NTYtMi40NzhMMjEgMjcuNTY2djIuODE2bC0zLjQ0NyAxLjcyMy44OTQgMS43OSAzLjU1Ni0xLjc3OCAzLjU1NCAxLjc2Ljg4Ni0xLjc5MkwyMyAzMC4zOHYtMi44MTRsNC41MTUtMi43MDlBMSAxIDAgMCAwIDI4IDI0di01aC0ydjQuNDM0bC00IDIuNC00LTIuNHYtNi44NDZsMy0xLjY2NlYyMWgydi03LjE5bDMuMDI0LTEuNjggNC45NzggMi40ODZMMzEgMzYuNDVsLTEwLjUzOCA2LjcwNiAxLjA3NCAxLjY4OCA5LjQ2NC02LjAyM0wzMSA0OS40MzV6bTE2LjAzOC0xNy42NTNjLS4yNTguMS0uNDY0LjMwMy0uNTY4LjU2bC0yLjM3OSA1Ljg5NC0yLjEzNi01Ljc3NmExIDEgMCAwIDAtLjU4LS41ODZMMzMgMzIuNjI0di0xLjIyOWw0LjE2Mi0xLjYxNWExIDEgMCAwIDAgLjU3LS41NjdsMi4zMDMtNS44NyAyLjIwNyA1LjU5NmMuMDc1LjM1Mi4zNDIuNjM2LjY4My43NDVMNDguNzAyIDMyeiIvPjwvZz48ZGVmcz48Y2xpcFBhdGggaWQ9InN2Zy00ZDM5MTZhOC1hYmEwLTQ5ZmEtODFmNC1mZTkxNWIwNWFiYmQtYSI+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMGg2NHY2NEgweiIvPjwvY2xpcFBhdGg+PC9kZWZzPjwvc3ZnPg==" alt=""><span class="name">Tools gateway</span><small>AgentCore Gateway; MCP, JWT inbound, IAM role outbound</small></div>
+<div class="dg-node aws svc" id="kb" style="grid-area: 6 / 3;"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHRpdGxlPkljb24tQXJjaGl0ZWN0dXJlLzQ4L0FyY2hfQW1hem9uLUJlZHJvY2tfNDg8L3RpdGxlPjxnIGZpbGw9Im5vbmUiIGZpbGwtcnVsZT0iZXZlbm9kZCI+PHBhdGggZmlsbD0iIzAxYTg4ZCIgZD0iTTAgMGg2NHY2NEgweiIvPjxwYXRoIGZpbGw9IiNmZmYiIGQ9Ik01MSAzMWExLjAwMSAxLjAwMSAwIDAgMSAwLTIgMS4wMDEgMS4wMDEgMCAwIDEgMCAyTTI2Ljk3NyA1MS44NDhsLTMuMjAzLTEuNzQ2IDMuNzQxLTIuMjQ1LTEuMDMtMS43MTQtNC43NDcgMi44NDhMMTcgNDYuNDA2di01Ljg0bDQuNTE1LTIuNzEtMS4wMy0xLjcxM0wxNiAzOC44MzNsLTQtMi40di0zLjgxNWw1LjQ0Ny0yLjcyMy0uODk0LTEuNzlMMTIgMzAuMzgydi0yLjc2NGw0Ljk1Ni0yLjQ3OEwyMSAyNy41NjZ2Mi44MTZsLTMuNDQ3IDEuNzIzLjg5NCAxLjc5IDMuNTU2LTEuNzc4IDMuNTU0IDEuNzYuODg2LTEuNzkyTDIzIDMwLjM4di0yLjgxNGw0LjUxNS0yLjcxQTEgMSAwIDAgMCAyOCAyNHYtNWgtMnY0LjQzNGwtNCAyLjQtNC0yLjR2LTYuODQ2bDMtMS42NjZWMjFoMnYtNy4xOWwzLjAyNC0xLjY4IDQuOTc4IDIuNDg2LS4wMDEgMjEuODM0LTEwLjUzOCA2LjcwNiAxLjA3NCAxLjY4OCA5LjQ2NC02LjAyMkwzMSA0OS40MzR6TTQ4IDM5YTEuMDAxIDEuMDAxIDAgMCAxIDAgMiAxLjAwMSAxLjAwMSAwIDAgMSAwLTJtLTggMTBhMS4wMDEgMS4wMDEgMCAwIDEgMC0yIDEuMDAxIDEuMDAxIDAgMCAxIDAgMm0yLTMzYTEuMDAxIDEuMDAxIDAgMCAxIDAgMiAxLjAwMSAxLjAwMSAwIDAgMSAwLTJtOSAxMWEzIDMgMCAwIDAtMi44MTYgMkgzMy4wMDF2LTRINDJhMSAxIDAgMCAwIDEtMXYtNC4xODRBMyAzIDAgMCAwIDQ1IDE3YzAtMS42NTQtMS4zNDYtMy0zLTNzLTMgMS4zNDYtMyAzYzAgMS4zMDIuODM5IDIuNDAyIDIgMi44MTZWMjNoLTcuOTk5bC4wMDEtOS4wMDJhMSAxIDAgMCAwLS41NTMtLjg5NGwtNi4wMDItM2ExIDEgMCAwIDAtLjkzMi4wMjJsLTkgNUExIDEgMCAwIDAgMTYgMTZ2Ny4zODJsLTUuNDQ3IDIuNzIzYy0uMzM5LjE3LS41NTMuNTE2LS41NTMuODk1djEwYTEgMSAwIDAgMCAuNDg1Ljg1N0wxNSA0MC41NjZWNDdhMSAxIDAgMCAwIC41MjEuODc4bDExIDZhMSAxIDAgMCAwIC45OTQtLjAyMWw1LTNBMSAxIDAgMCAwIDMzIDUwdi03aDZ2Mi4xODRBMyAzIDAgMCAwIDM3IDQ4YzAgMS42NTQgMS4zNDYgMyAzIDNzMy0xLjM0NiAzLTNhMyAzIDAgMCAwLTItMi44MTZWNDJhMSAxIDAgMCAwLTEtMWgtN2wuMDAxLTRoMTAuNTg1bDEuNzE1IDEuNzE1QTIuOTUgMi45NSAwIDAgMCA0NSA0MGMwIDEuNjU0IDEuMzQ2IDMgMyAzczMtMS4zNDYgMy0zLTEuMzQ2LTMtMy0zYTIuOTUgMi45NSAwIDAgMC0xLjI4NS4zbC0yLjAwOC0yLjAwN0ExIDEgMCAwIDAgNDQgMzVIMzMuMDAxdi00aDE1LjE4M0EzIDMgMCAwIDAgNTEgMzNjMS42NTQgMCAzLTEuMzQ2IDMtM3MtMS4zNDYtMy0zLTMiLz48L2c+PC9zdmc+" alt=""><span class="name">Bedrock Knowledge Base</span><small>managed KB target; Retrieve and AgenticRetrieveStream tools</small></div>
+  </div>
+  <script class="dg-edges" type="application/json">
+[
+  {"from":"browser","to":"cognito","label":"PKCE sign-in, tokens"},
+  {"from":"cognito","to":"google","label":"federate","style":"dashed"},
+  {"from":"browser","to":"cf","label":"HTTPS, bearer token"},
+  {"from":"cf","to":"s3","label":"GET /*"},
+  {"from":"cf","to":"edgegw","label":"POST /api/invocations"},
+  {"from":"waf","to":"edgegw","label":"inspects","style":"dashed"},
+  {"from":"edgegw","to":"runtime","label":"/invocations, SSE back"},
+  {"from":"runtime","to":"model","label":"stream tokens"},
+  {"from":"runtime","to":"toolsgw","label":"MCP tool call, user JWT"},
+  {"from":"toolsgw","to":"kb","label":"Retrieve, gateway role"}
+]
+  </script>
+</div>
+<figcaption>Figure 3. Runtime architecture. Solid edges are the request path; dashed edges are federation and inspection. Two gateways: one in front of the runtime, one in front of the knowledge base. Route 53, ACM, Secrets Manager, CloudWatch, and SNS support the path and are described in the component notes. No Lambda function is present.</figcaption>
+</figure>
+
+<h3>Component notes</h3>
+
+<table>
+<tr><th>Component</th><th>Role</th><th>Configuration that matters</th></tr>
+<tr><td>Cognito user pool</td><td>Issues the JWT the rest of the system trusts</td><td>One app client, Authorization Code grant with PKCE, no client secret. Google configured as an OIDC identity provider; the managed login page shows only the Google button<a class="ref" href="#r3">[3]</a>. Self-registration through Google is on and any Google account is admitted; there is no allow-list and no pre-sign-up trigger. Managed login is served at <code>auth.dengler.io</code>, a user pool custom domain backed by an ACM certificate in <code>us-east-1</code><a class="ref" href="#r21">[21]</a>; Cognito requires an A record on the parent <code>dengler.io</code> before it will issue the domain<a class="ref" href="#r21">[21]</a>; the stack creates a placeholder record for that purpose (see the Route 53 row) and Cognito hands back a CloudFront alias target for the <code>auth</code> record. Callback and logout URLs are <code>https://chat.dengler.io/</code>. Access token lifetime 60 minutes, refresh token 30 days. The access token is the bearer everywhere, since the runtime and gateway authorizers match <code>allowedClients</code> against its <code>client_id</code> claim.</td></tr>
+<tr><td>S3 bucket</td><td>Holds <code>index.html</code>, <code>app.js</code>, <code>app.css</code></td><td>Block public access on; CloudFront reads through an origin access control<a class="ref" href="#r4">[4]</a>.</td></tr>
+<tr><td>CloudFront</td><td>TLS termination, caching for static files, one domain for page and API</td><td>Alias <code>chat.dengler.io</code> with an ACM certificate in <code>us-east-1</code>, validated by DNS. Default behavior to S3 with caching. A second behavior for <code>/api/*</code> whose origin is the edge gateway's hostname, caching disabled, compression disabled so the SSE bytes are not held back for gzip, the <code>AllViewerExceptHostHeader</code> origin request policy so <code>Authorization</code> and the session id reach the gateway while the <code>Host</code> header stays the gateway's own (forwarding the viewer's <code>Host</code> would make the gateway reject the request), a custom origin header <code>X-Origin-Verify</code> whose value the stack generates in Secrets Manager and references from both the origin and the WAF rule as a dynamic reference, and the origin response timeout set to 60 seconds (the default is 30; the AgentCore custom domain guide uses 120<a class="ref" href="#r5">[5]</a>). Section 13 explains what this timeout bounds. CloudFront's only jobs on this path are the shared domain and the same-origin request; WAF and rate limiting have moved to the gateway.</td></tr>
+<tr><td>Route 53 and ACM</td><td>DNS and certificates for <code>dengler.io</code></td><td>The <code>dengler.io</code> hosted zone is in Route 53 in the same account, so the CDK stack creates every record: the <code>chat</code> alias to the distribution, the <code>auth</code> alias to the Cognito target, the certificate validation records, and a placeholder A record at the apex. The apex has no A record today, and Cognito refuses to create the custom domain until one resolves<a class="ref" href="#r21">[21]</a>. The placeholder points at <code>192.0.2.1</code>, an address in the TEST-NET-1 range reserved for documentation and never routed<a class="ref" href="#r28">[28]</a>, with a record comment stating that it exists only to satisfy Cognito. The user pool domain resource depends on that record so CloudFormation orders them. A browser opening <code>dengler.io</code> gets no response, which is acceptable since nothing is published there. Both certificates must be in <code>us-east-1</code> because CloudFront terminates TLS for both hostnames.</td></tr>
+<tr><td>Edge gateway</td><td>Policy enforcement point in front of the runtime</td><td>An AgentCore Gateway with one target of type AgentCore Runtime, named <code>api</code>, reached at <code>/api/invocations</code>, so the CloudFront <code>/api/*</code> behavior forwards the path unchanged<a class="ref" href="#r14">[14]</a>. The gateway forwards the request body and the SSE response without protocol translation, so AG-UI passes through intact. Inbound auth is a JWT authorizer on the user pool. Outbound credential is token passthrough: the gateway validates the user's JWT and forwards it unchanged, so the runtime still sees the user. Identity-based rate limits keyed on <code>$.context.jwt.sub</code>, capping requests and concurrent connections per user<a class="ref" href="#r15">[15]</a>, are part of the design and are not yet in the stack (section 15). Request and response interceptors are not attached: they work only in buffered mode today, which would break streaming<a class="ref" href="#r14">[14]</a>.</td></tr>
+<tr><td>AWS WAF</td><td>Managed rules and per-address rate limit</td><td>A regional web ACL in the gateway's region, associated directly with the edge gateway<a class="ref" href="#r16">[16]</a>. Three rules: a CloudFront-only rule that blocks any request missing a secret header the distribution adds on the way to the origin<a class="ref" href="#r18">[18]</a>; the AWS managed common rule set; and one rate-based rule<a class="ref" href="#r9">[9]</a>. Because every request arrives from a CloudFront edge address, the rate rule keys on the viewer address in <code>X-Forwarded-For</code>, which is safe only because the first rule guarantees CloudFront set it. The gateway's failure mode stays at the default, fail-closed. Rules start in COUNT and move to BLOCK once the common rule set has been watched against real prompts, since a message that quotes SQL or HTML can trip it. Metrics <code>WafBlocks</code>, <code>WafFailCloses</code>, and <code>WafFailOpens</code> in the <code>AWS/Bedrock-AgentCore</code> namespace get alarms.</td></tr>
+<tr><td>AgentCore Runtime</td><td>Hosts the agent; the only compute in the system</td><td>Protocol <code>AGUI</code><a class="ref" href="#r6">[6]</a>, so the container speaks AG-UI over SSE on <code>/invocations</code>. The runtime target reference names HTTP, MCP, and A2A runtimes and does not mention <code>AGUI</code><a class="ref" href="#r14">[14]</a>, but the gateway accepts an AGUI runtime as a runtime target and forwards its SSE stream without inspecting it. Inbound auth is a JWT authorizer pointed at the user pool's OIDC discovery URL with the app client id in <code>allowedClients</code>, a request header allowlist naming <code>Authorization</code> so the validated bearer reaches the container (without it the runtime drops the header), and no <code>allowedWorkloadConfiguration</code>: the binding to the edge gateway is off, for the reason given in section 11<a class="ref" href="#r7">[7]</a>. Each browser page load generates one runtime session id, which gives each user their own isolated session for the life of the tab.</td></tr>
+<tr><td>Strands agent</td><td>The agent loop: model, system prompt, one MCP tool</td><td>Python, <code>strands-agents</code> with the AG-UI adapter from the AG-UI project<a class="ref" href="#r8">[8]</a>. Bedrock model provider with streaming on. One MCP client pointed at the tools gateway. No AgentCore Memory: the run input carries the full thread, and the agent holds nothing between runs.</td></tr>
+<tr><td>Tools gateway</td><td>Exposes the knowledge base as MCP tools</td><td>A second AgentCore Gateway with an inbound JWT authorizer on the same user pool, so the user's token is accepted here as well. One target of type managed knowledge base, which provides <code>Retrieve</code> and <code>AgenticRetrieveStream</code><a class="ref" href="#r2">[2]</a>. Outbound credential is the gateway's IAM role with <code>bedrock:Retrieve</code> on the one knowledge base ARN. The agent calls <code>Retrieve</code> only, so MCP response streaming on this gateway stays off<a class="ref" href="#r17">[17]</a>.</td></tr>
+<tr><td>Bedrock Knowledge Base</td><td>Document store and retrieval</td><td>A managed knowledge base with one S3 connector over the content bucket, managed embedding, default chunking<a class="ref" href="#r22">[22]</a>. What it holds and how it syncs is section 10.</td></tr>
+<tr><td>Bedrock model</td><td>Inference</td><td>A Claude Haiku cross-region inference profile, chosen for latency to first token and per-turn cost. The runtime execution role is granted <code>bedrock:InvokeModelWithResponseStream</code> on that one profile.</td></tr>
+<tr><td>CloudWatch</td><td>Telemetry</td><td>Alarms on the estimated monthly charges, on the three WAF metrics of the edge gateway, and on the nightly ingestion schedule, all notifying one SNS topic with an optional email subscription. AgentCore observability for traces and spans, and alarms on gateway 4xx rate, runtime 5xx, and Bedrock throttling, are not yet configured (section 15).</td></tr>
+</table>
+
+<h3 id="kb-path">4.2 Runtime to knowledge base: direct or through a gateway</h3>
+
+<p>The agent can call the knowledge base directly. <code>bedrock:Retrieve</code> on the runtime's execution role and the <code>retrieve</code> tool from the Strands tools package are all it takes, and nothing in the platform requires a gateway between an agent and a knowledge base. The question is what the gateway hop adds, and whether that is worth a second managed resource.</p>
+
+<table>
+<tr><th>Property</th><th>Runtime calls the knowledge base directly</th><th>Runtime calls it through the tools gateway</th></tr>
+<tr><td>Code</td><td>One tool from the Strands tools package, no MCP client</td><td>One MCP client with the user's token; the tool schema comes from the gateway</td></tr>
+<tr><td>Credential</td><td>The runtime execution role; retrieval is attributable to the service, not the user</td><td>The user's JWT at the gateway, the gateway's role at the knowledge base; retrieval is attributable to the user</td></tr>
+<tr><td>Policy point</td><td>IAM only</td><td>Gateway authorizer claim checks, per-user rate limits on tool calls, tool-level allow-lists, interceptors (buffered mode)</td></tr>
+<tr><td>Blast radius of a compromised agent</td><td>Can read the whole knowledge base at will</td><td>Can read only what a valid user token can read, at that user's rate</td></tr>
+<tr><td>Reuse</td><td>Each agent wires its own tool</td><td>Any MCP client with a token gets the same tools; the knowledge base becomes an MCP server</td></tr>
+<tr><td>Latency</td><td>One AWS API call</td><td>One extra hop, tens of milliseconds</td></tr>
+<tr><td>Resources</td><td>None beyond the knowledge base</td><td>A gateway, a target, a role</td></tr>
+</table>
+
+<p>The decision is to keep the gateway hop. The extra hop costs little, and it is the only place in the system where a retrieval carries the user's identity. That property is the one that would be missed later: without it, adding a second audience to the knowledge base means rewriting the agent instead of adding a claim check to a gateway. Direct retrieval remains the right choice for a throwaway agent or a single-tenant prototype, and the swap is a one-line change in the agent.</p>
+
+<p>The edge gateway and the tools gateway are two resources because the platform requires it: a runtime target can only be added to a gateway with no protocol type, and the knowledge base target lives on an MCP gateway<a class="ref" href="#r14">[14]</a>. The split also suits the design, since the two have different audiences (the browser and the agent), different rate-limit shapes, and only the edge carries a WAF policy.</p>
+
+<h3>Where a Lambda proxy would be needed</h3>
+
+<p>There is no Lambda function in the system, because every job one would do has a managed home: the edge gateway validates the JWT, hosts the WAF policy, and rate limits per user; the runtime streams and isolates sessions; CloudFront supplies the domain; and the tools gateway adapts the knowledge base to MCP. A Lambda would come back only for one of these reasons: reshaping the AG-UI stream into a different wire format for a client that cannot be changed (and even then, a gateway interceptor cannot do it in streaming mode, so it would be a proxy in the path); an authentication scheme the JWT authorizers cannot express; or a knowledge base type the managed target does not support, since that target covers managed knowledge bases only<a class="ref" href="#r2">[2]</a>. None applies here.</p>
+
+<h2 id="request-flow">5. Request flow</h2>
+
+<figure class="figure">
+<div data-sequence>
+  <script class="dg-seq" type="application/json">
+  {
+    "participants": [
+      {"id":"b","label":"Browser"},
+      {"id":"cf","label":"CloudFront"},
+      {"id":"eg","label":"Edge gateway"},
+      {"id":"rt","label":"Runtime"},
+      {"id":"tg","label":"Tools gateway"},
+      {"id":"m","label":"Model"}
+    ],
+    "messages": [
+      {"from":"b","to":"cf","label":"POST /api/invocations, Bearer, session id, RunAgentInput"},
+      {"from":"cf","to":"eg","label":"POST /api/invocations"},
+      {"from":"eg","to":"eg","label":"WAF, validate JWT, rate limit by sub"},
+      {"from":"eg","to":"rt","label":"forward unchanged, same token"},
+      {"from":"rt","to":"rt","label":"validate JWT, check gateway binding"},
+      {"from":"rt","to":"b","label":"RUN_STARTED","style":"return"},
+      {"from":"rt","to":"m","label":"stream (decides to search)"},
+      {"from":"rt","to":"b","label":"TOOL_CALL_START retrieve","style":"return"},
+      {"from":"rt","to":"tg","label":"MCP tools/call Retrieve, user JWT"},
+      {"from":"tg","to":"rt","label":"passages + source refs","style":"return"},
+      {"from":"rt","to":"b","label":"TOOL_CALL_RESULT","style":"return"},
+      {"from":"rt","to":"m","label":"stream with passages"},
+      {"from":"m","to":"rt","label":"text deltas","style":"return"},
+      {"from":"rt","to":"b","label":"TEXT_MESSAGE_CONTENT (repeats)","style":"return"},
+      {"from":"rt","to":"b","label":"RUN_FINISHED","style":"return"},
+      {"type":"note","at":"b","label":"append reply to in-memory thread"}
+    ]
+  }
+  </script>
+</div>
+<figcaption>Figure 4. One turn with a retrieval, after sign-in. Events from the runtime pass through the edge gateway and CloudFront untouched. The tools gateway to knowledge base hop is inside its lifeline. Nothing waits for a complete reply.</figcaption>
+</figure>
+
+<p>The browser owns the conversation. Every run sends the full message list, so the agent is stateless and a reload loses everything by design. The runtime session id ties the tab to one warm session so consecutive turns do not pay a cold start; it does not carry conversation state.</p>
+
+<p>The user's JWT travels the whole path. CloudFront forwards it, the edge gateway validates it and passes it through, the runtime validates it and hands it to the agent, and the agent presents the same token to the tools gateway, which validates it again. That gateway then calls the knowledge base with its own IAM role. Identity is a user at every hop up to the last, and a service role only for the final AWS API call.</p>
+
+<h2 id="wire-format">6. Wire format</h2>
+
+<p>The wire format is AG-UI, the Agent-User Interaction Protocol<a class="ref" href="#r10">[10]</a>, chosen over a private framing for two reasons: AgentCore Runtime speaks it natively, and the AG-UI project maintains an adapter for Strands, so neither the server nor the client needs custom framing code. Section 7 compares it with the alternatives.</p>
+
+<h3>Request</h3>
+
+<p>An AG-UI run input, posted as JSON. The message list is the thread as the page renders it.</p>
+
+<pre><code>POST /api/invocations
+Authorization: Bearer &lt;Cognito access token&gt;
+X-Amzn-Bedrock-AgentCore-Runtime-Session-Id: &lt;uuid, one per page load&gt;
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "threadId": "&lt;uuid, one per New chat&gt;",
+  "runId": "&lt;uuid, one per send&gt;",
+  "messages": [
+    {"id": "m1", "role": "user", "content": "What does our travel policy say about ..."},
+    {"id": "m2", "role": "assistant", "content": "Hotels outside the preferred list ..."},
+    {"id": "m3", "role": "user", "content": "And for international trips?"}
+  ],
+  "state": {}, "tools": [], "context": [], "forwardedProps": {}
+}</code></pre>
+
+<h3>Response</h3>
+
+<p>Server-sent events, one AG-UI event per <code>data:</code> line. The subset this app consumes:</p>
+
+<pre><code>data: {"type":"RUN_STARTED","threadId":"...","runId":"..."}
+data: {"type":"TOOL_CALL_START","toolCallId":"t1","toolCallName":"docs___Retrieve"}
+data: {"type":"TOOL_CALL_ARGS","toolCallId":"t1","delta":"{\"query\":\"hotel booking outside preferred list\"}"}
+data: {"type":"TOOL_CALL_END","toolCallId":"t1"}
+data: {"type":"TOOL_CALL_RESULT","toolCallId":"t1","content":"..."}
+data: {"type":"TEXT_MESSAGE_START","messageId":"m4","role":"assistant"}
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"m4","delta":"Hotels outside"}
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"m4","delta":" the preferred list"}
+data: {"type":"TEXT_MESSAGE_END","messageId":"m4"}
+data: {"type":"RUN_FINISHED","threadId":"...","runId":"..."}</code></pre>
+
+<p>Every event is emitted by the Strands adapter without app code. The page reads the text and tool-call lifecycle events and ignores <code>TOOL_CALL_ARGS</code> and <code>TOOL_CALL_RESULT</code>, which stay on the stream for debugging. <code>RUN_ERROR</code> replaces <code>RUN_FINISHED</code> on failure. During a silent stretch (a tool call in flight, a slow first token) the agent emits an AG-UI <code>CUSTOM</code> event named <code>ping</code> every 15 seconds as a keepalive. It is a data line, so every hop forwards it, and the page's subscriber sees it and resets its stall timer. An SSE comment line would also keep CloudFront alive, but the client drops comments before the subscriber runs, so the stall timer would fire on a long tool call regardless.</p>
+
+<h2 id="protocols">7. Client-to-agent protocols and libraries</h2>
+
+<p>The question raised in review was whether an open standard or library already covers the browser-to-agent stream, in the way the OpenAI Chat Completions format covers the client-to-model call. Four candidates were examined.</p>
+
+<table>
+<tr><th>Option</th><th>What it is</th><th>Transport and shape</th><th>Fit for GuppiGPT</th></tr>
+<tr><td>AG-UI<a class="ref" href="#r10">[10]</a></td><td>Open event protocol for agent-to-user interaction, started by CopilotKit, with integrations for Strands, LangGraph, Pydantic AI, Microsoft Agent Framework, Google ADK, and others</td><td>SSE or WebSocket; typed events for run lifecycle, text messages, tool calls, state deltas, and custom events; TypeScript client <code>@ag-ui/client</code></td><td>Strong. AgentCore Runtime has a native <code>AGUI</code> protocol mode<a class="ref" href="#r6">[6]</a> and the Strands adapter emits the events. Tool-call events map directly onto the retrieval status line.</td></tr>
+<tr><td>Vercel AI SDK UI message stream<a class="ref" href="#r11">[11]</a></td><td>The protocol behind the AI SDK's <code>useChat</code> hook; documented for use from any backend, with Python implementations from Pydantic AI and others</td><td>SSE with typed parts (text, reasoning, tool input and output, data, error), a <code>[DONE]</code> terminator, and a required <code>x-vercel-ai-ui-message-stream: v1</code> header</td><td>Good for a React front end that wants <code>useChat</code>. No AgentCore protocol mode, so the agent container would carry the encoder and the vanilla page would carry a parser anyway.</td></tr>
+<tr><td>OpenAI Chat Completions and Responses streaming</td><td>The de facto client-to-model format; LiteLLM<a class="ref" href="#r12">[12]</a> proxies it to Bedrock and many other providers, and Bedrock offers an OpenAI-compatible endpoint of its own</td><td>SSE of <code>chat.completion.chunk</code> objects (Completions) or typed events (Responses)</td><td>Right layer for a model proxy, wrong layer for an agent. It has no event for a tool call the server executed or for a retrieval result, so the retrieval status line would need a side channel. Worth keeping in mind if GuppiGPT later exposes the model rather than the agent.</td></tr>
+<tr><td>assistant-ui, CopilotKit</td><td>React component libraries with adapters for the protocols above</td><td>Consume AG-UI or the AI SDK stream</td><td>More UI than this page needs. CopilotKit is the reference AG-UI client and would be the choice if the page grew a React layer.</td></tr>
+</table>
+
+<p>Two other standards were set aside as out of scope: MCP, which is the tool-side protocol Gateway already speaks and carries no user-facing stream, and A2A, which is agent-to-agent. AG-UI's own positioning is that the three protocols are complementary, with AG-UI on the user-facing edge.</p>
+
+<p>The choice is AG-UI, consumed in the browser by <code>@ag-ui/client</code>'s <code>HttpAgent</code>, which handles SSE parsing, event typing and ordering checks, and abort. A hand-written SSE reader of about 40 lines was used while the page had no bundling step and remains the fallback if the dependency ever becomes a problem.</p>
+
+<h2 id="frontend">8. Frontend design</h2>
+
+<p>Three static files (<code>index.html</code>, <code>app.js</code>, <code>app.css</code>), no framework, and one bundling step: esbuild bundles <code>@ag-ui/client</code> into <code>app.js</code>. The PKCE flow is about forty lines and stays hand-written; <code>oidc-client-ts</code> would cost more wiring than it saves. No inline script or style, because the Content Security Policy is <code>default-src 'self'</code>.</p>
+
+<p><strong>Sign-in.</strong> On load, the page checks for tokens in memory. If none, it shows the sign-in screen; the button starts an Authorization Code with PKCE flow against the Cognito managed login domain with <code>identity_provider=Google</code>, so the Cognito page is skipped and the user lands on Google directly. The callback route exchanges the code for tokens and drops them in memory. A reload therefore repeats the redirect, but the Cognito and Google sessions are still valid, so the round trip completes without a prompt. Tokens never touch <code>localStorage</code> or <code>sessionStorage</code>, in keeping with the rule that the page stores nothing; the one exception is the PKCE code verifier, which sits in <code>sessionStorage</code> for the duration of the redirect and is removed on return. The refresh token renews the access token in the background before each send if fewer than five minutes remain.</p>
+
+<p><strong>State.</strong> One array, <code>messages</code>, holding <code>{id, role, content}</code> objects, plus <code>auth</code>, <code>status</code>, a <code>sessionId</code> generated once per page load, and a <code>threadId</code> regenerated on New chat.</p>
+
+<p><strong>Send.</strong> Push the user message, set status to running, construct an <code>HttpAgent</code> pointed at <code>/api/invocations</code> with the bearer and session headers and the thread as its initial messages, and call <code>runAgent</code> with a subscriber. <code>onTextMessageContentEvent</code> appends to the draft reply; <code>onToolCallStartEvent</code> and <code>onToolCallEndEvent</code> drive the status line; <code>onRunFinishedEvent</code> commits the reply to <code>messages</code>; <code>onRunErrorEvent</code>, a rejected <code>runAgent</code>, or a non-2xx response (turned into a failure by a custom <code>fetch</code>) moves to the error state. <code>onEvent</code> resets the stall timer for every event, the ping included. A stall timer aborts the run after 30 seconds without an event; the <code>ping</code> custom event counts, so a long tool call does not trip it. Retry after a <code>RUN_ERROR</code> or a transport error generates a fresh <code>sessionId</code>, which also covers a tab left open past the runtime's 8 hour session limit.</p>
+
+<p><strong>Render.</strong> Reply text goes into a <code>div</code> through <code>textContent</code> with <code>white-space: pre-wrap</code>, so newlines survive and nothing is interpreted as markup. There is no Markdown parser and no sanitizer, which removes the one script injection surface the page had. Rendering is scheduled with <code>requestAnimationFrame</code> and coalesced, so a burst of deltas produces one paint.</p>
+
+<p><strong>Accessibility.</strong> The thread is an <code>aria-live="polite"</code> region. The send button has a label. Focus returns to the textarea after each turn. Color contrast meets AA in both themes.</p>
+
+<h2 id="agent">9. Agent design</h2>
+
+<p>One Python package (<code>app.py</code>, <code>agent.py</code>, <code>validation.py</code>, <code>keepalive.py</code>) in an arm64 container that the CDK stack registers on AgentCore Runtime with protocol <code>AGUI</code>. The runtime fronts the container, so the package contains a FastAPI app with <code>/invocations</code> and <code>/ping</code>, the Strands agent, and the AG-UI adapter. In order, per run:</p>
+
+<ol>
+<li>Read the bearer token from the request headers. The runtime has already validated it; the agent decodes the claims without verification to get the <code>sub</code> claim for logging and forwards the raw token to the gateway. A Cognito access token carries <code>sub</code>, <code>username</code>, <code>client_id</code>, and scopes; the email lives only in the ID token, which the page holds for the account menu and never sends.</li>
+<li>Validate the run input: 1 to 40 messages, alternating roles, ending in a user turn, each under 4,000 characters. On failure emit <code>RUN_ERROR</code> and return.</li>
+<li>Trim from the front until the estimated input tokens fit a budget (16,000 to start).</li>
+<li>Build the Strands agent with the Bedrock model provider (streaming on, <code>max_tokens</code> 1,024, temperature 0.7), the system prompt, and one MCP client whose transport is streamable HTTP to the gateway URL with the user's token as the bearer. The client is built per run, because the token can change between runs after a refresh, and lists tools once per run; the knowledge base target contributes <code>Retrieve</code> and <code>AgenticRetrieveStream</code>, and the agent is given <code>Retrieve</code> only.</li>
+<li>Run the agent through the AG-UI adapter and yield its events into the SSE response, emitting a <code>CUSTOM</code> event named <code>ping</code> whenever 15 seconds pass without an event.</li>
+<li>Log one JSON record per run: hashed <code>sub</code>, session id, message count, whether retrieval ran, input and output tokens, latency to first delta, total latency, outcome.</li>
+</ol>
+
+<p>The system prompt names the assistant, says it has no memory beyond the current page, instructs it to use the retrieval tool when a question concerns the knowledge base's subject and to answer from general knowledge otherwise, and asks for concise plain text with no Markdown, since the page renders none. It should stay under 300 tokens.</p>
+
+<p>The agent uses <code>Retrieve</code>. It is one hybrid search that returns passages in about a second, which keeps the silent gap on the stream short, and the agent's own model then streams the answer. <code>AgenticRetrieveStream</code> plans, runs several retrievals, and streams trace events and a synthesized answer<a class="ref" href="#r19">[19]</a>; its streaming reaches the agent over MCP, not the page, and forwarding its progress as AG-UI step events would be app code for a second model writing prose. It stays available on the gateway for a later multi-step question mode.</p>
+
+<h2 id="content">10. Knowledge base content and sync</h2>
+
+<p>The knowledge base holds the documentation of GuppiGPT's own stack: the Model Context Protocol specification<a class="ref" href="#r23">[23]</a>, the Strands Agents documentation<a class="ref" href="#r24">[24]</a>, and the AG-UI documentation<a class="ref" href="#r25">[25]</a>. All three are Markdown in public GitHub repositories under MIT or Apache 2.0 licenses, together a few megabytes and a few hundred files. The choice was made on three grounds: the set is small enough that a full ingestion finishes in minutes and costs cents; it is plain Markdown, which the S3 connector indexes without parsing settings; and the questions a person will ask while testing this app ("what is an AG-UI run", "how does Strands register an MCP tool") are questions the corpus answers, so the retrieval tool gets exercised on every demo.</p>
+
+<p>Alternatives considered were a set of Project Gutenberg books (public domain, larger, and a prose corpus that invites long summaries rather than lookups) and a Wikipedia subset (too large to keep small without a curation step of its own).</p>
+
+<figure class="figure">
+<div data-diagram class="aws-fig">
+  <div class="dg-grid aws-grid" style="grid-template-columns: repeat(3, auto);">
+<div class="dg-node aws res" id="seed" style="grid-area: 1 / 1;"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+PHRpdGxlPkljb24tUmVzb3VyY2UvR2VuZXJhbC1SZXNvdXJjZS9SZXNfVXNlcl80OF9MaWdodDwvdGl0bGU+PHBhdGggZmlsbD0iIzI0MmYzZSIgZmlsbC1ydWxlPSJldmVub2RkIiBkPSJNNi4wMjUgNDRjLjQ5OS05LjkxNSA4LjM3LTE3LjgyMiAxNy45NzUtMTcuODIyIDMuMjQ4IDAgNi40My45MTQgOS4yMDUgMi42NDQgNS4xNDkgMy4yMTEgOC40NDggOC45NjEgOC43NjkgMTUuMTc4em04LjE2Ny0zMC4xMjJjMC01LjQ0NiA0LjQtOS44NzggOS44MDktOS44NzggNS40MDcgMCA5LjgwNiA0LjQzMiA5LjgwNiA5Ljg3OCAwIDUuNDQ3LTQuMzk5IDkuODc5LTkuODA2IDkuODc5LTUuNDA5IDAtOS44MDktNC40MzItOS44MDktOS44NzltMjAuMDcxIDEzLjI0N2ExOS40IDE5LjQgMCAwIDAtNS41NjUtMi4zNTQgMTEuODkgMTEuODkgMCAwIDAgNy4xMDktMTAuODkzQzM1LjgwNyA3LjMyOSAzMC41MSAyIDI0LjAwMSAyYy02LjUxMiAwLTExLjgwOSA1LjMyOS0xMS44MDkgMTEuODc4IDAgNC44NzcgMi45MzggOS4wNzIgNy4xMjUgMTAuOUMxMC41NDUgMjYuOTgxIDQgMzUuMiA0IDQ1YTEgMSAwIDAgMCAxIDFoMzhhMSAxIDAgMCAwIDEtMWMwLTcuMjgxLTMuNzMxLTE0LjEzLTkuNzM3LTE3Ljg3NSIvPjwvc3ZnPg==" alt=""><span class="name">Seed script</span><small>laptop or CI; git clone at pinned revisions, keep Markdown</small></div>
+<div class="dg-node aws res" id="sched" style="grid-area: 1 / 3;"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+PHRpdGxlPkljb24tUmVzb3VyY2UvQXBwbGljYXRpb24tSW50ZWdyYXRpb24vUmVzX0FtYXpvbi1FdmVudEJyaWRnZV9TY2hlZHVsZXJfNDg8L3RpdGxlPjxwYXRoIGZpbGw9IiNlNzE1N2IiIGZpbGwtcnVsZT0iZXZlbm9kZCIgZD0iTTE1IDE2aDMuOTJ2LTJoLTN2LTNIMTR2NGExIDEgMCAwIDAgMSAxbS05LjcwNyA4LjI5MyAxLjQxNCAxLjQxNCAzLTMtMS40MTQtMS40MTR6bTMuNDE0LTE2LTMtMy0xLjQxNCAxLjQxNCAzIDN6TTE1LjkyIDZIMTZWMmgtMnY0em05Ljc4Ny43MDctMS40MTQtMS40MTQtMyAzIDEuNDE0IDEuNDE0ek04LjkyIDE1YzAgMy4zMDkgMi42OTEgNiA2IDZzNi0yLjY5MSA2LTYtMi42OTEtNi02LTYtNiAyLjY5MS02IDZtLTIgMGMwLTQuNDExIDMuNTg5LTggOC04czggMy41ODkgOCA4LTMuNTg5IDgtOCA4LTgtMy41ODktOC04TTE4IDM4aDR2LTJoLTR6bTAtNWg0di0yaC00em0wLTVoNHYtMmgtNHptMTggMTBoNHYtMmgtNHptMC01aDR2LTJoLTR6bTAtNWg0di0yaC00em0tOSAxMGg0di0yaC00em0wLTVoNHYtMmgtNHptMC01aDR2LTJoLTR6bTE4LTE2aC0zdi0yaC0ydjJoLTQuMDh2LTJIMzR2MmgtNC4wOHYtMkgyOHYyaC0zdjJoM3YyaDEuOTJ2LTJIMzR2MmgxLjkydi0ySDQwdjJoMS45MnYtMkg0NHY0SDI1djJoMTl2MjNIMTRWMjZoLTJ2MThhMSAxIDAgMCAwIDEgMWgzMmExIDEgMCAwIDAgMS0xVjEzYTEgMSAwIDAgMC0xLTFNMiAxN2gzLjk3NnYtMkgyeiIvPjwvc3ZnPg==" alt=""><span class="name">EventBridge Scheduler</span><small>nightly universal target, no function</small></div>
+<div class="dg-node aws res" id="content" style="grid-area: 2 / 1;"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+PHRpdGxlPkljb24tUmVzb3VyY2UvU3RvcmFnZS9SZXNfQW1hem9uLVNpbXBsZS1TdG9yYWdlLVNlcnZpY2VfQnVja2V0LVdpdGgtT2JqZWN0c180ODwvdGl0bGU+PHBhdGggZmlsbD0iIzdhYTExNiIgZmlsbC1ydWxlPSJldmVub2RkIiBkPSJtNDAuMzU0IDI2LjA1OS4yMjItMS42NDdjMS43NiAxLjA3MiAyLjMxMSAxLjY5NSAyLjQ3MyAxLjk2LS40Ny4xNC0xLjQxOC4wMTMtMi42OTUtLjMxM20tMTcuNjI3LTYuMDIxYzAtLjA0OS4wNC0uMDkuMDktLjA5LjAxNSAwIC4wMjQuMDA5LjAzNy4wMTVsLS4wNjkuMTRjLS4wMzItLjAwOS0uMDU4LS4wMjctLjA1OC0uMDY1bTEzLjY0NiAyMC41OTlhMSAxIDAgMCAwLS4wMDkuMTM0YzAgLjE1Mi0uMzc3LjczNi0yLjA1NCAxLjM5OS0uNzQ4LjI5NS0xLjYzMS41NjEtMi42MjYuNzg5LTIuNTY2LjU5NC01LjcxNi45MjEtOC44NjguOTIxLTguNDI4IDAtMTMuNTQ1LTIuMTU5LTEzLjU0NS0zLjEwOXEwLS4wNjctLjAwOS0uMTM0TDUuNDQgMTIuMjUzYy4yNDUuMTQzLjUxLjI4Ljc4Ni40MTMuMDY5LjAzNC4xNDYuMDY2LjIxOC4wOTlhMTcgMTcgMCAwIDAgMS4xMDEuNDU5cS40MjEuMTU5Ljg3MS4zMDUuMTE4LjA0LjIzOS4wOC41NzMuMTggMS4xODUuMzQzLjE1Ni4wNC4zMTYuMDc5LjQ4LjEyMy45ODMuMjM0bC40LjA4OHEuNTU4LjExNyAxLjEzNC4yMjMuMTE0LjAyMS4yMjcuMDQyLjY5MS4xMjEgMS40MDYuMjI0LjE5My4wMjcuMzg3LjA1My41NDguMDc1IDEuMTA3LjE0bC40NC4wNXEuNjY3LjA3MiAxLjM0NS4xMjlsLjE1OC4wMTVhNTggNTggMCAwIDAgMS45NDIuMTI0cS41NzYuMDI5IDEuMTUyLjA0Ny4yMjYuMDA4LjQ1MS4wMTMuNzY2LjAyIDEuNTI4LjAyMWE2NSA2NSAwIDAgMCAxLjUyOC0uMDIxcS4yMjYtLjAwNS40NS0uMDEzYTYzIDYzIDAgMCAwIDEuNTc5LS4wNjkgNTggNTggMCAwIDAgMS41MTgtLjEwMmwuMTUtLjAxNHEuNjgyLS4wNTcgMS4zNTMtLjEzMS4yMi0uMDIzLjQzNi0uMDQ4YTUzIDUzIDAgMCAwIDEuMTE2LS4xNDJxLjE5LS4wMjUuMzc5LS4wNTIuNzE4LS4xMDMgMS40MTItLjIyNC4xMDUtLjAyLjIxMi0uMDQuNTg1LS4xMDggMS4xNS0uMjI2bC4zOTItLjA4NnEuNTA5LS4xMTIuOTk1LS4yMzcuMTUzLS4wMzguMzA2LS4wNzdhMjcgMjcgMCAwIDAgMS4xOS0uMzQ0bC4yMjgtLjA3NnEuNDU2LS4xNDkuODgzLS4zMS4xNjItLjA2LjMxOS0uMTIzLjQwOC0uMTYzLjc4NC0uMzM3Yy4wNjktLjAzMi4xNDMtLjA2Mi4yMTEtLjA5NXEuNDE3LS4yLjc4OC0uNDE0TDM4LjQxMyAyNS40OWMtMy42MjEtMS4xNjItOC43MDUtMy4yNjktMTMuNTE2LTUuNTU3YTIuMDkgMi4wOSAwIDAgMC0yLjA4LTEuOTg1Yy0xLjE1MiAwLTIuMDkuOTM3LTIuMDkgMi4wOSAwIDEuMTU0LjkzOCAyLjA5MSAyLjA5IDIuMDkxLjQ1MiAwIC44NjktLjE0NyAxLjIxMS0uMzkyIDQuMzEzIDIuMDY4IDkuODE3IDQuNTA5IDE0LjExNSA1Ljc1ek0yMi44MTYgNGMxMC4zNzIgMCAxNy42OCAzLjIxMiAxNy44MTYgNC45OTVsLS4wMjYuMjA3Yy0uMDE5LjA2MS0uMDU4LjEyNS0uMDkxLjE4OC0uMDI3LjA1MS0uMDQ2LjEwMi0uMDgyLjE1My0uMDQ1LjA2NC0uMTEuMTI4LS4xNy4xOTMtLjA1LjA1Mi0uMDkuMTA1LS4xNDguMTU4LS4wNzIuMDY1LS4xNjIuMTMtLjI0Ny4xOTUtLjA3Mi4wNTUtLjEzNC4xMDktLjIxNC4xNjMtLjA5Ni4wNjUtLjIxLjEzLS4zMi4xOTUtLjA5Mi4wNTUtLjE3Ny4xMTEtLjI4LjE2Ni0uMTE3LjA2My0uMjUzLjEyNy0uMzgzLjE4OS0uMTE2LjA1Ny0uMjIzLjExMy0uMzQ5LjE2OS0uMTM5LjA2Mi0uMjk2LjEyMi0uNDQ3LjE4NC0uMTM2LjA1NS0uMjY2LjExMi0uNDEzLjE2Ny0uMTYxLjA2LS4zMzkuMTE5LS41MTEuMTc3LS4xNTguMDU0LS4zMDcuMTEtLjQ3My4xNjMtLjE4LjA1Ni0uMzc3LjExMS0uNTY3LjE2Ny0uMTc5LjA1MS0uMzQ5LjEwNS0uNTM2LjE1NS0uMTk4LjA1NC0uNDEyLjEwMy0uNjE5LjE1NC0uMTk5LjA1LS4zOTEuMTAyLS42LjE0OS0uMjE1LjA0OC0uNDQ4LjA5NC0uNjcyLjE0LS4yMTguMDQ2LS40MjguMDkzLS42NTQuMTM2LS4yNDIuMDQ2LS40OTkuMDg3LS43NS4xMy0uMjI4LjAzOS0uNDQ4LjA4MS0uNjgyLjExNy0uMjY2LjA0MS0uNTQ3LjA3Ni0uODIyLjExNC0uMjM4LjAzMi0uNDY4LjA2OS0uNzEyLjA5OC0uMjg2LjAzNS0uNTg4LjA2My0uODg0LjA5NS0uMjQ5LjAyNi0uNDkuMDU1LS43NDYuMDc5LS4zMjQuMDI5LS42NjQuMDUtLjk5OC4wNzUtLjI0MS4wMTctLjQ3NS4wMzktLjcyMi4wNTQtLjM4LjAyMy0uNzc1LjAzNy0xLjE2OC4wNTItLjIxNS4wMDktLjQyMi4wMjMtLjY0LjAyOWE2NSA2NSAwIDAgMS0zLjc4IDBjLS4yMTEtLjAwNi0uNDEyLS4wMi0uNjItLjAyOC0uMzk5LS4wMTUtLjgwMi0uMDMtMS4xODgtLjA1My0uMjM2LS4wMTQtLjQ1Ny0uMDM1LS42ODctLjA1MS0uMzQ3LS4wMjYtLjY5OC0uMDQ4LTEuMDM0LS4wNzgtLjI0MS0uMDIzLS40NjktLjA1LS43MDQtLjA3NS0uMzEtLjAzMy0uNjI2LS4wNjItLjkyNi0uMDk5LS4yMjktLjAyNy0uNDQ0LS4wNjItLjY2OC0uMDkyLS4yOTEtLjA0LS41ODctLjA3Ny0uODY2LS4xMi0uMjItLjAzNC0uNDI1LS4wNzMtLjYzOC0uMTA5LS4yNjUtLjA0Ni0uNTM4LS4wODktLjc5NC0uMTM4LS4yMTQtLjA0MS0uNDEyLS4wODYtLjYxOC0uMTI4LS4yMzctLjA1LS40ODEtLjA5Ny0uNzA4LS4xNDgtLjE5Ny0uMDQ1LS4zNzktLjA5NC0uNTY4LS4xNDEtLjIxOS0uMDU0LS40NDQtLjEwNy0uNjUxLS4xNjItLjE3Ny0uMDQ4LS4zMzktLjEtLjUwOS0uMTQ5LS4yLS4wNTgtLjQwNi0uMTE1LS41OTMtLjE3NC0uMTYtLjA1MS0uMzA0LS4xMDQtLjQ1NS0uMTU2LS4xNzgtLjA2MS0uMzYzLS4xMjItLjUyOS0uMTgzLS4xNDEtLjA1NC0uMjY1LS4xMDgtLjM5OC0uMTYxLS4xNTUtLjA2NC0uMzE4LS4xMjYtLjQ2MS0uMTkxLS4xMjItLjA1NC0uMjI3LS4xMDktLjM0LS4xNjQtLjEzMy0uMDY0LS4yNzItLjEyOS0uMzkxLS4xOTMtLjEwMi0uMDU1LS4xODUtLjExLS4yNzctLjE2NC0uMTEtLjA2Ni0uMjI2LS4xMzEtLjMyMy0uMTk3LS4wNzktLjA1NC0uMTQyLS4xMDgtLjIxMi0uMTYyLS4wODUtLjA2NS0uMTc3LS4xMzEtLjI0OC0uMTk2LS4wNTktLjA1My0uMS0uMTA2LS4xNDgtLjE1OC0uMDYtLjA2NS0uMTI1LS4xMjktLjE3LS4xOTMtLjAzNy0uMDUxLS4wNTYtLjEwMi0uMDgyLS4xNTMtLjAzNC0uMDYzLS4wNzQtLjEyNy0uMDkxLS4xODhsLS4wMjctLjIwN0M1LjEzOSA3LjIxMiAxMi40NDYgNCAyMi44MTYgNG0yMi4yNjggMjIuMTU4Yy0uMjEyLTEuMTQ1LTEuNTMxLTIuMzU4LTQuMjE5LTMuODk1bDEuNzEtMTIuNjk2di0uMDA0bC4wNS0uMzg4YTEgMSAwIDAgMCAuMDA5LS4xM0M0Mi42MzQgNC44OTQgMzIuMTkgMiAyMi44MTYgMiAxMy40NDQgMiAzIDQuODk0IDMgOS4wNDVxMCAuMDY1LjAwOS4xM2wuMDUxLjM4OHYuMDA0bDQuMjEyIDMxLjI4MWMuMTMyIDMuNjY0IDkuNTc2IDUuMDMyIDE1LjU0NCA1LjAzMiAzLjI5OSAwIDYuNjA4LS4zNDQgOS4zMTgtLjk3MWEyMC41IDIwLjUgMCAwIDAgMi45MTEtLjg3OWMyLjE1OS0uODU0IDMuMjc0LTEuOTI0IDMuMzE4LTMuMTgybDEuNzMyLTEyLjg2OWMuOTQ2LjIgMS44MDcuMzIyIDIuNTIzLjMyMi45NjUgMCAxLjY4OC0uMjA0IDIuMDc5LS42NzEuMzQ4LS40MTUuNDg2LS45MzguMzg3LTEuNDcybS0zMi40My4yNzIgMi41OTYtNC4zMjcgMi41OTYgNC4zMjd6bTcuODI5IDEuNDkyYTEgMSAwIDAgMC0uMDEzLTEuMDA3bC00LjM2My03LjI3Yy0uMzYxLS42MDItMS4zNTQtLjYwMi0xLjcxNSAwbC00LjM2MiA3LjI3YS45OTkuOTk5IDAgMCAwIC44NTcgMS41MTVoOC43MjZjLjM2IDAgLjY5Mi0uMTkzLjg3LS41MDhtOS4xNjMgMS4zOGMxLjYxMyAwIDIuOTI2IDEuMzIzIDIuOTI2IDIuOTUgMCAxLjYyNi0xLjMxMyAyLjk1LTIuOTI2IDIuOTVzLTIuOTI2LTEuMzI0LTIuOTI2LTIuOTUgMS4zMTMtMi45NSAyLjkyNi0yLjk1bTAgNy45YzIuNzE2IDAgNC45MjYtMi4yMiA0LjkyNi00Ljk1cy0yLjIxLTQuOTUtNC45MjYtNC45NS00LjkyNiAyLjIyMS00LjkyNiA0Ljk1IDIuMjEgNC45NSA0LjkyNiA0Ljk1bS0xNS4wNDcgMS40NDNoNC44OTd2LTQuOTc5aC00Ljg5N3ptNS44OTctNi45OGgtNi44OThhMSAxIDAgMCAwLTEgMXY2Ljk4YTEgMSAwIDAgMCAxIDFoNi44OThhMSAxIDAgMCAwIDEtMXYtNi45OGExIDEgMCAwIDAtMS0xIi8+PC9zdmc+" alt=""><span class="name">Content bucket</span><small>S3, versioned, private; docs/&lt;source&gt;/...</small></div>
+<div class="dg-node aws svc" id="kb2" style="grid-area: 2 / 3;"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHRpdGxlPkljb24tQXJjaGl0ZWN0dXJlLzQ4L0FyY2hfQW1hem9uLUJlZHJvY2tfNDg8L3RpdGxlPjxnIGZpbGw9Im5vbmUiIGZpbGwtcnVsZT0iZXZlbm9kZCI+PHBhdGggZmlsbD0iIzAxYTg4ZCIgZD0iTTAgMGg2NHY2NEgweiIvPjxwYXRoIGZpbGw9IiNmZmYiIGQ9Ik01MSAzMWExLjAwMSAxLjAwMSAwIDAgMSAwLTIgMS4wMDEgMS4wMDEgMCAwIDEgMCAyTTI2Ljk3NyA1MS44NDhsLTMuMjAzLTEuNzQ2IDMuNzQxLTIuMjQ1LTEuMDMtMS43MTQtNC43NDcgMi44NDhMMTcgNDYuNDA2di01Ljg0bDQuNTE1LTIuNzEtMS4wMy0xLjcxM0wxNiAzOC44MzNsLTQtMi40di0zLjgxNWw1LjQ0Ny0yLjcyMy0uODk0LTEuNzlMMTIgMzAuMzgydi0yLjc2NGw0Ljk1Ni0yLjQ3OEwyMSAyNy41NjZ2Mi44MTZsLTMuNDQ3IDEuNzIzLjg5NCAxLjc5IDMuNTU2LTEuNzc4IDMuNTU0IDEuNzYuODg2LTEuNzkyTDIzIDMwLjM4di0yLjgxNGw0LjUxNS0yLjcxQTEgMSAwIDAgMCAyOCAyNHYtNWgtMnY0LjQzNGwtNCAyLjQtNC0yLjR2LTYuODQ2bDMtMS42NjZWMjFoMnYtNy4xOWwzLjAyNC0xLjY4IDQuOTc4IDIuNDg2LS4wMDEgMjEuODM0LTEwLjUzOCA2LjcwNiAxLjA3NCAxLjY4OCA5LjQ2NC02LjAyMkwzMSA0OS40MzR6TTQ4IDM5YTEuMDAxIDEuMDAxIDAgMCAxIDAgMiAxLjAwMSAxLjAwMSAwIDAgMSAwLTJtLTggMTBhMS4wMDEgMS4wMDEgMCAwIDEgMC0yIDEuMDAxIDEuMDAxIDAgMCAxIDAgMm0yLTMzYTEuMDAxIDEuMDAxIDAgMCAxIDAgMiAxLjAwMSAxLjAwMSAwIDAgMSAwLTJtOSAxMWEzIDMgMCAwIDAtMi44MTYgMkgzMy4wMDF2LTRINDJhMSAxIDAgMCAwIDEtMXYtNC4xODRBMyAzIDAgMCAwIDQ1IDE3YzAtMS42NTQtMS4zNDYtMy0zLTNzLTMgMS4zNDYtMyAzYzAgMS4zMDIuODM5IDIuNDAyIDIgMi44MTZWMjNoLTcuOTk5bC4wMDEtOS4wMDJhMSAxIDAgMCAwLS41NTMtLjg5NGwtNi4wMDItM2ExIDEgMCAwIDAtLjkzMi4wMjJsLTkgNUExIDEgMCAwIDAgMTYgMTZ2Ny4zODJsLTUuNDQ3IDIuNzIzYy0uMzM5LjE3LS41NTMuNTE2LS41NTMuODk1djEwYTEgMSAwIDAgMCAuNDg1Ljg1N0wxNSA0MC41NjZWNDdhMSAxIDAgMCAwIC41MjEuODc4bDExIDZhMSAxIDAgMCAwIC45OTQtLjAyMWw1LTNBMSAxIDAgMCAwIDMzIDUwdi03aDZ2Mi4xODRBMyAzIDAgMCAwIDM3IDQ4YzAgMS42NTQgMS4zNDYgMyAzIDNzMy0xLjM0NiAzLTNhMyAzIDAgMCAwLTItMi44MTZWNDJhMSAxIDAgMCAwLTEtMWgtN2wuMDAxLTRoMTAuNTg1bDEuNzE1IDEuNzE1QTIuOTUgMi45NSAwIDAgMCA0NSA0MGMwIDEuNjU0IDEuMzQ2IDMgMyAzczMtMS4zNDYgMy0zLTEuMzQ2LTMtMy0zYTIuOTUgMi45NSAwIDAgMC0xLjI4NS4zbC0yLjAwOC0yLjAwN0ExIDEgMCAwIDAgNDQgMzVIMzMuMDAxdi00aDE1LjE4M0EzIDMgMCAwIDAgNTEgMzNjMS42NTQgMCAzLTEuMzQ2IDMtM3MtMS4zNDYtMy0zLTMiLz48L2c+PC9zdmc+" alt=""><span class="name">Bedrock Knowledge Base</span><small>S3 connector on docs/, incremental ingestion</small></div>
+  </div>
+  <script class="dg-edges" type="application/json">
+[
+  {"from":"seed","to":"content","label":"aws s3 sync --delete"},
+  {"from":"sched","to":"kb2","label":"StartIngestionJob"},
+  {"from":"kb2","to":"content","label":"reads docs/","style":"dashed"}
+]
+  </script>
+</div>
+<figcaption>Figure 5. Content flow. The seed script is the only thing that writes to the bucket; the scheduler is the only thing that starts ingestion. Neither is a Lambda.</figcaption>
+</figure>
+
+<h3>Seed script</h3>
+
+<p>One shell script in the repository, run from a laptop or a CI job when the corpus should be refreshed. It clones the three repositories at a pinned tag, copies each one's <code>docs</code> tree and <code>LICENSE</code> file into a staging folder under <code>docs/&lt;repo&gt;/</code>, renames <code>.mdx</code> to <code>.md</code> (the connector indexes Markdown; MDX is Markdown with imports that the parser ignores), drops images and other binaries, and runs <code>aws s3 sync --delete --size-only</code> to the content bucket. The size comparison matters because every clone is fresh: comparing modification times would re-upload the whole corpus and re-ingest it on every run, while an edit that keeps a file's exact byte length is rare enough to accept. The <code>--delete</code> flag matters: the knowledge base removes documents that disappear from the bucket on the next ingestion, so a renamed file in an upstream repository does not leave a stale copy behind. A <code>docs/&lt;repo&gt;/.metadata.json</code> sidecar is not needed for retrieval and is left out.</p>
+
+<h3>Ingestion</h3>
+
+<p>The managed knowledge base has one data source, an S3 connector pointed at the <code>docs/</code> prefix of the bucket, with managed embedding and default chunking<a class="ref" href="#r22">[22]</a>. Ingestion is started by <code>StartIngestionJob</code> and is incremental: unchanged objects are skipped, changed ones are re-chunked and re-embedded, and deleted ones are removed<a class="ref" href="#r26">[26]</a>. An EventBridge Scheduler schedule calls that API once a night as a universal target, which is the AWS SDK call expressed as scheduler configuration with no function in between<a class="ref" href="#r27">[27]</a>. The schedule's role is allowed <code>bedrock:StartIngestionJob</code> on the one knowledge base; the knowledge base role is allowed <code>s3:ListBucket</code> and <code>s3:GetObject</code> on the one bucket. On a night when nothing changed the job finishes in seconds and indexes nothing. The connector's deletion safeguard, which skips the delete phase when a sync would remove more than a set share of documents, is disabled so that an upstream reorganisation is mirrored rather than left half applied; the corpus is public documentation that the seed script can restore.</p>
+
+<p>Nightly is a floor, not a design constraint. After running the seed script, an ingestion can be started by hand with one CLI call, and the scheduler can be pointed at any rate. An S3 event that triggers ingestion on every upload was considered and set aside: it needs a Lambda or a Step Functions state machine between the event and the API, and it starts one job per object when the seed script writes hundreds of them.</p>
+
+<p>Ingestion status is visible through <code>ListIngestionJobs</code> and in the knowledge base console. One CloudWatch alarm on the scheduler's failed invocation count covers the case where the nightly call itself fails.</p>
+
+<h2 id="security">11. Security and cost limits</h2>
+
+<p>Identity is present at every hop, so the exposure is narrow: an attacker needs a Google account that the user pool admits, and every run is attributable. The controls:</p>
+
+<table>
+<tr><th>Control</th><th>What it bounds</th><th>Where</th></tr>
+<tr><td>Cognito admission</td><td>Who can obtain a token at all</td><td>Any Google account, for now. The per-user rate limits below are what will bound spend under that policy; an allow-list can be added later as a pre-sign-up trigger without touching the app.</td></tr>
+<tr><td>JWT validation at the edge gateway</td><td>Only tokens from this pool and app client reach the runtime</td><td>Edge gateway JWT authorizer: discovery URL and <code>allowedClients</code></td></tr>
+<tr><td>Per-user rate limits</td><td>Requests per minute and concurrent connections per signed-in user, and therefore per-user spend</td><td>Edge gateway rate limits keyed on the JWT <code>sub</code> claim<a class="ref" href="#r15">[15]</a>. Not yet in the stack; until they are, the WAF rate rule per viewer address and the billing alarm are the bounds on spend (section 15)</td></tr>
+<tr><td>JWT validation at the runtime</td><td>Only tokens from this pool and app client are accepted, including at the runtime endpoint itself</td><td>Runtime JWT authorizer: discovery URL and <code>allowedClients</code>. Binding the runtime to the edge gateway with <code>allowedWorkloadConfiguration</code> is off. With it on, the runtime demands a transaction token, and the gateway supplies one only when it signs the request as its own role, which a JWT runtime then rejects as an authorization method mismatch. The stack keeps the binding behind the <code>bind_runtime_to_gateway</code> context flag for the day token passthrough carries the gateway identity.</td></tr>
+<tr><td>JWT validation at the tools gateway</td><td>Only the same users can search the knowledge base, even from a compromised agent</td><td>Tools gateway JWT authorizer on the same pool</td></tr>
+<tr><td>Least-privilege roles</td><td>What each service can reach</td><td>Runtime role: invoke one inference profile. Tools gateway role: <code>bedrock:GetKnowledgeBase</code> and <code>bedrock:Retrieve</code> on the one knowledge base, plus <code>bedrock:AgenticRetrieveStream</code>, which the service does not scope to a resource. Edge gateway role: <code>InvokeAgentRuntime</code> on the one runtime, unused while the target passes the token through.</td></tr>
+<tr><td>WAF</td><td>Requests that did not come through CloudFront, known exploit patterns, and requests per 5 minutes from one viewer address, all before any token is checked</td><td>Regional web ACL on the edge gateway<a class="ref" href="#r16">[16]</a>; rate rule keyed on <code>X-Forwarded-For</code></td></tr>
+<tr><td>Input caps and <code>max_tokens</code></td><td>Cost of any single run</td><td>Agent validation</td></tr>
+<tr><td>Runtime session limits</td><td>Concurrent sessions and their lifetime</td><td>Sessions idle out at 15 minutes and end at 8 hours; a service quota bounds concurrency</td></tr>
+</table>
+
+<p>A billing alarm at twice the expected monthly figure closes the loop. Content Security Policy is <code>default-src 'self'</code> plus <code>connect-src</code> for <code>auth.dengler.io</code>, with no inline script. The page sets no cookies of its own.</p>
+
+<p>The CloudFront origin for the edge gateway carries no origin access control. A caller who discovers the gateway hostname is stopped by the WAF's CloudFront-only header rule once that rule is in BLOCK mode<a class="ref" href="#r18">[18]</a>; while it is still in COUNT, the gateway's JWT authorizer and the per-user rate limits are what stand in the way, and they remain as a second layer afterwards. What CloudFront adds on this path is the shared domain, which keeps the browser's request same-origin.</p>
+
+<h2 id="decisions">12. Decisions and alternatives</h2>
+
+<table>
+<tr><th>Decision</th><th>Chosen</th><th>Alternative considered</th><th>Reason</th><th>Reversibility</th></tr>
+<tr><td>Compute</td><td>AgentCore Runtime hosting a Strands agent</td><td>Lambda Function URL with response streaming</td><td>The runtime validates JWTs, streams SSE, isolates sessions, and speaks AG-UI, all as configuration. The Lambda did the same in code and had no natural place for an MCP client with a long-lived session</td><td>Moderate: the agent code is portable; the CloudFront origin and auth wiring change</td></tr>
+<tr><td>Identity</td><td>Cognito user pool federated to Google, PKCE in the browser</td><td>Google OIDC directly, with the runtime authorizer pointed at Google's discovery URL</td><td>Direct Google would work for the runtime, but Cognito gives a place for an admission list later, a logout endpoint, refresh tokens with a controllable lifetime, and a second IdP later without touching the app</td><td>Easy: the authorizer's discovery URL and client id change</td></tr>
+<tr><td>Entry point</td><td>AgentCore Gateway with a runtime target, WAF on the gateway, CloudFront for the domain only</td><td>CloudFront straight to the runtime with WAF on CloudFront</td><td>The gateway adds per-user rate limits, a second JWT check, and a place to add tool or claim policy without touching the agent; the runtime target streams SSE through without translation<a class="ref" href="#r14">[14]</a>. The cost is one more hop and one more resource</td><td>Easy: the CloudFront origin changes back</td></tr>
+<tr><td>Knowledge base access</td><td>Tools gateway managed KB target, user JWT passed through (section 4.2)</td><td>Direct <code>bedrock:Retrieve</code> from the agent's execution role; a Lambda tool target wrapping Retrieve</td><td>The managed target needs no code and gives the gateway a second policy enforcement point with the user's identity. Direct calls would be simpler but drop that point; a Lambda target would be code for nothing the managed target lacks</td><td>Easy: the agent's tool list changes</td></tr>
+<tr><td>Runtime-to-gateway credential</td><td>The user's JWT</td><td>SigV4 with the runtime execution role via <code>mcp-proxy-for-aws</code></td><td>Passing the user's token keeps the request attributable at the gateway and needs no extra library. SigV4 is the documented default and remains the fallback if token lifetime or audience claims cause trouble</td><td>Easy</td></tr>
+<tr><td>Wire format</td><td>AG-UI over SSE</td><td>Private NDJSON; AI SDK UI message stream; OpenAI-style chunks</td><td>Section 7</td><td>Moderate: the page's subscriber and the agent's adapter both change</td></tr>
+<tr><td>Browser to gateway path</td><td>Through CloudFront on the app's domain</td><td>Browser calls the gateway or runtime endpoint directly with CORS</td><td>Direct calls are documented<a class="ref" href="#r13">[13]</a> and work, but need a CORS policy and a second hostname in the CSP. Same-origin through CloudFront removes both, with the origin timeout behavior described in section 13</td><td>Easy</td></tr>
+<tr><td>Session state</td><td>None; the browser resends the thread each run</td><td>AgentCore Memory keyed by the runtime session id</td><td>Statelessness is the product requirement. Memory would be the first thing to add if history ever returns</td><td>Easy</td></tr>
+<tr><td>Model</td><td>Claude Haiku</td><td>Claude Sonnet</td><td>Lowest latency to first token and per-turn cost for a page any Google account can use; the agent has one tool and short replies</td><td>Easy: one inference profile id</td></tr>
+<tr><td>Retrieval tool</td><td><code>Retrieve</code></td><td><code>AgenticRetrieveStream</code></td><td>Section 9: shortest silent gap on the stream, one model writing prose</td><td>Easy: the tool allow-list on the agent</td></tr>
+<tr><td>Reply rendering</td><td>Plain text, newlines preserved</td><td>Markdown with a sanitizer</td><td>Removes about 100 lines of code and the only injection surface; the system prompt asks for plain text</td><td>Easy</td></tr>
+<tr><td>Domain</td><td><code>chat.dengler.io</code> and <code>auth.dengler.io</code></td><td>CloudFront default hostname and a Cognito prefix domain</td><td>The domain exists already, and the sign-in redirect reads better when both hostnames share it. Cost is two certificates and three DNS records, all in the stack</td><td>Easy: aliases and callback URLs change back</td></tr>
+<tr><td>Knowledge base content</td><td>The documentation of the stack itself: MCP specification, Strands Agents docs, AG-UI docs</td><td>A Project Gutenberg book set; a Wikipedia subset</td><td>Section 10: small, open licensed, plain Markdown, and questions about it are the questions a person testing this app will ask</td><td>Easy: any folder of documents in the bucket</td></tr>
+<tr><td>Sync</td><td>A seed script writes to S3; EventBridge Scheduler calls <code>StartIngestionJob</code> nightly as a universal target</td><td>S3 event notification through Lambda or Step Functions; manual sync in the console</td><td>No code and no Lambda; ingestion is incremental so a nightly job costs nothing when nothing changed</td><td>Easy</td></tr>
+<tr><td>Frontend</td><td>Static HTML, CSS, and vanilla JavaScript with one esbuild step</td><td>React with CopilotKit</td><td>The page has one component. CopilotKit would be the choice if the UI grew beyond it</td><td>Easy: the protocol does not depend on the client</td></tr>
+<tr><td>Apex A record</td><td>Placeholder record at <code>dengler.io</code> pointing at <code>192.0.2.1</code></td><td>Add the apex as a second alias on the chat distribution and redirect it to <code>chat.dengler.io</code> with a CloudFront Function</td><td>Cognito only needs the apex to resolve. A redirect would add a certificate SAN, a function, and a second hostname to reason about, for a page nobody is expected to open at the apex</td><td>Easy: replace the record with an alias and add the function; Cognito does not recheck after the domain exists</td></tr>
+<tr><td>Infrastructure</td><td>AWS CDK, one stack</td><td>The AgentCore starter toolkit alone; SAM; Terraform</td><td>The toolkit deploys the agent but not CloudFront, Cognito, or the bucket. CDK expresses all of it, with the runtime and gateway through L1 constructs where needed</td><td>Moderate</td></tr>
+</table>
+
+<p>The strongest case for keeping a Lambda in the path is control of the wire format: a proxy could present a stable private contract to the page while the runtime's protocol evolves. That argument would carry if the page were a product with many clients. For one page and one agent, adopting AG-UI directly means the contract is public and versioned by someone else, which is the better position.</p>
+
+<h2 id="open-questions">13. Stream timing and open items</h2>
+
+<p>The one place where the design rests on a timing property rather than a feature is the CloudFront origin in front of the edge gateway. Per the CloudFront origin settings reference<a class="ref" href="#r20">[20]</a>, the origin response timeout bounds two intervals: the wait for the first byte after the request is forwarded, and the wait between one packet of the response and the next. It does not bound total response length. A stream that keeps producing events can run for minutes; a stream that goes silent for longer than the timeout is cut. Two things in the design follow from that. The runtime emits <code>RUN_STARTED</code> before any model call, so the first byte arrives within milliseconds. And the agent emits a <code>ping</code> custom event every 15 seconds while the stream is otherwise silent, so no gap approaches the limit. With both in place the timeout is set to 60 seconds and no quota increase is needed.</p>
+
+<h3>Open items</h3>
+
+<ol>
+<li>Whether the edge gateway's own idle handling interacts with long streams. Low priority; covered by the keepalive in practice, and measured when convenient.</li>
+<li>Whether AgentCore Gateway will stamp its identity on a token passthrough request, or AgentCore Runtime will accept a gateway-signed request that carries the user token. Either would let the runtime binding in section 11 come back.</li>
+</ol>
+
+<h2 id="risks">14. Risks</h2>
+
+<table>
+<tr><th>Risk</th><th>Effect</th><th>Mitigation</th></tr>
+<tr><td>Slow first token exceeds the CloudFront origin timeout</td><td>504 to the browser with no reply</td><td>The runtime emits <code>RUN_STARTED</code> before calling the model, a first byte within milliseconds; the <code>ping</code> event covers silent stretches (section 13)</td></tr>
+<tr><td>Gateway interceptors added later break streaming</td><td>Buffered replies, no tokens until the end</td><td>Interceptors are buffered-mode only today<a class="ref" href="#r14">[14]</a>; keep them off the edge gateway until streaming mode ships</td></tr>
+<tr><td>Runtime cold start on a new session</td><td>Several seconds before the first turn of a tab</td><td>One session per page load, so only the first turn pays; show the status line during it</td></tr>
+<tr><td>Token lifetime shorter than a long stream</td><td>The gateway rejects a retrieval late in a run</td><td>Refresh before send when under five minutes remain; the run itself is bounded to about two minutes</td></tr>
+<tr><td>AG-UI adapter for Strands lags Strands releases</td><td>Build breaks on upgrade</td><td>Pin both; the adapter is community maintained<a class="ref" href="#r8">[8]</a></td></tr>
+<tr><td>Upstream documentation changes shape</td><td>A repository moves its docs folder or switches format and the seed script empties or garbles part of the corpus</td><td>Pin repository tags in the script; review the sync summary before running with <code>--delete</code>; bucket versioning allows a rollback</td></tr>
+<tr><td>Bedrock throttling</td><td>Users see the error state during bursts</td><td>Add the throttle alarm (section 15); raise the model quota; keep Retry visible</td></tr>
+<tr><td>Knowledge base returns passages the user should not see</td><td>Data exposure</td><td>Out of scope for one user pool with one audience; if the knowledge base ever holds mixed audiences, the gateway authorizer's claim checks are the place to add it</td></tr>
+</table>
+
+<h2 id="next-steps">15. Next steps</h2>
+
+<p>The stack, the agent, the page, the knowledge base, and the sync are deployed. What remains:</p>
+
+<ol>
+<li>Publish the Google OAuth consent screen to production in Google Cloud Console. Until then only listed test accounts can sign in.</li>
+<li>Confirm the alarm topic's email subscription, which is still pending confirmation, so that alarms deliver somewhere.</li>
+<li>Watch the three WAF rules in COUNT against real prompts, then flip <code>WAF_BLOCK</code> in the stack so that the CloudFront-only rule, the common rule set, and the rate rule block.</li>
+<li>Add the per-user rate limits on the edge gateway keyed on the JWT <code>sub</code> claim (section 11), which is the control that bounds spend per signed-in user while any Google account is admitted.</li>
+<li>Turn on AgentCore observability for the runtime and both gateways, and add alarms on gateway 4xx rate, runtime 5xx, and Bedrock throttling.</li>
+<li>Measure the edge gateway's idle handling on a long silent stream and record the result in section 13.</li>
+</ol>
+
+<h2 id="glossary">Glossary</h2>
+
+<table>
+<tr><td><strong>AG-UI</strong></td><td>Agent-User Interaction Protocol; an open event stream format between an agent backend and a user-facing client.</td></tr>
+<tr><td><strong>AgentCore Runtime</strong></td><td>Managed hosting for agent containers with session isolation, inbound auth, and streaming.</td></tr>
+<tr><td><strong>AgentCore Gateway</strong></td><td>Managed MCP server that exposes APIs, Lambda functions, knowledge bases, and runtimes as targets with its own inbound and outbound auth, rate limits, and WAF support.</td></tr>
+<tr><td><strong>MCP</strong></td><td>Model Context Protocol; the tool-side protocol between an agent and a tool server.</td></tr>
+<tr><td><strong>PKCE</strong></td><td>Proof Key for Code Exchange; the OAuth authorization code flow variant for public clients such as a browser page.</td></tr>
+<tr><td><strong>OAC</strong></td><td>Origin access control; CloudFront signs origin requests so S3 buckets can stay private.</td></tr>
+<tr><td><strong>EARS</strong></td><td>Easy Approach to Requirements Syntax; a small set of sentence templates for requirements.</td></tr>
+</table>
+
+<h2 id="references">References</h2>
+
+<ol class="sources">
+<li id="r1"><a href="https://alistairmavin.com/ears/">EARS: Easy Approach to Requirements Syntax</a>, Alistair Mavin</li>
+<li id="r2"><a href="https://docs.aws.amazon.com/bedrock/latest/userguide/kb-gateway-target.html">Connect to a knowledge base through AgentCore Gateway</a>, Amazon Bedrock User Guide</li>
+<li id="r3"><a href="https://docs.aws.amazon.com/cognito/latest/developerguide/cognito-user-pools-identity-federation.html">User pool sign-in with third party identity providers</a>, Amazon Cognito Developer Guide</li>
+<li id="r4"><a href="https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-restricting-access-to-s3.html">Restricting access to an Amazon S3 origin</a>, CloudFront Developer Guide</li>
+<li id="r5"><a href="https://aws.amazon.com/blogs/machine-learning/set-up-custom-domain-names-for-amazon-bedrock-agentcore-runtime-agents">Set up custom domain names for Amazon Bedrock AgentCore Runtime agents</a>, AWS Machine Learning Blog</li>
+<li id="r6"><a href="https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-agui.html">Deploy AG-UI servers in AgentCore Runtime</a>, Amazon Bedrock AgentCore Developer Guide</li>
+<li id="r7"><a href="https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-oauth.html">Authenticate and authorize with Inbound Auth and Outbound Auth</a>, Amazon Bedrock AgentCore Developer Guide</li>
+<li id="r8"><a href="https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/aws-strands">AG-UI integration for AWS Strands Agents</a>, ag-ui-protocol on GitHub</li>
+<li id="r9"><a href="https://docs.aws.amazon.com/waf/latest/developerguide/waf-rule-statement-type-rate-based.html">Rate-based rule statement</a>, AWS WAF Developer Guide</li>
+<li id="r10"><a href="https://docs.ag-ui.com/introduction">AG-UI overview</a>, Agent User Interaction Protocol documentation</li>
+<li id="r11"><a href="https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol">AI SDK UI: stream protocols</a>, Vercel AI SDK documentation</li>
+<li id="r12"><a href="https://docs.litellm.ai/">LiteLLM documentation</a>, an OpenAI-format proxy for many model providers</li>
+<li id="r13"><a href="https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-invoke-agent.html">Invoke an AgentCore Runtime agent</a>, Amazon Bedrock AgentCore Developer Guide</li>
+<li id="r14"><a href="https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-target-http-runtime.html">Amazon Bedrock AgentCore Runtime targets</a>, Amazon Bedrock AgentCore Developer Guide</li>
+<li id="r15"><a href="https://aws.amazon.com/blogs/machine-learning/configure-rate-limits-for-ai-traffic-on-agentcore-gateway/">Configure rate limits for AI traffic on AgentCore Gateway</a>, AWS Machine Learning Blog</li>
+<li id="r16"><a href="https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-waf.html">Protecting a gateway with AWS WAF</a>, Amazon Bedrock AgentCore Developer Guide</li>
+<li id="r17"><a href="https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-mcp-streaming.html">Enable MCP response streaming for an AgentCore gateway</a>, Amazon Bedrock AgentCore Developer Guide</li>
+<li id="r18"><a href="https://dev.to/aws-builders/making-amazon-bedrock-agentcore-gateway-accessible-only-through-cloudfront-ha1">Making Amazon Bedrock AgentCore Gateway accessible only through CloudFront</a>, DEV Community</li>
+<li id="r19"><a href="https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-target-connector-managed-kb.html">Amazon Bedrock Managed Knowledge Bases as connector target</a>, Amazon Bedrock AgentCore Developer Guide</li>
+<li id="r20"><a href="https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/DownloadDistValuesOrigin.html">Origin settings: response timeout and keep-alive timeout</a>, CloudFront Developer Guide</li>
+<li id="r21"><a href="https://docs.aws.amazon.com/cognito/latest/developerguide/cognito-user-pools-add-custom-domain.html">Using a custom domain for managed login</a>, Amazon Cognito Developer Guide</li>
+<li id="r22"><a href="https://docs.aws.amazon.com/bedrock/latest/userguide/kb-managed-create.html">Create a managed knowledge base</a>, Amazon Bedrock User Guide</li>
+<li id="r23"><a href="https://github.com/modelcontextprotocol/modelcontextprotocol">Model Context Protocol specification repository</a>, MIT license</li>
+<li id="r24"><a href="https://github.com/strands-agents/docs">Strands Agents documentation repository</a>, Apache 2.0 license</li>
+<li id="r25"><a href="https://github.com/ag-ui-protocol/ag-ui">AG-UI repository, docs folder</a>, MIT license</li>
+<li id="r26"><a href="https://docs.aws.amazon.com/bedrock/latest/userguide/kb-data-source-sync-ingest.html">Sync data with a knowledge base</a>, Amazon Bedrock User Guide</li>
+<li id="r27"><a href="https://serverlessland.com/patterns/eventbridge-bedrock-s3-aoss">Automatic sync of a Bedrock knowledge base using EventBridge Scheduler</a>, Serverless Land</li>
+<li id="r28"><a href="https://www.rfc-editor.org/rfc/rfc5737">RFC 5737: IPv4 address blocks reserved for documentation</a>, IETF</li>
+</ol>
+
+</main>
+<footer class="doc">GuppiGPT single page chat &middot; September 2026 &middot; Sam Dengler</footer>
+</div>
+
+</div>
+<script>
+/* dg-runtime v1 — declarative diagram runtime.
+ * Nodes are HTML elements laid out by CSS grid; this script draws orthogonal
+ * SVG connectors, arrowheads, and haloed labels from MEASURED positions.
+ * It never requires hand-computed coordinates.
+ * Emits warnings to window.__diagramWarnings + console.warn on geometry violations.
+ */
+(function () {
+  'use strict';
+  const CLEAR = 12;          // min clearance between an edge segment and unrelated node
+  const STUB = 18;           // perpendicular stub leaving/entering a node
+  const ARROW = 7;           // arrowhead length
+  const LABEL_PAD = 3;       // halo padding
+  window.__diagramWarnings = window.__diagramWarnings || [];
+  function warn(msg) { window.__diagramWarnings.push(msg); console.warn('[diagram] ' + msg); }
+
+  const NS = 'http://www.w3.org/2000/svg';
+  function el(tag, attrs) {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+  function rectsOverlap(a, b, pad) {
+    pad = pad || 0;
+    return a.x < b.x + b.w + pad && a.x + a.w + pad > b.x &&
+           a.y < b.y + b.h + pad && a.y + a.h + pad > b.y;
+  }
+  function segHitsRect(x1, y1, x2, y2, r, pad) {
+    // axis-aligned segment vs rect (inflated by pad); tolerant of float noise
+    const rx = r.x - pad, ry = r.y - pad, rw = r.w + 2 * pad, rh = r.h + 2 * pad;
+    if (Math.abs(x1 - x2) < 0.5) { // vertical
+      if (x1 <= rx || x1 >= rx + rw) return false;
+      const lo = Math.min(y1, y2), hi = Math.max(y1, y2);
+      return hi > ry && lo < ry + rh;
+    } else { // horizontal
+      if (y1 <= ry || y1 >= ry + rh) return false;
+      const lo = Math.min(x1, x2), hi = Math.max(x1, x2);
+      return hi > rx && lo < rx + rw;
+    }
+  }
+
+  function renderDiagram(container) {
+    const nodes = {};
+    container.querySelectorAll('.dg-node').forEach(n => {
+      if (!n.id) { warn('node missing id: "' + n.textContent.trim().slice(0, 30) + '"'); return; }
+      nodes[n.id] = n;
+    });
+    const edgeScript = container.querySelector('script.dg-edges');
+    if (!edgeScript) return;
+    let edges;
+    try { edges = JSON.parse(edgeScript.textContent); }
+    catch (e) { warn('bad edge JSON: ' + e.message); return; }
+
+    const cRect = container.getBoundingClientRect();
+    const R = {}; // measured rects, container-relative
+    for (const id in nodes) {
+      const b = nodes[id].getBoundingClientRect();
+      R[id] = { x: b.left - cRect.left, y: b.top - cRect.top, w: b.width, h: b.height,
+                cx: b.left - cRect.left + b.width / 2, cy: b.top - cRect.top + b.height / 2,
+                diamond: nodes[id].classList.contains('dg-diamond') };
+    }
+    // node-node overlap check
+    const ids = Object.keys(R);
+    for (let i = 0; i < ids.length; i++)
+      for (let j = i + 1; j < ids.length; j++) {
+        const a = nodes[ids[i]], b = nodes[ids[j]];
+        if (a.contains(b) || b.contains(a)) continue;
+        if (rectsOverlap(R[ids[i]], R[ids[j]], 0)) warn('nodes overlap: ' + ids[i] + ' & ' + ids[j]);
+      }
+
+    // ---- choose sides ----
+    edges.forEach(e => {
+      if (!R[e.from] || !R[e.to]) { e._skip = true; warn('edge references missing node: ' + e.from + '->' + e.to); return; }
+      const s = R[e.from], t = R[e.to];
+      if (!e.fromSide || !e.toSide) {
+        const dx = t.cx - s.cx, dy = t.cy - s.cy;
+        const differentRows = t.y >= s.y + s.h || s.y >= t.y + t.h;
+        const differentCols = t.x >= s.x + s.w || s.x >= t.x + t.w;
+        // Flowchart convention: branches leave a decision diamond sideways when
+        // the target sits in another column, keeping branch labels apart.
+        if (s.diamond && differentRows && differentCols) {
+          e.fromSide = dx > 0 ? 'right' : 'left';
+          e.toSide = e.toSide || (dy > 0 ? 'top' : 'bottom');
+          return;
+        }
+        // Prefer vertical routing whenever the nodes occupy different rows:
+        // the gap between grid rows is a guaranteed-clear channel, while a
+        // horizontal route across rows must pass through other columns.
+        if (differentRows || Math.abs(dy) >= Math.abs(dx)) {
+          e.fromSide = e.fromSide || (dy > 0 ? 'bottom' : 'top');
+          e.toSide = e.toSide || (dy > 0 ? 'top' : 'bottom');
+        } else {
+          e.fromSide = e.fromSide || (dx > 0 ? 'right' : 'left');
+          e.toSide = e.toSide || (dx > 0 ? 'left' : 'right');
+        }
+      }
+    });
+
+    // ---- assign ports (fan out multiple edges on the same side) ----
+    const sideGroups = {};
+    edges.forEach(e => {
+      if (e._skip) return;
+      [['from', e.fromSide], ['to', e.toSide]].forEach(([end, side]) => {
+        const id = e[end], key = id + ':' + side;
+        (sideGroups[key] = sideGroups[key] || []).push({ e, end });
+      });
+    });
+    // Ports project toward the counterpart node (straight lines when aligned),
+    // clamped to the side and spread apart when several edges share a side.
+    for (const key in sideGroups) {
+      const g = sideGroups[key];
+      const [id, side] = key.split(':');
+      const r = R[id];
+      const vertSide = side === 'top' || side === 'bottom';
+      const lo = vertSide ? r.x + 14 : r.y + 12;
+      const hi = vertSide ? r.x + r.w - 14 : r.y + r.h - 12;
+      g.forEach(entry => {
+        const other = R[entry.end === 'from' ? entry.e.to : entry.e.from];
+        entry._want = Math.max(lo, Math.min(vertSide ? other.cx : other.cy, hi));
+      });
+      g.sort((a, b) => a._want - b._want);
+      const MIN = 20;
+      for (let i = 1; i < g.length; i++)
+        if (g[i]._want - g[i - 1]._want < MIN) g[i]._want = g[i - 1]._want + MIN;
+      for (let i = g.length - 1; i >= 0; i--) {
+        const cap = hi - (g.length - 1 - i) * MIN;
+        if (g[i]._want > cap) g[i]._want = cap;
+      }
+      g.forEach(entry => {
+        const w = r.diamond ? (vertSide ? r.x + r.w / 2 : r.y + r.h / 2) : entry._want;
+        entry.e['_' + entry.end] = vertSide
+          ? { x: w, y: side === 'top' ? r.y : r.y + r.h }
+          : { x: side === 'left' ? r.x : r.x + r.w, y: w };
+      });
+    }
+
+    // ---- route ----
+    const obstacles = ids.map(id => R[id]);
+    function clearMid(fixedLo, fixedHi, tryVal, axis, exclude, lo, hi) {
+      // find a value for the cross segment that avoids obstacles; scan outward
+      for (let off = 0; off <= 120; off += 8) {
+        for (const cand of off === 0 ? [tryVal] : [tryVal - off, tryVal + off]) {
+          if (cand < lo || cand > hi) continue;
+          let ok = true;
+          for (const r of obstacles) {
+            if (exclude.indexOf(r) !== -1) continue;
+            const hit = axis === 'y'
+              ? segHitsRect(fixedLo, cand, fixedHi, cand, r, CLEAR)
+              : segHitsRect(cand, fixedLo, cand, fixedHi, r, CLEAR);
+            if (hit) { ok = false; break; }
+          }
+          if (ok) return cand;
+        }
+      }
+      return tryVal;
+    }
+    function segsClear(pts, exclude) {
+      for (let i = 0; i < pts.length - 1; i++)
+        for (const r of obstacles) {
+          if (exclude.indexOf(r) !== -1) continue;
+          if (segHitsRect(pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y, r, 4)) return false;
+        }
+      return true;
+    }
+    function route(e) {
+      const p = e._from, q = e._to, s = R[e.from], t = R[e.to];
+      const fs = e.fromSide, ts = e.toSide;
+      const dir = { top: [0, -1], bottom: [0, 1], left: [-1, 0], right: [1, 0] };
+      const p2 = { x: p.x + dir[fs][0] * STUB, y: p.y + dir[fs][1] * STUB };
+      const q2 = { x: q.x + dir[ts][0] * STUB, y: q.y + dir[ts][1] * STUB };
+      const vertical = fs === 'top' || fs === 'bottom';
+      const tVertical = ts === 'top' || ts === 'bottom';
+      const X = [s, t];
+      let pts = [ { x: p.x, y: p.y } ];
+      if (vertical && tVertical) {
+        if ((fs === 'bottom') !== (ts === 'bottom')) { // opposing sides
+          if (Math.abs(p.x - q.x) < 1 && segsClear([p, q], X)) { pts.push({ x: q.x, y: q.y }); return pts; }
+          let midY = (p2.y + q2.y) / 2;
+          midY = clearMid(Math.min(p.x, q.x), Math.max(p.x, q.x), midY, 'y', X,
+                          Math.min(p2.y, q2.y), Math.max(p2.y, q2.y));
+          const z = [pts[0], { x: p.x, y: midY }, { x: q.x, y: midY }, { x: q.x, y: q.y }];
+          if (segsClear(z, X)) return z;
+          // detour: sidestep around whatever blocks the direct channel
+          const y1 = p2.y, y2 = q2.y;
+          for (let off = 0; off <= 400; off += 12) {
+            for (const cand of off === 0 ? [(p.x + q.x) / 2] : [(p.x + q.x) / 2 - off, (p.x + q.x) / 2 + off]) {
+              const d = [pts[0], { x: p.x, y: y1 }, { x: cand, y: y1 }, { x: cand, y: y2 }, { x: q.x, y: y2 }, { x: q.x, y: q.y }];
+              if (segsClear(d, X)) return d;
+            }
+          }
+          return z;
+        } else { // same side: U route
+          const extY = fs === 'bottom' ? Math.max(p2.y, q2.y) : Math.min(p2.y, q2.y);
+          pts.push({ x: p.x, y: extY }, { x: q.x, y: extY }, { x: q.x, y: q.y });
+        }
+      } else if (!vertical && !tVertical) {
+        if ((fs === 'right') !== (ts === 'right')) {
+          if (Math.abs(p.y - q.y) < 1 && segsClear([p, q], X)) { pts.push({ x: q.x, y: q.y }); return pts; }
+          let midX = (p2.x + q2.x) / 2;
+          midX = clearMid(Math.min(p.y, q.y), Math.max(p.y, q.y), midX, 'x', X,
+                          Math.min(p2.x, q2.x), Math.max(p2.x, q2.x));
+          const z = [pts[0], { x: midX, y: p.y }, { x: midX, y: q.y }, { x: q.x, y: q.y }];
+          if (segsClear(z, X)) return z;
+          const x1 = p2.x, x2 = q2.x;
+          for (let off = 0; off <= 400; off += 12) {
+            for (const cand of off === 0 ? [(p.y + q.y) / 2] : [(p.y + q.y) / 2 - off, (p.y + q.y) / 2 + off]) {
+              const d = [pts[0], { x: x1, y: p.y }, { x: x1, y: cand }, { x: x2, y: cand }, { x: x2, y: q.y }, { x: q.x, y: q.y }];
+              if (segsClear(d, X)) return d;
+            }
+          }
+          return z;
+        } else {
+          const extX = fs === 'right' ? Math.max(p2.x, q2.x) : Math.min(p2.x, q2.x);
+          pts.push({ x: extX, y: p.y }, { x: extX, y: q.y }, { x: q.x, y: q.y });
+        }
+      } else { // L route (one vertical, one horizontal), with elbow fallback
+        const L = vertical
+          ? [pts[0], { x: p.x, y: q.y }, { x: q.x, y: q.y }]
+          : [pts[0], { x: q.x, y: p.y }, { x: q.x, y: q.y }];
+        if (segsClear(L, X)) return L;
+        const alt = vertical
+          ? [pts[0], { x: p.x, y: p2.y }, { x: q2.x, y: p2.y }, { x: q2.x, y: q.y }, { x: q.x, y: q.y }]
+          : [pts[0], { x: p2.x, y: p.y }, { x: p2.x, y: q2.y }, { x: q.x, y: q2.y }, { x: q.x, y: q.y }];
+        return segsClear(alt, X) ? alt : L;
+      }
+      return pts;
+    }
+
+    // ---- draw ----
+    let svg = container.querySelector('svg.dg-overlay');
+    if (svg) svg.remove();
+    svg = el('svg', { class: 'dg-overlay', width: cRect.width, height: cRect.height,
+                      style: 'position:absolute;left:0;top:0;pointer-events:none;overflow:visible' });
+    container.style.position = container.style.position || 'relative';
+    container.appendChild(svg);
+    const stroke = getComputedStyle(container).getPropertyValue('--dg-stroke').trim() || '#546170';
+    const halo = getComputedStyle(container).getPropertyValue('--dg-bg').trim() || '#ffffff';
+
+    let placedLabels = [], labelJobs = [];
+    edges.forEach(e => {
+      if (e._skip) return;
+      const raw = route(e);
+      const pts = raw.map(pt => ({ x: pt.x, y: pt.y }));
+      // pull endpoint back so the arrowhead tip, not the line, touches the border
+      const last = pts[pts.length - 1], prev = pts[pts.length - 2];
+      const ang = Math.atan2(last.y - prev.y, last.x - prev.x);
+      const tip = { x: last.x, y: last.y };
+      last.x -= Math.cos(ang) * ARROW; last.y -= Math.sin(ang) * ARROW;
+
+      const color = e.color || stroke;
+      const path = el('path', {
+        d: pts.map((p, i) => (i ? 'L' : 'M') + p.x.toFixed(1) + ' ' + p.y.toFixed(1)).join(' '),
+        fill: 'none', stroke: color, 'stroke-width': 1.6,
+        'stroke-dasharray': e.style === 'dashed' ? '6 4' : 'none'
+      });
+      svg.appendChild(path);
+      // arrowhead
+      const a1 = ang + 2.6, a2 = ang - 2.6, AL = ARROW + 3;
+      svg.appendChild(el('path', {
+        d: 'M' + tip.x + ' ' + tip.y +
+           ' L' + (tip.x + Math.cos(a1) * AL) + ' ' + (tip.y + Math.sin(a1) * AL) +
+           ' L' + (tip.x + Math.cos(a2) * AL) + ' ' + (tip.y + Math.sin(a2) * AL) + ' Z',
+        fill: color
+      }));
+
+      // segment-vs-node violation check (on the un-shortened route)
+      for (let i = 0; i < raw.length - 1; i++) {
+        for (const id2 of ids) {
+          if (id2 === e.from || id2 === e.to) continue;
+          if (nodes[id2].querySelector('.dg-node')) continue; // skip group containers
+          if (segHitsRect(raw[i].x, raw[i].y, raw[i + 1].x, raw[i + 1].y, R[id2], 2))
+            warn('edge ' + e.from + '->' + e.to + ' crosses node ' + id2);
+        }
+      }
+
+      // defer labels so they always paint on top of every edge line
+      if (e.label) labelJobs.push({ e, pts, color });
+    });
+
+    labelJobs.forEach(({ e, pts, color }) => {
+      let bi = 0, bl = -1;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const L = Math.abs(pts[i + 1].x - pts[i].x) + Math.abs(pts[i + 1].y - pts[i].y);
+        if (L > bl) { bl = L; bi = i; }
+      }
+      if (e.labelAt === 'start') bi = 0;
+      const A = pts[bi], B = pts[bi + 1];
+      const horizontal = Math.abs(B.y - A.y) < 1;
+      const t = el('text', {
+        'text-anchor': 'middle', 'dominant-baseline': horizontal ? 'auto' : 'middle',
+        'font-size': 12, fill: color,
+        stroke: halo, 'stroke-width': 4, 'paint-order': 'stroke fill',
+        'stroke-linejoin': 'round', 'font-family': 'inherit'
+      });
+      t.textContent = e.label;
+      svg.appendChild(t);
+      const place = (f, dy) => {
+        const nx = A.x + (B.x - A.x) * f, ny = A.y + (B.y - A.y) * f;
+        t.setAttribute('x', nx);
+        t.setAttribute('y', horizontal ? ny + dy : ny);
+      };
+      const collides = () => {
+        const bb = t.getBBox();
+        const lr = { x: bb.x - LABEL_PAD, y: bb.y - LABEL_PAD, w: bb.width + 2 * LABEL_PAD, h: bb.height + 2 * LABEL_PAD };
+        for (const id2 of ids)
+          if (rectsOverlap(lr, R[id2], 0) && !nodes[id2].querySelector('.dg-node')) return true;
+        for (const pl of placedLabels) if (rectsOverlap(lr, pl, 2)) return true;
+        return false;
+      };
+      // candidate spots: midpoint above the line, then slide along it, then below it
+      const spots = e.labelAt === 'start'
+        ? [[0.35, -7], [0.35, 16], [0.5, -7], [0.5, 16]]
+        : [[0.5, -7], [0.7, -7], [0.3, -7], [0.5, 16], [0.7, 16], [0.3, 16], [0.8, -7], [0.2, -7]];
+      let ok = false;
+      for (const [f, dy] of spots) { place(f, dy); if (!collides()) { ok = true; break; } }
+      if (!ok) { place(spots[0][0], spots[0][1]); warn('label "' + e.label + '" overlaps another element'); }
+      const fb = t.getBBox();
+      placedLabels.push({ x: fb.x, y: fb.y, w: fb.width, h: fb.height });
+    });
+  }
+
+  /* ---------------- sequence diagrams ---------------- */
+  function renderSequence(container) {
+    const spec = JSON.parse(container.querySelector('script.dg-seq').textContent);
+    const font = '13px ' + (getComputedStyle(container).fontFamily || 'system-ui, sans-serif');
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    ctx.font = font;
+    const tw = s => ctx.measureText(s).width;
+
+    const P = spec.participants, M = spec.messages;
+    const idx = {}; P.forEach((p, i) => idx[p.id] = i);
+    const boxW = P.map(p => Math.max(96, tw(p.label) + 28));
+    const boxH = 34, ROW = 40, TOP = 14, MARGIN = 16, BAR = 10;
+
+    // lifeline x positions: gap driven by the widest label between adjacent pairs
+    const gapNeed = new Array(P.length - 1).fill(120);
+    M.forEach(m => {
+      if (m.type === 'note' || m.from === m.to) return;
+      const a = Math.min(idx[m.from], idx[m.to]), b = Math.max(idx[m.from], idx[m.to]);
+      const per = (tw(m.label || '') + 50) / (b - a);
+      for (let i = a; i < b; i++) gapNeed[i] = Math.max(gapNeed[i], per);
+    });
+    const X = [MARGIN + boxW[0] / 2];
+    for (let i = 1; i < P.length; i++)
+      X[i] = X[i - 1] + Math.max(gapNeed[i - 1], boxW[i - 1] / 2 + boxW[i] / 2 + 40);
+
+    // rows
+    let y = TOP + boxH + 24;
+    const rows = M.map(m => {
+      const r = y;
+      y += (m.from === m.to) ? ROW * 1.4 : (m.type === 'note' ? ROW * 1.1 : ROW);
+      return r;
+    });
+    const H = y + 30 + boxH;
+    // canvas must also fit right-hanging self-message and note labels
+    let W = X[P.length - 1] + boxW[P.length - 1] / 2 + MARGIN + 40;
+    M.forEach(m => {
+      if (m.type === 'note') W = Math.max(W, X[idx[m.at]] + 16 + tw(m.label) + 20 + MARGIN);
+      else if (m.from === m.to) W = Math.max(W, X[idx[m.from]] + BAR / 2 + 42 + tw(m.label) + MARGIN);
+    });
+
+    const stroke = getComputedStyle(container).getPropertyValue('--dg-stroke').trim() || '#546170';
+    const accent = getComputedStyle(container).getPropertyValue('--dg-accent').trim() || '#eef2f7';
+    const halo = getComputedStyle(container).getPropertyValue('--dg-bg').trim() || '#ffffff';
+    const svg = el('svg', { width: W, height: H, viewBox: '0 0 ' + W + ' ' + H,
+                            style: 'max-width:100%;height:auto;display:block', 'font-family': 'inherit' });
+    container.appendChild(svg);
+
+    // activation tracking: open bar on callee at call, close on matching return
+    const bars = []; const open = {};
+    M.forEach((m, i) => {
+      if (m.type === 'note') return;
+      if (m.style === 'return') {
+        const k = m.from; // returning participant closes its bar
+        if (open[k] !== undefined) { bars.push({ p: k, y1: open[k], y2: rows[i] }); delete open[k]; }
+      } else if (m.from !== m.to && open[m.to] === undefined) open[m.to] = rows[i];
+    });
+    for (const k in open) bars.push({ p: k, y1: open[k], y2: rows[rows.length - 1] + 20 });
+
+    // lifelines + participant boxes (top and bottom)
+    P.forEach((p, i) => {
+      svg.appendChild(el('line', { x1: X[i], y1: TOP + boxH, x2: X[i], y2: H - boxH - 6,
+                                   stroke: stroke, 'stroke-dasharray': '4 4', 'stroke-width': 1 }));
+      [TOP, H - boxH].forEach(by => {
+        svg.appendChild(el('rect', { x: X[i] - boxW[i] / 2, y: by, width: boxW[i], height: boxH,
+                                     rx: 6, fill: accent, stroke: stroke, 'stroke-width': 1.2 }));
+        const t = el('text', { x: X[i], y: by + boxH / 2, 'text-anchor': 'middle',
+                               'dominant-baseline': 'central', 'font-size': 13, 'font-weight': 600, fill: '#26313c' });
+        t.textContent = p.label; svg.appendChild(t);
+      });
+    });
+    bars.forEach(b => {
+      const i = idx[b.p];
+      svg.appendChild(el('rect', { x: X[i] - BAR / 2, y: b.y1 - 6, width: BAR, height: b.y2 - b.y1 + 12,
+                                   fill: accent, stroke: stroke, 'stroke-width': 1 }));
+    });
+
+    function arrowhead(x, y, dirRight, color) {
+      const s = dirRight ? -1 : 1;
+      svg.appendChild(el('path', { d: 'M' + x + ' ' + y + ' l' + (9 * s) + ' -4.5 l0 9 Z', fill: color }));
+    }
+    M.forEach((m, i) => {
+      const yy = rows[i];
+      if (m.type === 'note') {
+        const i0 = idx[m.at], w = tw(m.label) + 20;
+        svg.appendChild(el('rect', { x: X[i0] + 16, y: yy - 12, width: w, height: 24, fill: '#fff8dc', stroke: '#c8b464', 'stroke-width': 1 }));
+        const t = el('text', { x: X[i0] + 16 + w / 2, y: yy, 'text-anchor': 'middle', 'dominant-baseline': 'central', 'font-size': 12, fill: '#5a4d1a' });
+        t.textContent = m.label; svg.appendChild(t);
+        return;
+      }
+      const from = idx[m.from], to = idx[m.to];
+      const dashed = m.style === 'return' || m.style === 'dashed';
+      if (from === to) { // self message
+        const x0 = X[from] + BAR / 2;
+        svg.appendChild(el('path', { d: 'M' + x0 + ' ' + yy + ' h 34 v 22 h -34',
+          fill: 'none', stroke: stroke, 'stroke-width': 1.4, 'stroke-dasharray': dashed ? '5 4' : 'none' }));
+        arrowhead(x0 + 1, yy + 22, false, stroke);
+        const t = el('text', { x: x0 + 42, y: yy + 11, 'font-size': 12, fill: '#3a4653', 'dominant-baseline': 'central',
+                               stroke: halo, 'stroke-width': 4, 'paint-order': 'stroke fill', 'stroke-linejoin': 'round' });
+        t.textContent = m.label; svg.appendChild(t);
+        return;
+      }
+      const right = to > from;
+      const barAdj = p => bars.some(b => idx[b.p] === p && yy >= b.y1 - 6 && yy <= b.y2 + 6) ? BAR / 2 : 0;
+      const x1 = X[from] + (right ? barAdj(from) : -barAdj(from));
+      const x2 = X[to] + (right ? -(barAdj(to) + 10) : (barAdj(to) + 10));
+      svg.appendChild(el('line', { x1: x1, y1: yy, x2: x2, y2: yy, stroke: stroke, 'stroke-width': 1.4,
+                                   'stroke-dasharray': dashed ? '5 4' : 'none' }));
+      arrowhead(x2 + (right ? 10 : -10) * 0 + (right ? 1 : -1), yy, right, stroke);
+      const t = el('text', { x: (x1 + x2) / 2, y: yy - 8, 'text-anchor': 'middle', 'font-size': 12, fill: '#3a4653',
+                             stroke: halo, 'stroke-width': 4, 'paint-order': 'stroke fill', 'stroke-linejoin': 'round' });
+      t.textContent = m.label; svg.appendChild(t);
+    });
+  }
+
+  function renderAll() {
+    document.querySelectorAll('[data-diagram]').forEach(renderDiagram);
+    document.querySelectorAll('[data-sequence]').forEach(c => {
+      if (!c.querySelector('svg')) renderSequence(c);
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', renderAll);
+  else renderAll();
+  let rt; window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => {
+    document.querySelectorAll('[data-diagram]').forEach(renderDiagram); }, 150); });
+})();
+
+</script>
+<script>
+
+(function () {
+  var links = Array.prototype.slice.call(document.querySelectorAll('nav.toc a'));
+  var heads = links.map(function (a) { return document.getElementById(a.getAttribute('href').slice(1)); });
+  function sync() {
+    var best = 0;
+    for (var i = 0; i < heads.length; i++) {
+      if (heads[i] && heads[i].getBoundingClientRect().top <= 120) best = i;
+    }
+    links.forEach(function (a, i) { a.classList.toggle('active', i === best); });
+  }
+  document.addEventListener('scroll', sync, { passive: true });
+  sync();
+  document.querySelectorAll('main h2[id]').forEach(function (h) {
+    var a = document.createElement('a');
+    a.className = 'anchor'; a.href = '#' + h.id; a.textContent = '#';
+    h.appendChild(a);
+  });
+})();
+
+</script>
+</body>
+</html>

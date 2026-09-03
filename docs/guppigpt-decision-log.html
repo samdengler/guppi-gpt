@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GuppiGPT decision log</title>
+<style>
+/* dg core styles — copy verbatim into a <style> tag */
+[data-diagram] { position: relative; --dg-stroke: #546170; --dg-bg: #ffffff; --dg-accent: #eef2f7; }
+[data-sequence] { --dg-stroke: #546170; --dg-bg: #ffffff; --dg-accent: #eef2f7; }
+.dg-grid { display: grid; gap: 64px 56px; justify-content: center; align-items: center; justify-items: center; padding: 12px; }
+.dg-node { border: 1.5px solid #546170; border-radius: 8px; background: #eef2f7; padding: 10px 18px;
+           font-size: 13px; font-weight: 600; text-align: center; min-width: 110px; box-sizing: border-box; }
+.dg-node small { display: block; font-weight: 400; color: #5b6a7a; margin-top: 2px; font-size: 11px; }
+.dg-diamond { border: none; background: none; padding: 24px 20px; position: relative; min-width: 130px; }
+.dg-diamond::before { content: ''; position: absolute; inset: 0; background: #fdf3dc; border: 1.5px solid #b9985a;
+                      clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); z-index: -1; }
+.dg-group { border: 1.5px dashed #8a97a5; border-radius: 10px; padding: 30px 20px 20px; position: relative; }
+.dg-group-label { position: absolute; top: 8px; left: 12px; font-size: 11px; font-weight: 700;
+                  text-transform: uppercase; letter-spacing: .06em; color: #6b7887; }
+
+/* ---- document theme ---- */
+:root {
+  --navy: #003366;
+  --navy-deep: #00274D;
+  --red: #C01933;
+  --red-bright: #E3132C;
+  --ink: #26313c;
+  --muted: #5b6a7a;
+  --light: #E9EEF5;
+  --rule: #d8e0ea;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: "Segoe UI", system-ui, -apple-system, Helvetica, Arial, sans-serif;
+       color: var(--ink); background: #f6f8fb; line-height: 1.65; }
+
+/* layout: sticky sidebar + page */
+.shell { display: grid; grid-template-columns: 232px minmax(0, 960px); gap: 28px;
+         justify-content: center; align-items: start; padding: 0 20px; }
+nav.toc { position: sticky; top: 0; max-height: 100vh; overflow-y: auto; padding: 28px 0 40px; }
+nav.toc .toc-title { font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+                     color: var(--muted); margin: 0 0 10px 12px; }
+nav.toc a { display: block; padding: 5px 12px; font-size: 13px; line-height: 1.35; color: var(--muted);
+            text-decoration: none; border-left: 2px solid transparent; }
+nav.toc a:hover { color: var(--navy); background: #eef2f7; }
+nav.toc a.active { color: var(--navy-deep); font-weight: 600; border-left-color: var(--red-bright); background: #eef2f7; }
+nav.toc a.tail { color: #8494a5; }
+
+.page { background: #fff; box-shadow: 0 1px 8px rgba(0,38,77,.08); }
+header.doc { background: linear-gradient(135deg, var(--navy-deep), var(--navy)); color: #fff;
+             padding: 42px 48px 34px; border-bottom: 5px solid var(--red-bright); }
+header.doc .kicker { font-size: 12px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase;
+                     color: #9fb6d1; margin-bottom: 10px; }
+header.doc h1 { margin: 0 0 12px; font-size: 32px; line-height: 1.18; font-weight: 700; }
+header.doc p { margin: 0; color: #c9d6e6; font-size: 15.5px; max-width: 46em; }
+main { padding: 34px 48px 56px; }
+h2 { color: var(--navy); font-size: 21px; margin: 46px 0 12px; padding-bottom: 6px;
+     border-bottom: 2px solid var(--rule); scroll-margin-top: 20px; }
+h3 { color: var(--navy); font-size: 16px; margin: 28px 0 8px; }
+p { margin: 11px 0; }
+a { color: var(--navy); }
+strong { color: var(--navy-deep); }
+code { background: var(--light); color: var(--navy-deep); padding: 1px 5px; border-radius: 4px;
+       font-size: .88em; font-family: ui-monospace, "SF Mono", Consolas, monospace; }
+pre { background: #f2f5f9; border: 1px solid var(--rule); border-radius: 8px; padding: 13px 15px;
+      overflow-x: auto; font-size: 12.5px; line-height: 1.55; }
+pre code { background: none; color: var(--ink); padding: 0; }
+ul, ol { margin: 11px 0; padding-left: 24px; }
+li { margin: 7px 0; }
+ol > li { padding-left: 4px; }
+table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 14px; }
+th { background: var(--light); color: var(--navy-deep); text-align: left; padding: 8px 10px; border: 1px solid var(--rule); }
+td { padding: 8px 10px; border: 1px solid var(--rule); vertical-align: top; }
+.callout { background: var(--light); border-left: 4px solid var(--navy); padding: 15px 20px;
+           border-radius: 0 8px 8px 0; margin: 22px 0; }
+.callout p { margin: 0; }
+.callout.red { border-left-color: var(--red); background: #FBEDEF; }
+.figure { margin: 28px 0; padding: 18px 8px 10px; border: 1px solid var(--rule); border-radius: 10px; background: #fff; }
+.figure figcaption { text-align: center; font-size: 12.5px; color: var(--muted); margin-top: 12px;
+                     font-weight: 600; letter-spacing: .02em; }
+footer.doc { padding: 20px 48px; background: var(--navy-deep); color: #9fb6d1; font-size: 12.5px;
+             border-top: 4px solid var(--red-bright); }
+.sources { font-size: 14px; }
+.sources li { font-size: 14px; }
+a.ref { font-size: .72em; vertical-align: super; text-decoration: none; color: var(--red);
+        font-weight: 600; padding: 0 1px; }
+a.ref:hover { text-decoration: underline; }
+.sources li:target { background: #FBEDEF; outline: 3px solid #FBEDEF; border-radius: 3px; }
+.toc-top { margin: 22px 0 6px; padding: 18px 22px 16px; border: 1px solid var(--rule);
+           border-radius: 10px; background: #fbfcfe; }
+.toc-top .toc-title { font-size: 11px; font-weight: 700; letter-spacing: .12em;
+                      text-transform: uppercase; color: var(--muted); margin: 0 0 10px; }
+.toc-top ol { list-style: none; margin: 0; padding: 0;
+              columns: 2; column-gap: 40px; }
+.toc-top li { margin: 0 0 6px; break-inside: avoid; font-size: 14px; }
+.toc-top a { text-decoration: none; }
+.toc-top a:hover { text-decoration: underline; }
+.toc-top .num { display: inline-block; min-width: 1.6em; color: var(--muted); }
+.toc-top .back { margin: 10px 0 0; padding-top: 10px; border-top: 1px solid var(--rule);
+                 font-size: 13px; color: var(--muted); }
+.toc-top .back a { color: var(--muted); margin-right: 14px; }
+@media (max-width: 640px) { .toc-top ol { columns: 1; } }
+h2 .anchor { opacity: 0; text-decoration: none; color: var(--rule); font-weight: 400; margin-left: 8px; }
+h2:hover .anchor { opacity: 1; }
+
+/* diagram palette */
+[data-diagram] { --dg-stroke: #4a5d74; }
+[data-sequence] { --dg-stroke: #4a5d74; --dg-accent: #E9EEF5; }
+.dg-node { border-color: var(--navy); background: var(--light); color: var(--navy-deep); }
+.dg-node small { color: #4a5d74; }
+.dg-node.red { border-color: var(--red); background: #FBEDEF; color: #7c0f22; }
+.dg-node.red small { color: #962b3b; }
+
+@media (max-width: 1180px) { .shell { grid-template-columns: minmax(0, 960px); } nav.toc { display: none; } }
+@media print { body { background: #fff; } .page { box-shadow: none; } nav.toc { display: none; }
+               .shell { grid-template-columns: 1fr; padding: 0; } h2 { page-break-after: avoid; }
+               .figure, table, pre { page-break-inside: avoid; } }
+
+</style>
+</head>
+<body>
+<div class="shell">
+<nav class="toc">
+  <p class="toc-title">Contents</p>
+  <a href="#revisions">1. Revision history</a>
+  <a href="#superseded">2. Decisions that were reversed</a>
+  <a href="#answers">3. Review answers, revision 4</a>
+  <a href="#naming">4. Naming</a>
+</nav>
+<div class="page">
+<header class="doc">
+  <div class="kicker">Decision log &middot; GuppiGPT &middot; September 2026</div>
+  <h1>GuppiGPT decision log</h1>
+  <p>How the single page chat design reached its current shape: the revisions, the alternatives set aside, and the answers given in review.</p>
+</header>
+<main>
+
+<div class="callout"><p>This log is a companion to the design document. The design document describes the system as it stands; this log records what changed on the way there and why, so the design can be read without that history. Entries are in the order they happened.</p></div>
+
+<div class="toc-top">
+  <p class="toc-title">Contents</p>
+  <ol>
+    <li><span class="num">1.</span><a href="#revisions">Revision history</a></li>
+    <li><span class="num">2.</span><a href="#superseded">Decisions that were reversed</a></li>
+    <li><span class="num">3.</span><a href="#answers">Review answers, revision 4</a></li>
+    <li><span class="num">4.</span><a href="#naming">Naming</a></li>
+  </ol>
+</div>
+
+<h2 id="revisions">1. Revision history</h2>
+
+<table>
+<tr><th>Revision</th><th>Date</th><th>Change</th><th>Trigger</th></tr>
+<tr><td>1</td><td>2 Sep 2026</td><td>First design. Static page on S3 behind CloudFront, a Lambda Function URL with response streaming as the only compute, Bedrock <code>ConverseStream</code> called from the handler, a private NDJSON wire format, no authentication, WAF on the distribution.</td><td>Initial request: the simplest conversational chat, no history or attachments, AWS services.</td></tr>
+<tr><td>2</td><td>2 Sep 2026</td><td>Lambda replaced by AgentCore Runtime hosting a Strands agent. SSO added through Cognito federated to Google. A Bedrock Knowledge Base added behind AgentCore Gateway. Private NDJSON replaced by AG-UI. Source reference chips under replies.</td><td>Review: SSO required, AgentCore Gateway in front of the knowledge base, a Lambda proxy only if necessary, streaming essential, and a question about open standards for the client-to-agent stream.</td></tr>
+<tr><td>3</td><td>2 Sep 2026</td><td>A second AgentCore Gateway (the edge gateway) placed in front of the runtime with a runtime target and token passthrough. WAF moved from CloudFront to that gateway. Runtime JWT authorizer bound to the edge gateway. Section added weighing direct knowledge base access against the gateway hop.</td><td>Review: gateway in front of runtime as well; question of whether the runtime needs a gateway between itself and the knowledge base.</td></tr>
+<tr><td>4</td><td>2 Sep 2026</td><td>Source chips removed. Replies rendered as plain text. Claude Haiku. <code>Retrieve</code> only. Any Google account admitted. Access token as bearer. CloudFront default hostname. Two gateways confirmed. Keepalive added after the CloudFront timeout behavior was confirmed.</td><td>Review answers to the ten open questions (section 3).</td></tr>
+<tr><td>5</td><td>3 Sep 2026</td><td>Domain set to <code>chat.dengler.io</code> and <code>auth.dengler.io</code>. Knowledge base content and sync section added: the stack's own documentation, seed script, EventBridge Scheduler calling <code>StartIngestionJob</code>. WAF rules revised for CloudFront-forwarded addresses.</td><td>Review: the domain was available; a content source and a simple S3 to knowledge base sync were requested; a closer look at the WAF integration.</td></tr>
+<tr><td>6</td><td>3 Sep 2026</td><td>Historical framing removed from the design document and moved here.</td><td>Review: the design document should describe the end state; history belongs in a separate log.</td></tr>
+<tr><td>7</td><td>3 Sep 2026</td><td>Route 53 assumption confirmed: the <code>dengler.io</code> zone is in the same account. The apex was found to have no A record, so the stack creates a placeholder A record at <code>192.0.2.1</code> before the Cognito custom domain.</td><td>Review of open questions before starting the build. A redirect from the apex to <code>chat.dengler.io</code> (apex alias on the distribution plus a CloudFront Function) was offered and set aside as more moving parts than the need justified.</td></tr>
+<tr><td>8</td><td>3 Sep 2026</td><td>Runtime JWT authorizer no longer bound to the edge gateway; the binding stays in the stack behind the <code>bind_runtime_to_gateway</code> context flag. The Google OAuth client was found in the 1Password <code>Personal</code> vault as an API Credential, so the deploy script reads its <code>username</code> and <code>credential</code> fields.</td><td>First deploy and browser test. With the binding on, every request through the gateway failed with <code>Transaction token required: authorizer has AllowedWorkloadConfiguration configured</code>. Granting the gateway role the workload access token calls changed nothing. Switching the target to the gateway IAM role made the gateway sign as itself, and the JWT runtime answered <code>Authorization method mismatch</code>. Token passthrough and the binding therefore cannot be combined today.</td></tr>
+<tr><td>9</td><td>3 Sep 2026</td><td>Knowledge base built: content bucket, managed knowledge base with an S3 connector on <code>docs/</code>, nightly ingestion as a scheduler universal target with an alarm, the tools gateway (MCP, Cognito JWT inbound) with the <code>bedrock-knowledge-bases</code> connector target named <code>docs</code>, and the seed and ingest scripts. Deletion protection on the connector turned off; the seed sync compares sizes only.</td><td>Design step 3. Tool discovery through the tools gateway with the user token succeeded on the first deploy. The connector target requires <code>bedrock:GetKnowledgeBase</code> and an unscoped <code>bedrock:AgenticRetrieveStream</code> on the gateway role in addition to <code>bedrock:Retrieve</code>. A default <code>numberOfResults</code> in the target's parameter values reached the knowledge base as a string, because CloudFormation stores JSON numbers in that property as strings, and the knowledge base rejected it; the default was removed and the service default applies. <code>Retrieve</code> through the gateway with the user token returned five passages in under a second.</td></tr>
+<tr><td>10</td><td>3 Sep 2026</td><td>Design steps 4 to 7 implemented. The Strands agent with the AG-UI adapter, one MCP client per run carrying the user token to the tools gateway, <code>docs___Retrieve</code> only, input validation and trimming, and one JSON log record per run. The page as three static files with no build step: PKCE and the SSE reader written by hand. A regional web ACL on the edge gateway (CloudFront-only header, the common rule set, a rate rule on <code>X-Forwarded-For</code>), all rules in COUNT. Alarms for the WAF metrics and estimated charges on one SNS topic. A response headers policy with the Content Security Policy. The runtime target is named <code>api</code> and the page posts to <code>/api/invocations</code>, so no CloudFront Function is needed; the design document was corrected to match the build.</td><td>Design steps 4 to 7. The origin header value is generated in Secrets Manager by the stack and reaches the template only as a dynamic reference (section 2). <code>@ag-ui/client</code> and <code>oidc-client-ts</code> were dropped because the hand-written equivalents are shorter than the bundling step they would need. The AWS WAF metric dimension for a gateway is not documented, so the three WAF alarms assume <code>GatewayId</code>. Billing alerts must be switched on in the account's billing preferences before <code>EstimatedCharges</code> exists as a metric. The first deployed run answered <code>RUN_ERROR UNAUTHORIZED</code>: the runtime validates the bearer but hands it to the container only when the runtime's request header allowlist names <code>Authorization</code>. The allowlist was added to the stack, and the next deploy answered a question about MCP transports with one retrieval, a first delta at three seconds, and a plain text reply at six; a follow-up turn kept the context. The web ACL counted nothing on any rule for those requests, so the origin header reaches the gateway.</td></tr>
+<tr><td>11</td><td>3 Sep 2026</td><td>Post-build correction pass on the design document. Status callout now says the system is deployed. Leftover statements from before the build removed: the <code>/api/chat</code> path, the runtime bound to the edge gateway (three places), the open item and next step on whether an AGUI runtime is accepted as a runtime target (it is), and the seven build steps in Next steps. Section 9 describes the agent as a four module package deployed by CDK. The sample stream names <code>docs___Retrieve</code>. Section 8 notes the PKCE verifier in <code>sessionStorage</code>. Three controls the document described but the stack does not have are now marked as remaining work in section 15: per-user rate limits on the edge gateway, AgentCore observability, and alarms on gateway 4xx, runtime 5xx, and Bedrock throttling. Figures 3 and 5 redrawn with AWS Architecture Icons; a standalone <code>guppigpt-architecture.html</code> with PNG exports sits beside the document.</td><td>Review of the design document against the repository after design steps 4 to 7 shipped.</td></tr>
+<tr><td>12</td><td>3 Sep 2026</td><td>The page reads the stream with <code>@ag-ui/client</code>'s <code>HttpAgent</code> again, bundled by esbuild from <code>web/src/</code> into <code>web/dist/</code>; the deploy script builds before syncing. The PKCE flow stays hand-written.</td><td>Review after the first working deploy: the library was wanted for its event typing and abort handling. The bundle is about 230 KB, 55 KB compressed. A custom <code>fetch</code> turns a non-2xx response into a failure, because the client otherwise reads it as an empty stream.</td></tr>
+</table>
+
+<h2 id="superseded">2. Decisions that were reversed</h2>
+
+<p>Each entry records the earlier choice, what replaced it, and the reason. The current alternative is stated in the design document's decisions table; this section exists so the earlier choice is not proposed again without knowing why it was set aside.</p>
+
+<h3>Runtime bound to the edge gateway</h3>
+<p>Revision 3 set <code>allowedWorkloadConfiguration</code> on the runtime JWT authorizer so that a token presented directly to the runtime endpoint would be refused. Revision 8 turned it off after the first deploy. A runtime with the binding demands a transaction token from the gateway, and the gateway supplies one only when it signs the outbound request with its own role; a JWT runtime rejects that signed request as an authorization method mismatch, and token passthrough forwards the user token without any transaction token. The binding comes back, through the <code>bind_runtime_to_gateway</code> context flag, once the gateway stamps passthrough requests or the runtime accepts a signed request that carries the user token.</p>
+
+<h3>Origin header secret as a deploy-time parameter</h3>
+<p>Revision 5 described the CloudFront-only WAF rule as matching a secret header, and the repository rule for secrets was that every one is a CloudFormation parameter supplied by the deploy script from 1Password. Revision 10 instead has the stack generate the value in Secrets Manager and reference it from the CloudFront origin header and the WAF rule as a <code>{{resolve:secretsmanager}}</code> dynamic reference. Nobody needs to know the value, a deploy with 1Password locked still works, and the value never appears in the template. The parameter route stays for the Google OAuth client, which is a value the stack cannot produce.</p>
+
+<h3>Bundled client libraries</h3>
+<p>Revisions 2 to 7 planned <code>oidc-client-ts</code> for PKCE and <code>@ag-ui/client</code> for the stream, bundled by one <code>esbuild</code> step. Revision 10 dropped both: the PKCE flow and the SSE reader are about forty lines each, and the page needed no other tooling. Revision 12 brought <code>@ag-ui/client</code> and the esbuild step back on request, for the event typing, ordering checks, and abort handling; the hand-written reader is the recorded fallback. <code>oidc-client-ts</code> stays out, since the PKCE flow is forty lines and works.</p>
+
+<h3>Lambda as the compute</h3>
+<p>Revision 1 used a Lambda Function URL with response streaming as the only compute: it validated nothing (there was no auth), called <code>ConverseStream</code>, and relayed deltas as NDJSON. It was replaced in revision 2 by AgentCore Runtime because the runtime validates JWTs, streams SSE, isolates sessions, and speaks AG-UI as configuration, and because a Lambda has no natural place for an MCP client with a long-lived session. The design document keeps a short statement of the conditions under which a Lambda would come back.</p>
+
+<h3>Private NDJSON wire format</h3>
+<p>Revision 1 defined a three-event NDJSON stream (<code>delta</code>, <code>done</code>, <code>error</code>) over a fetch POST. Revision 2 replaced it with AG-UI after a survey of open standards: AG-UI is spoken natively by AgentCore Runtime and has a maintained Strands adapter, so neither side needs framing code. The survey also covered the Vercel AI SDK UI message stream (SSE, usable from any backend, but its value is the React <code>useChat</code> hook), OpenAI Chat Completions and Responses streaming (the right layer for a model proxy such as LiteLLM, but with no event for a server-side tool call), and assistant-ui and CopilotKit as component libraries. That comparison survives in the design document because it justifies the current choice.</p>
+
+<h3>CloudFront straight to the runtime, WAF on CloudFront</h3>
+<p>Revision 2 pointed the CloudFront <code>/api/*</code> behavior at the runtime's invocation endpoint using the AgentCore custom domain pattern, with a WAF web ACL on the distribution. Revision 3 inserted the edge gateway because it adds per-user rate limits keyed on the JWT, a second token check, and a place for tool or claim policy without touching the agent, and because WAF associates directly with a gateway as a regional web ACL. CloudFront kept the shared domain and nothing else.</p>
+
+<h3>Source reference chips and Markdown rendering</h3>
+<p>Revision 2 showed numbered source chips under each reply, fed by a <code>CUSTOM sources</code> AG-UI event that a tool-result hook in the agent emitted, and rendered replies as Markdown through a small parser and a whitelist sanitizer. Revision 4 removed both on review: the chips were not wanted, and plain text removed about a hundred lines of code and the only script injection surface the page had. The requirements, wire format, agent, and frontend sections were rewritten accordingly. A sentence in the problem statement that still described replies showing where material came from was corrected in revision 5.</p>
+
+<h3>CloudFront default hostname</h3>
+<p>Revision 4 chose the distribution's default <code>cloudfront.net</code> hostname and a Cognito prefix domain to avoid a certificate and DNS. Revision 5 replaced that with <code>chat.dengler.io</code> and <code>auth.dengler.io</code> once the domain was offered, at the cost of two certificates in <code>us-east-1</code> and three DNS records, all created by the stack.</p>
+
+<h3>Rate rule keyed on source address</h3>
+<p>Revisions 3 and 4 described the WAF rate-based rule as keyed on the requesting address. Revision 5 corrected this: with CloudFront in front of the edge gateway, the gateway's WAF sees CloudFront edge addresses, so the rule keys on the viewer address in <code>X-Forwarded-For</code>, and a preceding rule that requires a CloudFront-set secret header makes that header trustworthy.</p>
+
+<h3>Direct retrieval from the runtime</h3>
+<p>Considered in revision 3 rather than chosen: the agent can call <code>bedrock:Retrieve</code> directly with its execution role and the Strands <code>retrieve</code> tool. The gateway hop was kept because it is the only place a retrieval carries the user's identity, which is what adding a second audience to the knowledge base would need. The comparison table stays in the design document.</p>
+
+<h2 id="answers">3. Review answers, revision 4</h2>
+
+<p>Revision 3 closed with ten open questions. The answers, given in one review, and what each did to the design:</p>
+
+<ol>
+<li><strong>CloudFront origin timeout against a streaming origin.</strong> Confirmed against the CloudFront origin settings reference: the timeout bounds time to first byte and the gap between packets, not total length. Consequence: <code>RUN_STARTED</code> before the model call, an SSE comment keepalive every 15 seconds during tool calls, and the timeout set to 60 seconds with no quota increase.</li>
+<li><strong>Model.</strong> Claude Haiku.</li>
+<li><strong>Retrieval tool.</strong> <code>Retrieve</code>, because the user-facing stream is the agent's own text and <code>Retrieve</code> has the shortest silent gap. <code>AgenticRetrieveStream</code> streams toward the agent over MCP (trace events as <code>notifications/message</code>, answer chunks as <code>responseEvent</code>), and forwarding those to the page would be app code carrying a second model's prose. It remains on the gateway for a possible multi-step mode.</li>
+<li><strong>Admission.</strong> Any Google account. No allow-list, no pre-sign-up trigger; the edge gateway's per-user rate limits are the spend control.</li>
+<li><strong>Bearer token.</strong> The Cognito access token at every hop, since both authorizers match <code>allowedClients</code> against its <code>client_id</code> claim.</li>
+<li><strong>WAF threshold.</strong> Sixty requests per five minutes per viewer address, COUNT mode first.</li>
+<li><strong>Rendering.</strong> Plain text with newlines preserved.</li>
+<li><strong>Domain.</strong> CloudFront default hostname at the time; superseded in revision 5.</li>
+<li><strong>One gateway or two.</strong> Two, kept separate: different audiences, different rate-limit shapes, and only the edge carries a WAF policy.</li>
+<li><strong>Edge gateway idle handling on long streams.</strong> Low priority; covered by the keepalive in practice.</li>
+</ol>
+
+<h2 id="naming">4. Naming</h2>
+
+<p>The name refers to GUPPI, the ship AI in Dennis E. Taylor's <em>We Are Legion (We Are Bob)</em>, whose avatar is the Mon Calamari admiral from Star Wars. Backronyms on the G in GPT were offered and declined. The intended arc is the one Bob followed: begin with a literal, brief assistant that remembers nothing it was not handed, and add memory and a voice in later revisions. The stateless design is a starting point by intent.</p>
+
+</main>
+<footer class="doc">GuppiGPT decision log &middot; September 2026 &middot; Sam Dengler</footer>
+</div>
+
+</div>
+<script>
+/* dg-runtime v1 — declarative diagram runtime.
+ * Nodes are HTML elements laid out by CSS grid; this script draws orthogonal
+ * SVG connectors, arrowheads, and haloed labels from MEASURED positions.
+ * It never requires hand-computed coordinates.
+ * Emits warnings to window.__diagramWarnings + console.warn on geometry violations.
+ */
+(function () {
+  'use strict';
+  const CLEAR = 12;          // min clearance between an edge segment and unrelated node
+  const STUB = 18;           // perpendicular stub leaving/entering a node
+  const ARROW = 7;           // arrowhead length
+  const LABEL_PAD = 3;       // halo padding
+  window.__diagramWarnings = window.__diagramWarnings || [];
+  function warn(msg) { window.__diagramWarnings.push(msg); console.warn('[diagram] ' + msg); }
+
+  const NS = 'http://www.w3.org/2000/svg';
+  function el(tag, attrs) {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+  function rectsOverlap(a, b, pad) {
+    pad = pad || 0;
+    return a.x < b.x + b.w + pad && a.x + a.w + pad > b.x &&
+           a.y < b.y + b.h + pad && a.y + a.h + pad > b.y;
+  }
+  function segHitsRect(x1, y1, x2, y2, r, pad) {
+    // axis-aligned segment vs rect (inflated by pad); tolerant of float noise
+    const rx = r.x - pad, ry = r.y - pad, rw = r.w + 2 * pad, rh = r.h + 2 * pad;
+    if (Math.abs(x1 - x2) < 0.5) { // vertical
+      if (x1 <= rx || x1 >= rx + rw) return false;
+      const lo = Math.min(y1, y2), hi = Math.max(y1, y2);
+      return hi > ry && lo < ry + rh;
+    } else { // horizontal
+      if (y1 <= ry || y1 >= ry + rh) return false;
+      const lo = Math.min(x1, x2), hi = Math.max(x1, x2);
+      return hi > rx && lo < rx + rw;
+    }
+  }
+
+  function renderDiagram(container) {
+    const nodes = {};
+    container.querySelectorAll('.dg-node').forEach(n => {
+      if (!n.id) { warn('node missing id: "' + n.textContent.trim().slice(0, 30) + '"'); return; }
+      nodes[n.id] = n;
+    });
+    const edgeScript = container.querySelector('script.dg-edges');
+    if (!edgeScript) return;
+    let edges;
+    try { edges = JSON.parse(edgeScript.textContent); }
+    catch (e) { warn('bad edge JSON: ' + e.message); return; }
+
+    const cRect = container.getBoundingClientRect();
+    const R = {}; // measured rects, container-relative
+    for (const id in nodes) {
+      const b = nodes[id].getBoundingClientRect();
+      R[id] = { x: b.left - cRect.left, y: b.top - cRect.top, w: b.width, h: b.height,
+                cx: b.left - cRect.left + b.width / 2, cy: b.top - cRect.top + b.height / 2,
+                diamond: nodes[id].classList.contains('dg-diamond') };
+    }
+    // node-node overlap check
+    const ids = Object.keys(R);
+    for (let i = 0; i < ids.length; i++)
+      for (let j = i + 1; j < ids.length; j++) {
+        const a = nodes[ids[i]], b = nodes[ids[j]];
+        if (a.contains(b) || b.contains(a)) continue;
+        if (rectsOverlap(R[ids[i]], R[ids[j]], 0)) warn('nodes overlap: ' + ids[i] + ' & ' + ids[j]);
+      }
+
+    // ---- choose sides ----
+    edges.forEach(e => {
+      if (!R[e.from] || !R[e.to]) { e._skip = true; warn('edge references missing node: ' + e.from + '->' + e.to); return; }
+      const s = R[e.from], t = R[e.to];
+      if (!e.fromSide || !e.toSide) {
+        const dx = t.cx - s.cx, dy = t.cy - s.cy;
+        const differentRows = t.y >= s.y + s.h || s.y >= t.y + t.h;
+        const differentCols = t.x >= s.x + s.w || s.x >= t.x + t.w;
+        // Flowchart convention: branches leave a decision diamond sideways when
+        // the target sits in another column, keeping branch labels apart.
+        if (s.diamond && differentRows && differentCols) {
+          e.fromSide = dx > 0 ? 'right' : 'left';
+          e.toSide = e.toSide || (dy > 0 ? 'top' : 'bottom');
+          return;
+        }
+        // Prefer vertical routing whenever the nodes occupy different rows:
+        // the gap between grid rows is a guaranteed-clear channel, while a
+        // horizontal route across rows must pass through other columns.
+        if (differentRows || Math.abs(dy) >= Math.abs(dx)) {
+          e.fromSide = e.fromSide || (dy > 0 ? 'bottom' : 'top');
+          e.toSide = e.toSide || (dy > 0 ? 'top' : 'bottom');
+        } else {
+          e.fromSide = e.fromSide || (dx > 0 ? 'right' : 'left');
+          e.toSide = e.toSide || (dx > 0 ? 'left' : 'right');
+        }
+      }
+    });
+
+    // ---- assign ports (fan out multiple edges on the same side) ----
+    const sideGroups = {};
+    edges.forEach(e => {
+      if (e._skip) return;
+      [['from', e.fromSide], ['to', e.toSide]].forEach(([end, side]) => {
+        const id = e[end], key = id + ':' + side;
+        (sideGroups[key] = sideGroups[key] || []).push({ e, end });
+      });
+    });
+    // Ports project toward the counterpart node (straight lines when aligned),
+    // clamped to the side and spread apart when several edges share a side.
+    for (const key in sideGroups) {
+      const g = sideGroups[key];
+      const [id, side] = key.split(':');
+      const r = R[id];
+      const vertSide = side === 'top' || side === 'bottom';
+      const lo = vertSide ? r.x + 14 : r.y + 12;
+      const hi = vertSide ? r.x + r.w - 14 : r.y + r.h - 12;
+      g.forEach(entry => {
+        const other = R[entry.end === 'from' ? entry.e.to : entry.e.from];
+        entry._want = Math.max(lo, Math.min(vertSide ? other.cx : other.cy, hi));
+      });
+      g.sort((a, b) => a._want - b._want);
+      const MIN = 20;
+      for (let i = 1; i < g.length; i++)
+        if (g[i]._want - g[i - 1]._want < MIN) g[i]._want = g[i - 1]._want + MIN;
+      for (let i = g.length - 1; i >= 0; i--) {
+        const cap = hi - (g.length - 1 - i) * MIN;
+        if (g[i]._want > cap) g[i]._want = cap;
+      }
+      g.forEach(entry => {
+        const w = r.diamond ? (vertSide ? r.x + r.w / 2 : r.y + r.h / 2) : entry._want;
+        entry.e['_' + entry.end] = vertSide
+          ? { x: w, y: side === 'top' ? r.y : r.y + r.h }
+          : { x: side === 'left' ? r.x : r.x + r.w, y: w };
+      });
+    }
+
+    // ---- route ----
+    const obstacles = ids.map(id => R[id]);
+    function clearMid(fixedLo, fixedHi, tryVal, axis, exclude, lo, hi) {
+      // find a value for the cross segment that avoids obstacles; scan outward
+      for (let off = 0; off <= 120; off += 8) {
+        for (const cand of off === 0 ? [tryVal] : [tryVal - off, tryVal + off]) {
+          if (cand < lo || cand > hi) continue;
+          let ok = true;
+          for (const r of obstacles) {
+            if (exclude.indexOf(r) !== -1) continue;
+            const hit = axis === 'y'
+              ? segHitsRect(fixedLo, cand, fixedHi, cand, r, CLEAR)
+              : segHitsRect(cand, fixedLo, cand, fixedHi, r, CLEAR);
+            if (hit) { ok = false; break; }
+          }
+          if (ok) return cand;
+        }
+      }
+      return tryVal;
+    }
+    function segsClear(pts, exclude) {
+      for (let i = 0; i < pts.length - 1; i++)
+        for (const r of obstacles) {
+          if (exclude.indexOf(r) !== -1) continue;
+          if (segHitsRect(pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y, r, 4)) return false;
+        }
+      return true;
+    }
+    function route(e) {
+      const p = e._from, q = e._to, s = R[e.from], t = R[e.to];
+      const fs = e.fromSide, ts = e.toSide;
+      const dir = { top: [0, -1], bottom: [0, 1], left: [-1, 0], right: [1, 0] };
+      const p2 = { x: p.x + dir[fs][0] * STUB, y: p.y + dir[fs][1] * STUB };
+      const q2 = { x: q.x + dir[ts][0] * STUB, y: q.y + dir[ts][1] * STUB };
+      const vertical = fs === 'top' || fs === 'bottom';
+      const tVertical = ts === 'top' || ts === 'bottom';
+      const X = [s, t];
+      let pts = [ { x: p.x, y: p.y } ];
+      if (vertical && tVertical) {
+        if ((fs === 'bottom') !== (ts === 'bottom')) { // opposing sides
+          if (Math.abs(p.x - q.x) < 1 && segsClear([p, q], X)) { pts.push({ x: q.x, y: q.y }); return pts; }
+          let midY = (p2.y + q2.y) / 2;
+          midY = clearMid(Math.min(p.x, q.x), Math.max(p.x, q.x), midY, 'y', X,
+                          Math.min(p2.y, q2.y), Math.max(p2.y, q2.y));
+          const z = [pts[0], { x: p.x, y: midY }, { x: q.x, y: midY }, { x: q.x, y: q.y }];
+          if (segsClear(z, X)) return z;
+          // detour: sidestep around whatever blocks the direct channel
+          const y1 = p2.y, y2 = q2.y;
+          for (let off = 0; off <= 400; off += 12) {
+            for (const cand of off === 0 ? [(p.x + q.x) / 2] : [(p.x + q.x) / 2 - off, (p.x + q.x) / 2 + off]) {
+              const d = [pts[0], { x: p.x, y: y1 }, { x: cand, y: y1 }, { x: cand, y: y2 }, { x: q.x, y: y2 }, { x: q.x, y: q.y }];
+              if (segsClear(d, X)) return d;
+            }
+          }
+          return z;
+        } else { // same side: U route
+          const extY = fs === 'bottom' ? Math.max(p2.y, q2.y) : Math.min(p2.y, q2.y);
+          pts.push({ x: p.x, y: extY }, { x: q.x, y: extY }, { x: q.x, y: q.y });
+        }
+      } else if (!vertical && !tVertical) {
+        if ((fs === 'right') !== (ts === 'right')) {
+          if (Math.abs(p.y - q.y) < 1 && segsClear([p, q], X)) { pts.push({ x: q.x, y: q.y }); return pts; }
+          let midX = (p2.x + q2.x) / 2;
+          midX = clearMid(Math.min(p.y, q.y), Math.max(p.y, q.y), midX, 'x', X,
+                          Math.min(p2.x, q2.x), Math.max(p2.x, q2.x));
+          const z = [pts[0], { x: midX, y: p.y }, { x: midX, y: q.y }, { x: q.x, y: q.y }];
+          if (segsClear(z, X)) return z;
+          const x1 = p2.x, x2 = q2.x;
+          for (let off = 0; off <= 400; off += 12) {
+            for (const cand of off === 0 ? [(p.y + q.y) / 2] : [(p.y + q.y) / 2 - off, (p.y + q.y) / 2 + off]) {
+              const d = [pts[0], { x: x1, y: p.y }, { x: x1, y: cand }, { x: x2, y: cand }, { x: x2, y: q.y }, { x: q.x, y: q.y }];
+              if (segsClear(d, X)) return d;
+            }
+          }
+          return z;
+        } else {
+          const extX = fs === 'right' ? Math.max(p2.x, q2.x) : Math.min(p2.x, q2.x);
+          pts.push({ x: extX, y: p.y }, { x: extX, y: q.y }, { x: q.x, y: q.y });
+        }
+      } else { // L route (one vertical, one horizontal), with elbow fallback
+        const L = vertical
+          ? [pts[0], { x: p.x, y: q.y }, { x: q.x, y: q.y }]
+          : [pts[0], { x: q.x, y: p.y }, { x: q.x, y: q.y }];
+        if (segsClear(L, X)) return L;
+        const alt = vertical
+          ? [pts[0], { x: p.x, y: p2.y }, { x: q2.x, y: p2.y }, { x: q2.x, y: q.y }, { x: q.x, y: q.y }]
+          : [pts[0], { x: p2.x, y: p.y }, { x: p2.x, y: q2.y }, { x: q.x, y: q2.y }, { x: q.x, y: q.y }];
+        return segsClear(alt, X) ? alt : L;
+      }
+      return pts;
+    }
+
+    // ---- draw ----
+    let svg = container.querySelector('svg.dg-overlay');
+    if (svg) svg.remove();
+    svg = el('svg', { class: 'dg-overlay', width: cRect.width, height: cRect.height,
+                      style: 'position:absolute;left:0;top:0;pointer-events:none;overflow:visible' });
+    container.style.position = container.style.position || 'relative';
+    container.appendChild(svg);
+    const stroke = getComputedStyle(container).getPropertyValue('--dg-stroke').trim() || '#546170';
+    const halo = getComputedStyle(container).getPropertyValue('--dg-bg').trim() || '#ffffff';
+
+    let placedLabels = [], labelJobs = [];
+    edges.forEach(e => {
+      if (e._skip) return;
+      const raw = route(e);
+      const pts = raw.map(pt => ({ x: pt.x, y: pt.y }));
+      // pull endpoint back so the arrowhead tip, not the line, touches the border
+      const last = pts[pts.length - 1], prev = pts[pts.length - 2];
+      const ang = Math.atan2(last.y - prev.y, last.x - prev.x);
+      const tip = { x: last.x, y: last.y };
+      last.x -= Math.cos(ang) * ARROW; last.y -= Math.sin(ang) * ARROW;
+
+      const color = e.color || stroke;
+      const path = el('path', {
+        d: pts.map((p, i) => (i ? 'L' : 'M') + p.x.toFixed(1) + ' ' + p.y.toFixed(1)).join(' '),
+        fill: 'none', stroke: color, 'stroke-width': 1.6,
+        'stroke-dasharray': e.style === 'dashed' ? '6 4' : 'none'
+      });
+      svg.appendChild(path);
+      // arrowhead
+      const a1 = ang + 2.6, a2 = ang - 2.6, AL = ARROW + 3;
+      svg.appendChild(el('path', {
+        d: 'M' + tip.x + ' ' + tip.y +
+           ' L' + (tip.x + Math.cos(a1) * AL) + ' ' + (tip.y + Math.sin(a1) * AL) +
+           ' L' + (tip.x + Math.cos(a2) * AL) + ' ' + (tip.y + Math.sin(a2) * AL) + ' Z',
+        fill: color
+      }));
+
+      // segment-vs-node violation check (on the un-shortened route)
+      for (let i = 0; i < raw.length - 1; i++) {
+        for (const id2 of ids) {
+          if (id2 === e.from || id2 === e.to) continue;
+          if (nodes[id2].querySelector('.dg-node')) continue; // skip group containers
+          if (segHitsRect(raw[i].x, raw[i].y, raw[i + 1].x, raw[i + 1].y, R[id2], 2))
+            warn('edge ' + e.from + '->' + e.to + ' crosses node ' + id2);
+        }
+      }
+
+      // defer labels so they always paint on top of every edge line
+      if (e.label) labelJobs.push({ e, pts, color });
+    });
+
+    labelJobs.forEach(({ e, pts, color }) => {
+      let bi = 0, bl = -1;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const L = Math.abs(pts[i + 1].x - pts[i].x) + Math.abs(pts[i + 1].y - pts[i].y);
+        if (L > bl) { bl = L; bi = i; }
+      }
+      if (e.labelAt === 'start') bi = 0;
+      const A = pts[bi], B = pts[bi + 1];
+      const horizontal = Math.abs(B.y - A.y) < 1;
+      const t = el('text', {
+        'text-anchor': 'middle', 'dominant-baseline': horizontal ? 'auto' : 'middle',
+        'font-size': 12, fill: color,
+        stroke: halo, 'stroke-width': 4, 'paint-order': 'stroke fill',
+        'stroke-linejoin': 'round', 'font-family': 'inherit'
+      });
+      t.textContent = e.label;
+      svg.appendChild(t);
+      const place = (f, dy) => {
+        const nx = A.x + (B.x - A.x) * f, ny = A.y + (B.y - A.y) * f;
+        t.setAttribute('x', nx);
+        t.setAttribute('y', horizontal ? ny + dy : ny);
+      };
+      const collides = () => {
+        const bb = t.getBBox();
+        const lr = { x: bb.x - LABEL_PAD, y: bb.y - LABEL_PAD, w: bb.width + 2 * LABEL_PAD, h: bb.height + 2 * LABEL_PAD };
+        for (const id2 of ids)
+          if (rectsOverlap(lr, R[id2], 0) && !nodes[id2].querySelector('.dg-node')) return true;
+        for (const pl of placedLabels) if (rectsOverlap(lr, pl, 2)) return true;
+        return false;
+      };
+      // candidate spots: midpoint above the line, then slide along it, then below it
+      const spots = e.labelAt === 'start'
+        ? [[0.35, -7], [0.35, 16], [0.5, -7], [0.5, 16]]
+        : [[0.5, -7], [0.7, -7], [0.3, -7], [0.5, 16], [0.7, 16], [0.3, 16], [0.8, -7], [0.2, -7]];
+      let ok = false;
+      for (const [f, dy] of spots) { place(f, dy); if (!collides()) { ok = true; break; } }
+      if (!ok) { place(spots[0][0], spots[0][1]); warn('label "' + e.label + '" overlaps another element'); }
+      const fb = t.getBBox();
+      placedLabels.push({ x: fb.x, y: fb.y, w: fb.width, h: fb.height });
+    });
+  }
+
+  /* ---------------- sequence diagrams ---------------- */
+  function renderSequence(container) {
+    const spec = JSON.parse(container.querySelector('script.dg-seq').textContent);
+    const font = '13px ' + (getComputedStyle(container).fontFamily || 'system-ui, sans-serif');
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    ctx.font = font;
+    const tw = s => ctx.measureText(s).width;
+
+    const P = spec.participants, M = spec.messages;
+    const idx = {}; P.forEach((p, i) => idx[p.id] = i);
+    const boxW = P.map(p => Math.max(96, tw(p.label) + 28));
+    const boxH = 34, ROW = 40, TOP = 14, MARGIN = 16, BAR = 10;
+
+    // lifeline x positions: gap driven by the widest label between adjacent pairs
+    const gapNeed = new Array(P.length - 1).fill(120);
+    M.forEach(m => {
+      if (m.type === 'note' || m.from === m.to) return;
+      const a = Math.min(idx[m.from], idx[m.to]), b = Math.max(idx[m.from], idx[m.to]);
+      const per = (tw(m.label || '') + 50) / (b - a);
+      for (let i = a; i < b; i++) gapNeed[i] = Math.max(gapNeed[i], per);
+    });
+    const X = [MARGIN + boxW[0] / 2];
+    for (let i = 1; i < P.length; i++)
+      X[i] = X[i - 1] + Math.max(gapNeed[i - 1], boxW[i - 1] / 2 + boxW[i] / 2 + 40);
+
+    // rows
+    let y = TOP + boxH + 24;
+    const rows = M.map(m => {
+      const r = y;
+      y += (m.from === m.to) ? ROW * 1.4 : (m.type === 'note' ? ROW * 1.1 : ROW);
+      return r;
+    });
+    const H = y + 30 + boxH;
+    // canvas must also fit right-hanging self-message and note labels
+    let W = X[P.length - 1] + boxW[P.length - 1] / 2 + MARGIN + 40;
+    M.forEach(m => {
+      if (m.type === 'note') W = Math.max(W, X[idx[m.at]] + 16 + tw(m.label) + 20 + MARGIN);
+      else if (m.from === m.to) W = Math.max(W, X[idx[m.from]] + BAR / 2 + 42 + tw(m.label) + MARGIN);
+    });
+
+    const stroke = getComputedStyle(container).getPropertyValue('--dg-stroke').trim() || '#546170';
+    const accent = getComputedStyle(container).getPropertyValue('--dg-accent').trim() || '#eef2f7';
+    const halo = getComputedStyle(container).getPropertyValue('--dg-bg').trim() || '#ffffff';
+    const svg = el('svg', { width: W, height: H, viewBox: '0 0 ' + W + ' ' + H,
+                            style: 'max-width:100%;height:auto;display:block', 'font-family': 'inherit' });
+    container.appendChild(svg);
+
+    // activation tracking: open bar on callee at call, close on matching return
+    const bars = []; const open = {};
+    M.forEach((m, i) => {
+      if (m.type === 'note') return;
+      if (m.style === 'return') {
+        const k = m.from; // returning participant closes its bar
+        if (open[k] !== undefined) { bars.push({ p: k, y1: open[k], y2: rows[i] }); delete open[k]; }
+      } else if (m.from !== m.to && open[m.to] === undefined) open[m.to] = rows[i];
+    });
+    for (const k in open) bars.push({ p: k, y1: open[k], y2: rows[rows.length - 1] + 20 });
+
+    // lifelines + participant boxes (top and bottom)
+    P.forEach((p, i) => {
+      svg.appendChild(el('line', { x1: X[i], y1: TOP + boxH, x2: X[i], y2: H - boxH - 6,
+                                   stroke: stroke, 'stroke-dasharray': '4 4', 'stroke-width': 1 }));
+      [TOP, H - boxH].forEach(by => {
+        svg.appendChild(el('rect', { x: X[i] - boxW[i] / 2, y: by, width: boxW[i], height: boxH,
+                                     rx: 6, fill: accent, stroke: stroke, 'stroke-width': 1.2 }));
+        const t = el('text', { x: X[i], y: by + boxH / 2, 'text-anchor': 'middle',
+                               'dominant-baseline': 'central', 'font-size': 13, 'font-weight': 600, fill: '#26313c' });
+        t.textContent = p.label; svg.appendChild(t);
+      });
+    });
+    bars.forEach(b => {
+      const i = idx[b.p];
+      svg.appendChild(el('rect', { x: X[i] - BAR / 2, y: b.y1 - 6, width: BAR, height: b.y2 - b.y1 + 12,
+                                   fill: accent, stroke: stroke, 'stroke-width': 1 }));
+    });
+
+    function arrowhead(x, y, dirRight, color) {
+      const s = dirRight ? -1 : 1;
+      svg.appendChild(el('path', { d: 'M' + x + ' ' + y + ' l' + (9 * s) + ' -4.5 l0 9 Z', fill: color }));
+    }
+    M.forEach((m, i) => {
+      const yy = rows[i];
+      if (m.type === 'note') {
+        const i0 = idx[m.at], w = tw(m.label) + 20;
+        svg.appendChild(el('rect', { x: X[i0] + 16, y: yy - 12, width: w, height: 24, fill: '#fff8dc', stroke: '#c8b464', 'stroke-width': 1 }));
+        const t = el('text', { x: X[i0] + 16 + w / 2, y: yy, 'text-anchor': 'middle', 'dominant-baseline': 'central', 'font-size': 12, fill: '#5a4d1a' });
+        t.textContent = m.label; svg.appendChild(t);
+        return;
+      }
+      const from = idx[m.from], to = idx[m.to];
+      const dashed = m.style === 'return' || m.style === 'dashed';
+      if (from === to) { // self message
+        const x0 = X[from] + BAR / 2;
+        svg.appendChild(el('path', { d: 'M' + x0 + ' ' + yy + ' h 34 v 22 h -34',
+          fill: 'none', stroke: stroke, 'stroke-width': 1.4, 'stroke-dasharray': dashed ? '5 4' : 'none' }));
+        arrowhead(x0 + 1, yy + 22, false, stroke);
+        const t = el('text', { x: x0 + 42, y: yy + 11, 'font-size': 12, fill: '#3a4653', 'dominant-baseline': 'central',
+                               stroke: halo, 'stroke-width': 4, 'paint-order': 'stroke fill', 'stroke-linejoin': 'round' });
+        t.textContent = m.label; svg.appendChild(t);
+        return;
+      }
+      const right = to > from;
+      const barAdj = p => bars.some(b => idx[b.p] === p && yy >= b.y1 - 6 && yy <= b.y2 + 6) ? BAR / 2 : 0;
+      const x1 = X[from] + (right ? barAdj(from) : -barAdj(from));
+      const x2 = X[to] + (right ? -(barAdj(to) + 10) : (barAdj(to) + 10));
+      svg.appendChild(el('line', { x1: x1, y1: yy, x2: x2, y2: yy, stroke: stroke, 'stroke-width': 1.4,
+                                   'stroke-dasharray': dashed ? '5 4' : 'none' }));
+      arrowhead(x2 + (right ? 10 : -10) * 0 + (right ? 1 : -1), yy, right, stroke);
+      const t = el('text', { x: (x1 + x2) / 2, y: yy - 8, 'text-anchor': 'middle', 'font-size': 12, fill: '#3a4653',
+                             stroke: halo, 'stroke-width': 4, 'paint-order': 'stroke fill', 'stroke-linejoin': 'round' });
+      t.textContent = m.label; svg.appendChild(t);
+    });
+  }
+
+  function renderAll() {
+    document.querySelectorAll('[data-diagram]').forEach(renderDiagram);
+    document.querySelectorAll('[data-sequence]').forEach(c => {
+      if (!c.querySelector('svg')) renderSequence(c);
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', renderAll);
+  else renderAll();
+  let rt; window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => {
+    document.querySelectorAll('[data-diagram]').forEach(renderDiagram); }, 150); });
+})();
+
+</script>
+<script>
+
+(function () {
+  var links = Array.prototype.slice.call(document.querySelectorAll('nav.toc a'));
+  var heads = links.map(function (a) { return document.getElementById(a.getAttribute('href').slice(1)); });
+  function sync() {
+    var best = 0;
+    for (var i = 0; i < heads.length; i++) {
+      if (heads[i] && heads[i].getBoundingClientRect().top <= 120) best = i;
+    }
+    links.forEach(function (a, i) { a.classList.toggle('active', i === best); });
+  }
+  document.addEventListener('scroll', sync, { passive: true });
+  sync();
+  document.querySelectorAll('main h2[id]').forEach(function (h) {
+    var a = document.createElement('a');
+    a.className = 'anchor'; a.href = '#' + h.id; a.textContent = '#';
+    h.appendChild(a);
+  });
+})();
+
+</script>
+</body>
+</html>
