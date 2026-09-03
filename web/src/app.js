@@ -1,5 +1,5 @@
 import { HttpAgent } from "@ag-ui/client";
-import { initFeatures } from "./features.js";
+import { initFeatures, isEnabled } from "./features.js";
 import { enabledFlagNames } from "./flags-core.js";
 import * as chatHistory from "./history.js";
 
@@ -31,10 +31,18 @@ import * as chatHistory from "./history.js";
   const form = $("composer-form");
   const input = $("composer-input");
   const sendBtn = $("send-btn");
+  const emptyCopy = $("empty-copy");
+  const composerHint = $("composer-hint");
 
   const config = await (await fetch("config.json", { cache: "no-store" })).json();
   const flags = await initFeatures(config);
   document.body.dataset.features = enabledFlagNames(flags).join(" ");
+  // Read once at load; the flag layer has no live toggling within a page load.
+  const historyEnabled = isEnabled("history");
+  if (historyEnabled) {
+    emptyCopy.textContent = "Ask anything. Chats are saved on this device only.";
+    composerHint.textContent = "Enter to send, Shift+Enter for a new line. Chats are saved on this device only.";
+  }
   const authBase = `https://${config.authDomain}`;
   const redirectUri = config.siteUrl;
 
@@ -68,6 +76,7 @@ import * as chatHistory from "./history.js";
   }
 
   async function persistCurrentThread() {
+    if (!historyEnabled) return;
     if (messages.length === 0) return; // an empty thread is not worth a record
     if (!threadTitle) threadTitle = titleFor(messages[0].content);
     const thread = {
@@ -149,6 +158,7 @@ import * as chatHistory from "./history.js";
   }
 
   async function resumeHistory() {
+    if (!historyEnabled) return;
     try {
       const newest = await chatHistory.newestThread();
       if (newest && newest.messages && newest.messages.length > 0) {
@@ -262,7 +272,7 @@ import * as chatHistory from "./history.js";
     accountEmail.textContent = claims.email || claims.sub;
     accountWrap.hidden = false;
     newChatBtn.hidden = false;
-    historyWrap.hidden = false;
+    historyWrap.hidden = !historyEnabled;
     signinScreen.hidden = true;
     chatScreen.hidden = false;
   }
@@ -310,7 +320,7 @@ import * as chatHistory from "./history.js";
   function resetThread() {
     clearThreadState();
     accountMenu.hidden = true;
-    historyPanel.hidden = true;
+    if (historyEnabled) historyPanel.hidden = true;
   }
 
   // ---- Thread rendering ----
@@ -438,7 +448,7 @@ import * as chatHistory from "./history.js";
       accountMenu.hidden = true;
       accountBtn.setAttribute("aria-expanded", "false");
     }
-    if (!historyWrap.contains(event.target)) {
+    if (historyEnabled && !historyWrap.contains(event.target)) {
       historyPanel.hidden = true;
       historyBtn.setAttribute("aria-expanded", "false");
     }
@@ -449,40 +459,42 @@ import * as chatHistory from "./history.js";
     signOut();
   });
 
-  historyBtn.addEventListener("click", async () => {
-    const open = historyPanel.hidden;
-    historyPanel.hidden = !open;
-    historyBtn.setAttribute("aria-expanded", String(open));
-    if (open) await renderHistoryList();
-  });
+  if (historyEnabled) {
+    historyBtn.addEventListener("click", async () => {
+      const open = historyPanel.hidden;
+      historyPanel.hidden = !open;
+      historyBtn.setAttribute("aria-expanded", String(open));
+      if (open) await renderHistoryList();
+    });
 
-  historyList.addEventListener("click", async (event) => {
-    const item = event.target.closest(".history-item");
-    if (!item) return;
-    const id = item.dataset.id;
-    if (event.target.closest(".history-item-delete")) {
-      try {
-        await chatHistory.deleteThread(id);
-      } catch (error) {
-        // Nothing to remove; the panel refresh below reflects whatever remains.
+    historyList.addEventListener("click", async (event) => {
+      const item = event.target.closest(".history-item");
+      if (!item) return;
+      const id = item.dataset.id;
+      if (event.target.closest(".history-item-delete")) {
+        try {
+          await chatHistory.deleteThread(id);
+        } catch (error) {
+          // Nothing to remove; the panel refresh below reflects whatever remains.
+        }
+        if (id === threadId) clearThreadState();
+        await renderHistoryList();
+        return;
       }
-      if (id === threadId) clearThreadState();
-      await renderHistoryList();
-      return;
-    }
-    const thread = historyThreads.find((t) => t.id === id);
-    if (thread) switchToThread(thread);
-  });
+      const thread = historyThreads.find((t) => t.id === id);
+      if (thread) switchToThread(thread);
+    });
 
-  clearHistoryBtn.addEventListener("click", async () => {
-    try {
-      await chatHistory.clearAll();
-    } catch (error) {
-      // Nothing to clear.
-    }
-    clearThreadState();
-    await renderHistoryList();
-  });
+    clearHistoryBtn.addEventListener("click", async () => {
+      try {
+        await chatHistory.clearAll();
+      } catch (error) {
+        // Nothing to clear.
+      }
+      clearThreadState();
+      await renderHistoryList();
+    });
+  }
 
   googleBtn.addEventListener("click", startSignIn);
 
