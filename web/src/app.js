@@ -2,6 +2,7 @@ import { HttpAgent } from "@ag-ui/client";
 import { initFeatures, isEnabled } from "./features.js";
 import { enabledFlagNames } from "./flags-core.js";
 import * as chatHistory from "./history.js";
+import { renderFeedbackControls, FEEDBACK_EVENT } from "./feedback.js";
 
 (async () => {
   const $ = (id) => document.getElementById(id);
@@ -39,9 +40,19 @@ import * as chatHistory from "./history.js";
   document.body.dataset.features = enabledFlagNames(flags).join(" ");
   // Read once at load; the flag layer has no live toggling within a page load.
   const historyEnabled = isEnabled("history");
+  const feedbackEnabled = isEnabled("feedback");
   if (historyEnabled) {
     emptyCopy.textContent = "Ask anything. Chats are saved on this device only.";
     composerHint.textContent = "Enter to send, Shift+Enter for a new line. Chats are saved on this device only.";
+  }
+  if (feedbackEnabled) {
+    // Keeps the in-memory thread in sync with a vote so a later persistCurrentThread
+    // call (the next send) does not overwrite it; the store write itself already
+    // happened inside recordFeedback (web/src/feedback.js).
+    document.addEventListener(FEEDBACK_EVENT, (event) => {
+      const message = messages.find((m) => m.id === event.detail.messageId);
+      if (message) message.feedback = event.detail.vote;
+    });
   }
   const authBase = `https://${config.authDomain}`;
   const redirectUri = config.siteUrl;
@@ -84,7 +95,9 @@ import * as chatHistory from "./history.js";
       title: threadTitle,
       createdAt: threadCreatedAt,
       updatedAt: Date.now(),
-      messages: messages.map(({ id, role, content }) => ({ id, role, content })),
+      messages: messages.map(({ id, role, content, feedback }) =>
+        feedback !== undefined ? { id, role, content, feedback } : { id, role, content },
+      ),
     };
     try {
       await chatHistory.putThread(thread);
@@ -112,7 +125,12 @@ import * as chatHistory from "./history.js";
     threadId = thread.id;
     threadCreatedAt = thread.createdAt;
     threadTitle = thread.title;
-    messages = thread.messages.map(({ id, role, content }) => ({ id, role, content }));
+    // A stored feedback field carries through in memory so a later send does not wipe
+    // it out of the record on the next persistCurrentThread write, even though the
+    // control itself is not redrawn for a resumed reply (see docs/proposals/feedback.md).
+    messages = thread.messages.map(({ id, role, content, feedback }) =>
+      feedback !== undefined ? { id, role, content, feedback } : { id, role, content },
+    );
     status = messages.length > 0 ? "idle" : "idle-empty";
     lastFailedTurn = null;
     hydrateThread();
@@ -572,7 +590,9 @@ import * as chatHistory from "./history.js";
     const agent = new HttpAgent({
       url: "/api/invocations",
       threadId,
-      initialMessages: messageList,
+      // Strip any bookkeeping field (feedback included) that does not belong on the
+      // wire; the agent's validation only expects id, role, and content per message.
+      initialMessages: messageList.map(({ id, role, content }) => ({ id, role, content })),
       headers: {
         authorization: `Bearer ${tokens.access_token}`,
         "x-amzn-bedrock-agentcore-runtime-session-id": sessionId,
@@ -630,8 +650,14 @@ import * as chatHistory from "./history.js";
       return;
     }
     refs.text.textContent = draft;
-    messages.push({ id: crypto.randomUUID(), role: "assistant", content: draft });
+    const assistantMessage = { id: crypto.randomUUID(), role: "assistant", content: draft };
+    messages.push(assistantMessage);
     await persistCurrentThread();
+    // Only a committed reply gets the control: never the streaming draft above, and
+    // never an interrupted one, since that path returns from showError() above instead.
+    if (feedbackEnabled) {
+      renderFeedbackControls(refs.reply, { threadId, messageId: assistantMessage.id });
+    }
     status = "idle";
     render();
   }

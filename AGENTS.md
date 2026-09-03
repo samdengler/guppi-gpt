@@ -43,10 +43,12 @@ web/
   src/app.js              # PKCE sign-in by hand, HttpAgent subscriber, plain text rendering
   src/app.css
   src/history.js          # local chat history: idb wrapper around one "threads" object store, behind the history flag
+  src/feedback.js         # up/down reply control: vote toggle, "guppi:feedback" CustomEvent, history write, behind the feedback flag
   src/features.js         # OpenFeature static provider; initFeatures() and isEnabled()
   src/flags-core.js       # pure override parsing and default/override overlay, tested without a DOM
   features.json           # committed feature flag defaults, merged into config.json at deploy time
   test/features.test.mjs  # node:test coverage for flags-core.js, run by `npm test`
+  test/feedback.test.mjs  # node:test coverage for feedback.js's DOM-free functions
   dist/                   # build output plus config.json written by deploy.sh; not committed
 scripts/
   deploy.sh
