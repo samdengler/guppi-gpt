@@ -19,9 +19,9 @@ The design document and decision log live in the Claude project folder
 ## Prerequisites
 
 * AWS credentials for the account that holds the `dengler.io` hosted zone, region `us-east-1`
-* [uv](https://docs.astral.sh/uv/), Node 22 (for the CDK CLI via `npx`), Docker (arm64 image build)
+* [uv](https://docs.astral.sh/uv/), Node 22 (for the CDK CLI via `npx`), a Docker daemon for the arm64 image build (Colima with the `docker` CLI works; `colima start` before deploying)
 * [1Password CLI](https://developer.1password.com/docs/cli/) signed in, holding the item
-  `GuppiGPT Google OAuth` with fields `client id` and `client secret`
+  `GuppiGPT Google OAuth` in the `Personal` vault as an API Credential (`username` is the client id, `credential` is the client secret)
 * `jq` and the AWS CLI
 
 ## Commands

@@ -62,7 +62,7 @@ uv run -- ruff check .
 ## Deploying
 
 `scripts/deploy.sh` reads the Google OAuth client id and secret from 1Password
-(`op://Private/GuppiGPT Google OAuth/...`), runs `cdk deploy` with them as parameters,
+(`op://Personal/GuppiGPT Google OAuth/...`, an API Credential item whose `username` is the client id and `credential` is the client secret), runs `cdk deploy` with them as parameters,
 writes `web/config.json` from the stack outputs, syncs `web/` to the site bucket, and
 invalidates CloudFront. Deploys run on Sam's Mac; the Docker image is built there for arm64.
 

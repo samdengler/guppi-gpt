@@ -1,1 +1,6 @@
-{}
+{
+  "hosted-zone:account=009080466601:domainName=dengler.io:region=us-east-1": {
+    "Id": "/hostedzone/Z2YXO5VLB7R8UX",
+    "Name": "dengler.io."
+  }
+}

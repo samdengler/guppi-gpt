@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ITEM="op://Private/GuppiGPT Google OAuth"
+ITEM="op://Personal/GuppiGPT Google OAuth"
 OUTPUTS="$ROOT/cdk-outputs.json"
 
 for tool in op npx uv aws jq docker; do
@@ -13,10 +13,18 @@ done
 
 export AWS_REGION="${AWS_REGION:-us-east-1}"
 
+client_id="$(op read "$ITEM/username")"
+client_secret="$(op read "$ITEM/credential")"
+if [[ -z "$client_id" || -z "$client_secret" ]]; then
+  echo "could not read the Google OAuth client from 1Password ($ITEM)" >&2
+  echo "check the vault, item title, and field labels with: op item get 'GuppiGPT Google OAuth' --format json | jq '.vault.name, [.fields[].label]'" >&2
+  exit 1
+fi
+
 cd "$ROOT/infra"
 npx --yes aws-cdk@2 deploy GuppiGpt \
-  --parameters "GoogleClientId=$(op read "$ITEM/client id")" \
-  --parameters "GoogleClientSecret=$(op read "$ITEM/client secret")" \
+  --parameters "GoogleClientId=$client_id" \
+  --parameters "GoogleClientSecret=$client_secret" \
   --outputs-file "$OUTPUTS" \
   "$@"
 
