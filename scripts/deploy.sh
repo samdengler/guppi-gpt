@@ -68,11 +68,12 @@ cd "$ROOT"
 bucket="$(jq -r '.GuppiGpt.SiteBucketName' "$OUTPUTS")"
 distribution="$(jq -r '.GuppiGpt.DistributionId' "$OUTPUTS")"
 
-jq '{
+jq --slurpfile features web/features.json '{
   region: "'"$AWS_REGION"'",
   userPoolClientId: .GuppiGpt.UserPoolClientId,
   authDomain: .GuppiGpt.AuthDomain,
-  siteUrl: .GuppiGpt.SiteUrl
+  siteUrl: .GuppiGpt.SiteUrl,
+  features: $features[0]
 }' "$OUTPUTS" > web/dist/config.json
 
 aws s3 sync web/dist "s3://$bucket" --delete --exclude '.*'

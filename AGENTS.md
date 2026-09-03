@@ -38,10 +38,14 @@ agent/
   Dockerfile                     # arm64, uvicorn on 8080; built from the repo root so uv.lock is in context
   tests/
 web/
-  package.json            # esbuild and @ag-ui/client; `npm run build` writes dist/
+  package.json            # esbuild, @ag-ui/client, @openfeature/web-sdk; `npm run build` writes dist/
   src/index.html          # the page; no inline script or style (CSP is default-src 'self')
   src/app.js              # PKCE sign-in by hand, HttpAgent subscriber, plain text rendering
   src/app.css
+  src/features.js         # OpenFeature static provider; initFeatures() and isEnabled()
+  src/flags-core.js       # pure override parsing and default/override overlay, tested without a DOM
+  features.json           # committed feature flag defaults, merged into config.json at deploy time
+  test/features.test.mjs  # node:test coverage for flags-core.js, run by `npm test`
   dist/                   # build output plus config.json written by deploy.sh; not committed
 scripts/
   deploy.sh
@@ -66,6 +70,9 @@ scripts/
 - The page renders plain text only: no Markdown parser, no `innerHTML` with model or user text.
 - Tests replace `guppi_agent.agent.build_strands_agent`; nothing in `agent/tests` reaches
   Bedrock or the gateway.
+- Observability code is never behind a feature flag. `web/features.json` and the
+  OpenFeature provider in `web/src/features.js` gate product features only
+  (`docs/proposals/feature-flags.md`).
 
 ## Dependency Management
 
@@ -76,7 +83,12 @@ uv run -- pytest                    # run all tests
 uv run -- pytest agent/tests -v
 uv run -- ruff check .
 cd web && npm ci && npm run build   # bundle the page into web/dist/
+cd web && npm test                  # node:test coverage for the feature flag overlay
 ```
+
+Flipping a feature flag: edit `web/features.json`, then run `scripts/deploy.sh --site-only`
+to rebuild the page and republish `web/dist/config.json` with the new defaults; no `cdk
+deploy` and no CloudFormation parameter (`docs/proposals/feature-flags.md`).
 
 - Always use `uv add --package <member>` for dependencies, not manual pyproject edits.
 - Run `uv sync --all-packages --dev` after pulling changes.

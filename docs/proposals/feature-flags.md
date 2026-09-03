@@ -1,0 +1,148 @@
+# Feature flags for dark-shipped features
+
+Two features are landing on other branches: a chat history panel and a thumbs up or
+down feedback control on each reply. Both need to sit in `main` before they are ready
+for every visitor, so they need a way to ship in the bundle but stay off by default,
+with a way to turn one on without a code change or a redeploy of the stack. This is
+that layer: a committed defaults file, a merge step in `scripts/deploy.sh`, and a page
+provider built on the OpenFeature web SDK.
+
+Observability code is never behind a flag. Tracing, the per-run log record, and the
+data attributes the reply element carries stay on regardless of what `web/features.json`
+says.
+
+## The defaults file
+
+`web/features.json`, committed, is the source of truth for flag defaults:
+
+```json
+{
+  "history": false,
+  "feedback": false
+}
+```
+
+| Key | Feature |
+| --- | --- |
+| `history` | The chat history panel |
+| `feedback` | The thumbs up/down control on a reply |
+
+Plain JSON, no comments; this document is where the keys are explained. A new flagged
+feature adds a key here with a `false` default.
+
+## Flipping a flag
+
+Edit `web/features.json` and run:
+
+```sh
+scripts/deploy.sh --site-only
+```
+
+`scripts/deploy.sh` already writes `web/dist/config.json` from the stack outputs with
+`jq`; it now merges `web/features.json` into that file as a `features` object, keeping
+the existing keys (`region`, `userPoolClientId`, `authDomain`, `siteUrl`). No `cdk
+deploy`, no image build, no CloudFormation parameter: `--site-only` rebuilds the page
+and syncs it to the site bucket, and the new `config.json` is live after the CloudFront
+invalidation the script already runs.
+
+## Why static config plus OpenFeature, not a flag service
+
+The flags here are two booleans with one reader (this page) and no need to change
+without a deploy: no per-user targeting, no gradual rollout percentage, no audience
+rules. A file merged into `config.json` at deploy time covers that with nothing new to
+run and nothing new to authenticate to.
+
+AWS AppConfig was the natural first candidate, since the repository's stated preference
+is AWS native services. It was set aside: its data plane, `GetLatestConfiguration`, is a
+SigV4 signed API call, and the browser has no credentials to sign it with. Cognito
+issues OIDC tokens for the user pool, not AWS credentials; adding Identity Pool
+federation just to read two booleans would be more stack, more IAM, and another round
+trip on every page load for a value that already sits in `config.json`.
+
+The OpenFeature web SDK is the part that is not strictly required for two booleans read
+from one static file: `config.features.history` would do. It is here because the
+backlog already names the next step (a Dynatrace OpenFeature hook, see below), and
+OpenFeature is the vendor-neutral interface that hook expects. Writing the page against
+`OpenFeature.getClient().getBooleanValue()` now means the provider underneath can change
+later (a remote flag service, a hook that reports evaluations to Dynatrace) without
+touching `app.js` again.
+
+## The provider
+
+`web/src/features.js` implements the SDK's `Provider` interface as a static, in-memory
+provider: `resolveBooleanEvaluation` and friends read from a plain object computed once,
+never a network call. This matches the web SDK's evaluation model, which is
+synchronous by design (`getBooleanValue` returns a value, not a promise); a provider
+that needed a round trip per evaluation would not fit it.
+
+`initFeatures(config)` builds that object from `config.features` overlaid with the
+tab's overrides (below), registers the provider with `OpenFeature.setProviderAndWait`,
+and returns the merged flags. `app.js` calls it right after `config.json` loads and
+before the first render, then sets `data-features` on `<body>` to the space separated
+list of flag names that resolved true. That attribute exists for support (reading a
+session's active flags from the browser inspector, the same pattern `data-run-id` and
+`data-trace-id` use on the reply element, see `docs/proposals/traceability.md`) and for
+the Dynatrace RUM hook below; nothing renders flag state as visible text.
+
+`isEnabled(name)` wraps `OpenFeature.getClient().getBooleanValue(name, false)` for the
+two features to call once they land.
+
+The override parsing and the default and override merge are pure functions in
+`web/src/flags-core.js`, apart from the SDK import, so they run under `node:test`
+without a browser or a bundler (`web/test/features.test.mjs`).
+
+## Per-tab overrides
+
+A `ff` query parameter overrides the defaults for the current browser tab, read once
+on load:
+
+| Value | Effect |
+| --- | --- |
+| `?ff=history,feedback` | Turns both flags on |
+| `?ff=-history` | Turns `history` off |
+| `?ff=` | Clears the tab's override set back to `web/features.json`'s defaults |
+
+A `ff` value, present or empty, replaces the tab's whole override set; a name it does
+not mention keeps its `config.features` default. Leaving `ff` off the URL entirely
+leaves whatever the tab already stored untouched.
+
+The override set is written to `sessionStorage` under one key and the `ff` parameter is
+then stripped from the URL with `history.replaceState`, the same way `finishSignIn`
+already removes `code` after the OAuth exchange. Sign-in is a full navigation to
+Cognito and back (`startSignIn` in `app.js`), which drops any query string the page
+does not preserve itself; storing the override before that redirect, in a form that
+survives it, is why `sessionStorage` and not the URL is the flag layer's memory. A
+visitor who opens `?ff=history` before signing in still sees history on after the
+redirect returns with only `?code=...` on the URL.
+
+## Attaching Dynatrace later
+
+Backlog item 1 is Dynatrace RUM on the page. OpenFeature's hook interface is where that
+would attach: a hook implementing `after` (and `error`) fires on every flag evaluation
+with the flag key, the resolved value, and the evaluation reason, and can be registered
+globally with `OpenFeature.addHooks(...)` or passed to `setProviderAndWait` alongside
+the provider. A Dynatrace hook would report each evaluation as a RUM custom event or a
+session property, which is how a Dynatrace session for a page load ties back to which
+flags that session saw. None of the current provider or `initFeatures` code would need
+to change; the hook is additive. The `data-features` attribute on `<body>` covers the
+same need without RUM, for a support session working from the browser inspector alone.
+
+## Bundle size
+
+`@openfeature/web-sdk` 1.10.0 (with its peer, `@openfeature/core` 1.12.0) is bundled by
+esbuild the same way `@ag-ui/client` is, with no separate `<script>` tag and no network
+fetch at runtime; the CSP (`default-src 'self'`) is unaffected. It added about 26 KB to
+the minified `dist/app.js` (roughly 235 KB before, 261 KB after).
+
+## What is not done
+
+- No remote flag service or targeting: both flags are read once from a static file, the
+  same for every visitor, with the query-parameter override for one tab at a time.
+- AWS AppConfig: set aside above, because its data plane needs SigV4 credentials the
+  browser does not have without adding Cognito Identity Pool federation.
+- The Dynatrace hook itself: the interface it would use is described above; nothing is
+  wired up until Dynatrace RUM lands.
+- The two features this layer exists for (chat history, feedback): they ship on their
+  own branches and call `isEnabled("history")` / `isEnabled("feedback")` once they
+  land. This change touches `app.js` only enough to initialize the provider and set
+  `data-features`.
