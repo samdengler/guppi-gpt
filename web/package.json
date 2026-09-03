@@ -2,12 +2,15 @@
   "name": "guppi-gpt-web",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "The GuppiGPT page: bundled once with esbuild into dist/",
   "scripts": {
-    "build": "esbuild src/app.js --bundle --minify --format=iife --target=es2022 --outfile=dist/app.js && cp src/index.html src/app.css dist/"
+    "build": "esbuild src/app.js --bundle --minify --format=iife --target=es2022 --outfile=dist/app.js && cp src/index.html src/app.css dist/",
+    "test": "node --test"
   },
   "dependencies": {
-    "@ag-ui/client": "0.0.59"
+    "@ag-ui/client": "0.0.59",
+    "@openfeature/web-sdk": "1.10.0"
   },
   "devDependencies": {
     "esbuild": "0.25.10"

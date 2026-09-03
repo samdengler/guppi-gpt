@@ -1,4 +1,6 @@
 import { HttpAgent } from "@ag-ui/client";
+import { initFeatures } from "./features.js";
+import { enabledFlagNames } from "./flags-core.js";
 
 (async () => {
   const $ = (id) => document.getElementById(id);
@@ -24,6 +26,8 @@ import { HttpAgent } from "@ag-ui/client";
   const sendBtn = $("send-btn");
 
   const config = await (await fetch("config.json", { cache: "no-store" })).json();
+  const flags = await initFeatures(config);
+  document.body.dataset.features = enabledFlagNames(flags).join(" ");
   const authBase = `https://${config.authDomain}`;
   const redirectUri = config.siteUrl;
 

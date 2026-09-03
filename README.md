@@ -50,6 +50,10 @@ scripts/seed-content.sh      # clone the three docs repositories and sync Markdo
 scripts/ingest.sh            # start one ingestion job and wait for it
 ```
 
+Flipping a feature flag: edit `web/features.json`, then run `scripts/deploy.sh
+--site-only`. No `cdk deploy`. Details in
+[`docs/proposals/feature-flags.md`](docs/proposals/feature-flags.md).
+
 ## Status
 
 Deployed and verified in the browser on 3 Sep 2026. Remaining work is listed in the
