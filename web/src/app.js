@@ -44,6 +44,19 @@ import { HttpAgent } from "@ag-ui/client";
     return `${crypto.randomUUID()}-${crypto.randomUUID()}`;
   }
 
+  const hex = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+
+  function newTraceparent() {
+    // One W3C trace context per run (traceparent: version, trace id, parent id, flags).
+    // The trace id opens with the epoch seconds so it also reads as an X-Ray trace id
+    // (1-<8 hex seconds>-<24 hex random>), which is how CloudWatch shows it. The flags
+    // byte asks for sampling; the runtime records every span regardless.
+    const seconds = Math.floor(Date.now() / 1000).toString(16).padStart(8, "0");
+    const traceId = seconds + hex(crypto.getRandomValues(new Uint8Array(12)));
+    const parentId = hex(crypto.getRandomValues(new Uint8Array(8)));
+    return { traceId, traceparent: `00-${traceId}-${parentId}-01` };
+  }
+
   const b64url = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)))
     .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   const randomString = () => b64url(crypto.getRandomValues(new Uint8Array(32)));
@@ -212,7 +225,18 @@ import { HttpAgent } from "@ag-ui/client";
       retry();
     });
 
-    return { statusLine, text, errorLine, errorText, retryLink };
+    return { reply, statusLine, text, errorLine, errorText, retryLink };
+  }
+
+  function markReply(reply, ids) {
+    // Support identifiers on the reply element, invisible on the page: the run id and
+    // the trace id the page minted, and the request id the gateway answered with. A
+    // reader picks them up from the element's data attributes in the browser inspector
+    // and searches CloudWatch by either id (docs/proposals/traceability.md).
+    reply.dataset.runId = ids.runId;
+    reply.dataset.traceId = ids.traceId;
+    if (ids.requestId) reply.dataset.requestId = ids.requestId;
+    else delete reply.dataset.requestId;
   }
 
   // ---- Auto-scroll ----
@@ -321,6 +345,10 @@ import { HttpAgent } from "@ag-ui/client";
     let finished = false;
     let errored = false;
     let refused = false;
+    // One run id and one trace per turn; a Retry is a new run on a new trace.
+    const runId = crypto.randomUUID();
+    const { traceId, traceparent } = newTraceparent();
+    let requestId = "";
     const resetStallTimer = () => {
       if (stallTimer) clearTimeout(stallTimer);
       stallTimer = setTimeout(() => controller.abort(), 30000);
@@ -361,13 +389,19 @@ import { HttpAgent } from "@ag-ui/client";
       headers: {
         authorization: `Bearer ${tokens.access_token}`,
         "x-amzn-bedrock-agentcore-runtime-session-id": sessionId,
+        traceparent,
       },
       fetch: async (url, init) => {
         const response = await fetch(url, init);
+        // The gateway's request id, when the response carries one; the page is
+        // same-origin with the API, so the header is readable without CORS exposure.
+        requestId = response.headers.get("x-amzn-requestid") || "";
+        markReply(refs.reply, { runId, traceId, requestId });
         if (!response.ok) throw Object.assign(new Error(`HTTP ${response.status}`), { status: response.status });
         return response;
       },
     });
+    markReply(refs.reply, { runId, traceId, requestId });
     const subscriber = {
       onEvent: () => {
         resetStallTimer(); // every event counts, the CUSTOM ping included
@@ -396,7 +430,7 @@ import { HttpAgent } from "@ag-ui/client";
 
     try {
       resetStallTimer();
-      await agent.runAgent({ runId: crypto.randomUUID(), abortController: controller }, subscriber);
+      await agent.runAgent({ runId, abortController: controller }, subscriber);
     } catch (error) {
       errored = true; // transport failure, a stall abort, or an event the client refused
       refused = error && error.status === 403;
