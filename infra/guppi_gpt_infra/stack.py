@@ -93,6 +93,12 @@ RUNTIME_NAME = "guppi_gpt"
 GATEWAY_NAME = "guppi-gpt-edge"
 TARGET_NAME = "api"  # makes the gateway path /api/invocations, matching the /api/* behavior
 SESSION_HEADER = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
+# W3C trace context minted by the page per run (docs/proposals/traceability.md). Both the
+# edge gateway target and the runtime drop request headers they were not told to keep,
+# so the header is named in both allowlists. The X-Ray form (X-Amzn-Trace-Id) cannot be
+# used here: the runtime allowlist refuses every x-amzn- header except its own custom
+# prefix ("Pass custom headers to Amazon Bedrock AgentCore Runtime", devguide).
+TRACE_HEADER = "traceparent"
 TOOLS_GATEWAY_NAME = "guppi-gpt-tools"
 KB_TARGET_NAME = "docs"  # tools are named docs___Retrieve and docs___AgenticRetrieveStream
 KB_NAME = "guppi-gpt-docs"
@@ -102,6 +108,17 @@ CLOUDFRONT_HOSTED_ZONE_ID = "Z2FDTNDATAQYW2"  # the same for every CloudFront di
 RETRIEVE_TOOL = f"{KB_TARGET_NAME}___Retrieve"
 
 MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+
+# Environment the runtime hands the container before the tools gateway exists. The
+# container starts under opentelemetry-instrument (agent/Dockerfile); the runtime itself
+# supplies the ADOT exporter settings (AGENT_OBSERVABILITY_ENABLED and the OTEL_* values,
+# devguide "Add observability to your Amazon Bedrock AgentCore resources"), so only the
+# app's own knobs live here. The health check is kept out of the trace stream: the
+# runtime pings /ping often and a span per ping would only add log volume.
+RUNTIME_BASE_ENVIRONMENT = {
+    "LOG_LEVEL": "INFO",
+    "OTEL_PYTHON_EXCLUDED_URLS": "/ping$",
+}
 
 ORIGIN_HEADER_NAME = "X-Origin-Verify"
 
@@ -510,7 +527,7 @@ class GuppiGptStack(cdk.Stack):
             # container then has no token to present to the tools gateway (observed 3 Sep
             # 2026 as RUN_ERROR UNAUTHORIZED on the first run of the real agent).
             request_header_configuration=agentcore.CfnRuntime.RequestHeaderConfigurationProperty(
-                request_header_allowlist=["Authorization"]
+                request_header_allowlist=["Authorization", TRACE_HEADER]
             ),
             authorizer_configuration=agentcore.CfnRuntime.AuthorizerConfigurationProperty(
                 custom_jwt_authorizer=agentcore.CfnRuntime.CustomJWTAuthorizerConfigurationProperty(
@@ -537,7 +554,7 @@ class GuppiGptStack(cdk.Stack):
             ),
             # TOOLS_GATEWAY_URL, MODEL_ID, and RETRIEVE_TOOL are set below, once the tools
             # gateway exists; it is defined later in this file.
-            environment_variables={"LOG_LEVEL": "INFO"},
+            environment_variables=dict(RUNTIME_BASE_ENVIRONMENT),
         )
 
         invoke_policy = iam.Policy(
@@ -577,7 +594,7 @@ class GuppiGptStack(cdk.Stack):
                 )
             ],
             metadata_configuration=agentcore.CfnGatewayTarget.MetadataConfigurationProperty(
-                allowed_request_headers=[SESSION_HEADER]
+                allowed_request_headers=[SESSION_HEADER, TRACE_HEADER]
             ),
         )
         target.node.add_dependency(invoke_policy)
@@ -888,7 +905,7 @@ class GuppiGptStack(cdk.Stack):
 
         # The tools gateway now exists, so the runtime's environment can point at it.
         runtime.environment_variables = {
-            "LOG_LEVEL": "INFO",
+            **RUNTIME_BASE_ENVIRONMENT,
             "TOOLS_GATEWAY_URL": tools_gateway.attr_gateway_url,
             "MODEL_ID": MODEL_ID,
             "RETRIEVE_TOOL": RETRIEVE_TOOL,
@@ -948,6 +965,18 @@ class GuppiGptStack(cdk.Stack):
                 ],
                 resources=[
                     f"arn:aws:logs:{region}:{account}:log-group:/aws/bedrock-agentcore/runtimes/*"
+                ],
+            )
+        )
+        # The documented execution role adds this so the runtime can let X-Ray deliver
+        # spans into the agent's own log group (the unified span destination) instead of
+        # the shared aws/spans group; scoped to this runtime's log groups as the docs show.
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["logs:PutResourcePolicy"],
+                resources=[
+                    f"arn:aws:logs:{region}:{account}:log-group:"
+                    f"/aws/bedrock-agentcore/runtimes/{RUNTIME_NAME}-*"
                 ],
             )
         )

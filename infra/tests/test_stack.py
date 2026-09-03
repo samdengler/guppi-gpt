@@ -288,6 +288,7 @@ def test_runtime_environment_variables_point_at_the_tools_gateway(template):
             "EnvironmentVariables": {
                 "LOG_LEVEL": "INFO",
                 "MODEL_ID": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+                "OTEL_PYTHON_EXCLUDED_URLS": "/ping$",
                 "RETRIEVE_TOOL": "docs___Retrieve",
                 "TOOLS_GATEWAY_URL": Match.any_value(),
             }
@@ -366,8 +367,52 @@ def test_tools_gateway_is_mcp_with_cognito_jwt_and_kb_connector(template):
     )
 
 
-def test_runtime_forwards_the_bearer_to_the_container(template):
+def test_runtime_forwards_the_bearer_and_the_trace_context_to_the_container(template):
     template.has_resource_properties(
         "AWS::BedrockAgentCore::Runtime",
-        {"RequestHeaderConfiguration": {"RequestHeaderAllowlist": ["Authorization"]}},
+        {
+            "RequestHeaderConfiguration": {
+                "RequestHeaderAllowlist": ["Authorization", "traceparent"]
+            }
+        },
+    )
+
+
+def test_edge_target_forwards_the_session_id_and_the_trace_context(template):
+    template.has_resource_properties(
+        "AWS::BedrockAgentCore::GatewayTarget",
+        {
+            "Name": "api",
+            "MetadataConfiguration": {
+                "AllowedRequestHeaders": [
+                    "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id",
+                    "traceparent",
+                ]
+            },
+        },
+    )
+
+
+def test_runtime_role_can_let_xray_write_spans_to_its_own_log_group(template):
+    template.has_resource_properties(
+        "AWS::IAM::Policy",
+        Match.object_like(
+            {
+                "PolicyDocument": {
+                    "Statement": Match.array_with(
+                        [
+                            Match.object_like(
+                                {
+                                    "Action": "logs:PutResourcePolicy",
+                                    "Resource": Match.string_like_regexp(
+                                        r"arn:aws:logs:.*:log-group:"
+                                        r"/aws/bedrock-agentcore/runtimes/guppi_gpt-\*"
+                                    ),
+                                }
+                            )
+                        ]
+                    )
+                }
+            }
+        ),
     )
