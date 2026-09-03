@@ -17,7 +17,7 @@ Guppi is Bob's ship AI from *We Are Legion (We Are Bob)*.
 - Agent: Python 3.12, FastAPI, AG-UI over SSE, Strands Agents with the `ag-ui-strands` adapter, arm64 container on AgentCore Runtime
 - Model: Claude Haiku 4.5 through the `us.` cross-region inference profile (`MODEL_ID` in the stack)
 - Edge: CloudFront in front of an AgentCore Gateway runtime target; Cognito user pool federated to Google
-- Page: static HTML and vanilla JavaScript in `web/`, served from S3 through CloudFront
+- Page: static HTML and vanilla JavaScript in `web/src/`, bundled once by esbuild into `web/dist/` with `@ag-ui/client` as the stream reader, served from S3 through CloudFront
 - Package manager: uv workspace (`infra` and `agent` are members)
 - Secrets: 1Password CLI at deploy time for the Google OAuth client; the origin header value is generated in Secrets Manager by the stack; nothing secret is checked in
 
@@ -36,10 +36,11 @@ agent/
   Dockerfile                     # arm64, uvicorn on 8080
   tests/
 web/
-  index.html              # the page; no inline script or style (CSP is default-src 'self')
-  app.js                  # PKCE sign-in, hand-written SSE reader, plain text rendering
-  app.css
-  config.json             # written by deploy.sh from the stack outputs
+  package.json            # esbuild and @ag-ui/client; `npm run build` writes dist/
+  src/index.html          # the page; no inline script or style (CSP is default-src 'self')
+  src/app.js              # PKCE sign-in by hand, HttpAgent subscriber, plain text rendering
+  src/app.css
+  dist/                   # build output plus config.json written by deploy.sh; not committed
 scripts/
   deploy.sh
   seed-content.sh         # clone the docs repositories at pinned revisions, sync Markdown to S3
@@ -69,6 +70,7 @@ uv add --package guppi-agent httpx  # add a dependency to one member
 uv run -- pytest                    # run all tests
 uv run -- pytest agent/tests -v
 uv run -- ruff check .
+cd web && npm ci && npm run build   # bundle the page into web/dist/
 ```
 
 - Always use `uv add --package <member>` for dependencies, not manual pyproject edits.
@@ -78,7 +80,7 @@ uv run -- ruff check .
 
 `scripts/deploy.sh` reads the Google OAuth client id and secret from 1Password
 (`op://Personal/GuppiGPT Google OAuth/...`, an API Credential item whose `username` is the client id and `credential` is the client secret), runs `cdk deploy` with them as parameters,
-writes `web/config.json` from the stack outputs, syncs `web/` to the site bucket, and
+builds the page (`npm ci`, `npm run build` in `web/`), writes `web/dist/config.json` from the stack outputs, syncs `web/dist/` to the site bucket, and
 invalidates CloudFront. When `op whoami` fails the script omits both parameters and
 CloudFormation reuses the stack's existing values. `GUPPI_ALARM_EMAIL`, when set, becomes
 the `AlarmEmail` parameter and subscribes that address to the alarm topic. Deploys run on

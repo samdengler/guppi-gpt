@@ -6,7 +6,8 @@ __pycache__/
 cdk.out/
 
 cdk-outputs.json
-web/config.json
+web/dist/
+web/node_modules/
 node_modules/
 .env
 .DS_Store

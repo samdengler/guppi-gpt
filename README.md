@@ -13,13 +13,13 @@ The design document and decision log live in the Claude project folder
 | --- | --- |
 | `infra/` | AWS CDK app (Python), one stack named `GuppiGpt` |
 | `agent/` | The agent container: FastAPI serving AG-UI over SSE on the AgentCore Runtime contract |
-| `web/` | The static page |
+| `web/` | The static page: sources in `src/`, esbuild bundle in `dist/` |
 | `scripts/` | `deploy.sh`, `seed-content.sh` (refresh the knowledge base corpus), `ingest.sh` (index it) |
 
 ## Prerequisites
 
 * AWS credentials for the account that holds the `dengler.io` hosted zone, region `us-east-1`
-* [uv](https://docs.astral.sh/uv/), Node 22 (for the CDK CLI via `npx`), a Docker daemon for the arm64 image build (Colima with the `docker` CLI works; `colima start` before deploying)
+* [uv](https://docs.astral.sh/uv/), Node 22 or later (for the CDK CLI via `npx` and the page build), a Docker daemon for the arm64 image build (Colima with the `docker` CLI works; `colima start` before deploying)
 * [1Password CLI](https://developer.1password.com/docs/cli/) signed in, holding the item
   `GuppiGPT Google OAuth` in the `Personal` vault as an API Credential (`username` is the client id, `credential` is the client secret)
 * `jq` and the AWS CLI
@@ -29,7 +29,7 @@ The design document and decision log live in the Claude project folder
 ```sh
 uv sync --all-packages --dev # install everything
 uv run -- pytest             # agent and stack tests
-scripts/deploy.sh            # cdk deploy with secrets read from 1Password, then sync web/
+scripts/deploy.sh            # cdk deploy with secrets read from 1Password, build and sync the page
 scripts/deploy.sh --hotswap  # any extra arguments go to cdk deploy
 scripts/seed-content.sh      # clone the three docs repositories and sync Markdown to the content bucket
 scripts/ingest.sh            # start one ingestion job and wait for it
@@ -54,8 +54,3 @@ in PendingConfirmation. SNS sent two confirmation requests on 3 Sep 2026 and nei
 reached Gmail, spam included. Until one is confirmed no alarm delivers anywhere. Options:
 confirm from the SNS console (Subscriptions, Request confirmation), or subscribe a
 different address.
-
-TODO (next): consume the stream with `@ag-ui/client`'s `HttpAgent` instead of the
-hand-written SSE reader in `web/app.js`, which means adding the one esbuild step the design
-originally planned (and `oidc-client-ts` for PKCE can ride along). The wire format does not
-change; only the page's reader does.

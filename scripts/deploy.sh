@@ -7,7 +7,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ITEM="op://Personal/GuppiGPT Google OAuth"
 OUTPUTS="$ROOT/cdk-outputs.json"
 
-for tool in op npx uv aws jq docker; do
+for tool in op npx npm uv aws jq docker; do
   command -v "$tool" >/dev/null || { echo "missing: $tool" >&2; exit 1; }
 done
 
@@ -36,6 +36,10 @@ npx --yes aws-cdk@2 deploy GuppiGpt \
   --outputs-file "$OUTPUTS" \
   "$@"
 
+cd "$ROOT/web"
+npm ci --silent --no-audit --no-fund
+npm run build --silent
+
 cd "$ROOT"
 bucket="$(jq -r '.GuppiGpt.SiteBucketName' "$OUTPUTS")"
 distribution="$(jq -r '.GuppiGpt.DistributionId' "$OUTPUTS")"
@@ -45,8 +49,8 @@ jq '{
   userPoolClientId: .GuppiGpt.UserPoolClientId,
   authDomain: .GuppiGpt.AuthDomain,
   siteUrl: .GuppiGpt.SiteUrl
-}' "$OUTPUTS" > web/config.json
+}' "$OUTPUTS" > web/dist/config.json
 
-aws s3 sync web "s3://$bucket" --delete --exclude '.*'
+aws s3 sync web/dist "s3://$bucket" --delete --exclude '.*'
 aws cloudfront create-invalidation --distribution-id "$distribution" --paths '/*' >/dev/null
-echo "published $(jq -r .siteUrl web/config.json)"
+echo "published $(jq -r .siteUrl web/dist/config.json)"

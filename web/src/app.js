@@ -1,3 +1,5 @@
+import { HttpAgent } from "@ag-ui/client";
+
 (async () => {
   const $ = (id) => document.getElementById(id);
 
@@ -305,25 +307,21 @@
     await runTurn(messageList, refs);
   }
 
-  // ---- Stream handling: a hand-written SSE reader for AG-UI events ----
-
+  // ---- Stream handling: @ag-ui/client's HttpAgent reads the SSE stream ----
   async function runTurn(messageList, refs) {
     status = "running";
     render();
-
     await refreshTokenIfNeeded();
-
-    const runId = crypto.randomUUID();
     const controller = new AbortController();
     let draft = "";
     let paintScheduled = false;
     let stallTimer = null;
-
+    let finished = false;
+    let errored = false;
     const resetStallTimer = () => {
       if (stallTimer) clearTimeout(stallTimer);
       stallTimer = setTimeout(() => controller.abort(), 30000);
     };
-
     const schedulePaint = () => {
       if (paintScheduled) return;
       paintScheduled = true;
@@ -333,12 +331,10 @@
         scrollIfFollowing();
       });
     };
-
     const setStatusLine = (line) => {
       refs.statusLine.textContent = line;
       refs.statusLine.hidden = false;
     };
-
     const showError = () => {
       status = "error";
       lastFailedTurn = { messageList, refs };
@@ -346,97 +342,66 @@
       render();
     };
 
+    // One agent per turn: the page owns the thread and resends it whole, so nothing is
+    // kept on the client object between turns. The custom fetch turns a non-2xx answer
+    // into a failure, which the client would otherwise read as an empty stream.
+    const agent = new HttpAgent({
+      url: "/api/invocations",
+      threadId,
+      initialMessages: messageList,
+      headers: {
+        authorization: `Bearer ${tokens.access_token}`,
+        "x-amzn-bedrock-agentcore-runtime-session-id": sessionId,
+      },
+      fetch: async (url, init) => {
+        const response = await fetch(url, init);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response;
+      },
+    });
+    const subscriber = {
+      onEvent: () => {
+        resetStallTimer(); // every event counts, the CUSTOM ping included
+      },
+      onToolCallStartEvent: () => {
+        setStatusLine("Searching the knowledge base\u2026");
+      },
+      onToolCallEndEvent: () => {
+        setStatusLine("Searched the knowledge base");
+      },
+      onTextMessageStartEvent: () => {
+        // A second message in one run (text around a tool call) starts a new paragraph.
+        if (draft && !draft.endsWith("\n")) draft += "\n\n";
+      },
+      onTextMessageContentEvent: ({ event }) => {
+        draft += event.delta || "";
+        schedulePaint();
+      },
+      onRunFinishedEvent: () => {
+        finished = true;
+      },
+      onRunErrorEvent: () => {
+        errored = true;
+      },
+    };
+
     try {
       resetStallTimer();
-      const response = await fetch("/api/invocations", {
-        method: "POST",
-        signal: controller.signal,
-        headers: {
-          "content-type": "application/json",
-          accept: "text/event-stream",
-          authorization: `Bearer ${tokens.access_token}`,
-          "x-amzn-bedrock-agentcore-runtime-session-id": sessionId,
-        },
-        body: JSON.stringify({
-          threadId,
-          runId,
-          messages: messageList,
-          state: {},
-          tools: [],
-          context: [],
-          forwardedProps: {},
-        }),
-      });
-
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let finished = false;
-      let errored = false;
-
-      readLoop: for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let boundary;
-        while ((boundary = buffer.indexOf("\n\n")) >= 0) {
-          const chunk = buffer.slice(0, boundary);
-          buffer = buffer.slice(boundary + 2);
-          for (const line of chunk.split("\n")) {
-            if (!line.startsWith("data:")) continue;
-            let event;
-            try {
-              event = JSON.parse(line.slice(5));
-            } catch {
-              continue;
-            }
-            resetStallTimer(); // a CUSTOM ping event lands here too and keeps the run alive
-            switch (event.type) {
-              case "TOOL_CALL_START":
-                setStatusLine("Searching the knowledge base…");
-                break;
-              case "TOOL_CALL_END":
-                setStatusLine("Searched the knowledge base");
-                break;
-              case "TEXT_MESSAGE_START":
-                // A second message in one run (text around a tool call) starts a new paragraph.
-                if (draft && !draft.endsWith("\n")) draft += "\n\n";
-                break;
-              case "TEXT_MESSAGE_CONTENT":
-                draft += event.delta || "";
-                schedulePaint();
-                break;
-              case "RUN_FINISHED":
-                finished = true;
-                break;
-              case "RUN_ERROR":
-                errored = true;
-                break;
-              default:
-                break; // TOOL_CALL_ARGS, TOOL_CALL_RESULT, TEXT_MESSAGE_END, and anything else
-            }
-          }
-        }
-        if (finished || errored) break readLoop;
-      }
-
-      if (errored || !finished) {
-        showError();
-        return;
-      }
-
-      refs.text.textContent = draft;
-      messages.push({ id: crypto.randomUUID(), role: "assistant", content: draft });
-      status = "idle";
-      render();
+      await agent.runAgent({ runId: crypto.randomUUID(), abortController: controller }, subscriber);
     } catch (error) {
-      showError();
+      errored = true; // transport failure, a stall abort, or an event the client refused
     } finally {
       if (stallTimer) clearTimeout(stallTimer);
       input.focus();
     }
+    if (errored || !finished) {
+      showError();
+      return;
+    }
+    refs.text.textContent = draft;
+    messages.push({ id: crypto.randomUUID(), role: "assistant", content: draft });
+    status = "idle";
+    render();
   }
 
   // ---- Boot ----
