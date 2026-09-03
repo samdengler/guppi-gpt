@@ -34,7 +34,7 @@ agent/
   src/guppi_agent/agent.py       # per-run MCP client with the user token, Strands agent, AG-UI adapter
   src/guppi_agent/validation.py  # run input validation and front trimming
   src/guppi_agent/keepalive.py   # CUSTOM ping event after 15 silent seconds
-  Dockerfile                     # arm64, uvicorn on 8080
+  Dockerfile                     # arm64, uvicorn on 8080; built from the repo root so uv.lock is in context
   tests/
 web/
   package.json            # esbuild and @ag-ui/client; `npm run build` writes dist/
@@ -56,6 +56,9 @@ scripts/
   supplied by `scripts/deploy.sh` from 1Password; values it can produce (the
   `X-Origin-Verify` header) live in Secrets Manager and reach the template only as
   dynamic references.
+- The agent image installs dependencies from `uv.lock` in a layer before the source is
+  copied, so a code change rebuilds only the last layer; `.dockerignore` at the repo root
+  limits the build context (and the CDK asset hash) to the agent files and the lockfile.
 - Every change to the stack must keep `uv run -- pytest` green and
   `uv run -- cdk synth -c image_uri=<any ecr uri>` working without Docker.
 - Prose in docs and comments: no em-dashes or en-dashes, no second person.

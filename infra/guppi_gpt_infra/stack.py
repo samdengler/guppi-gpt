@@ -314,10 +314,16 @@ class GuppiGptStack(cdk.Stack):
         image_uri = self.node.try_get_context("image_uri")
         runtime_role = self._runtime_role()
         if image_uri is None:
+            # The context is the repository root so agent/Dockerfile can read uv.lock;
+            # .dockerignore at the root keeps the context and the asset hash to the agent
+            # files, the lockfile, and the workspace pyprojects.
+            repo_root = Path(__file__).resolve().parents[2]
             asset = ecr_assets.DockerImageAsset(
                 self,
                 "AgentImage",
-                directory=str(Path(__file__).resolve().parents[2] / "agent"),
+                directory=str(repo_root),
+                file="agent/Dockerfile",
+                ignore_mode=cdk.IgnoreMode.DOCKER,
                 platform=ecr_assets.Platform.LINUX_ARM64,
             )
             asset.repository.grant_pull(runtime_role)

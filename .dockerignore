@@ -1,0 +1,11 @@
+# Build context for agent/Dockerfile is the repository root; keep it to what the image
+# needs so the CDK asset hash and the context upload stay small.
+*
+!pyproject.toml
+!uv.lock
+!agent/pyproject.toml
+!agent/README.md
+!agent/Dockerfile
+!agent/src
+!infra/pyproject.toml
+**/__pycache__
