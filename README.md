@@ -54,3 +54,8 @@ in PendingConfirmation. SNS sent two confirmation requests on 3 Sep 2026 and nei
 reached Gmail, spam included. Until one is confirmed no alarm delivers anywhere. Options:
 confirm from the SNS console (Subscriptions, Request confirmation), or subscribe a
 different address.
+
+TODO (next): consume the stream with `@ag-ui/client`'s `HttpAgent` instead of the
+hand-written SSE reader in `web/app.js`, which means adding the one esbuild step the design
+originally planned (and `oidc-client-ts` for PKCE can ride along). The wire format does not
+change; only the page's reader does.
