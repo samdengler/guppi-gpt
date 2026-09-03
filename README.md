@@ -66,3 +66,23 @@ design document, section 15. Operational notes:
   PendingConfirmation: SNS sent two confirmation requests on 3 Sep 2026 and neither reached
   Gmail, spam included. Until one is confirmed no alarm delivers anywhere. Confirm from the
   SNS console (Subscriptions, Request confirmation) or subscribe a different address.
+
+## Backlog
+
+Preference for anything on the backend: AWS native services, serverless where possible
+(scale to zero, pay per use, automatic scaling).
+
+1. Dynatrace RUM on the page plus the Dynatrace AWS integration, so a browser session ties
+   to the gateway, runtime, and Bedrock traces behind it.
+2. A Dynatrace dashboard for operational metrics.
+3. Troubleshooting design: correlation ids and traceability from the browser through the
+   edge gateway, runtime, tools gateway, and Bedrock calls, so one id finds a whole turn.
+4. An up/down feedback button on each reply. First choice is to capture it as a Dynatrace
+   RUM signal rather than new AWS infrastructure; open to discussion.
+5. Chat history: local to the browser first, and through the frontend AG-UI client if it
+   supports it.
+6. Conversation logging with long term storage in S3, open on how it is written. The
+   stored history should be anonymous to the user, with a way to correlate a record back
+   to a privileged user when troubleshooting requires it.
+7. `scripts/deploy.sh` should tee its output to a gitignored log file (timestamped, with a
+   `latest` link) so a session can monitor a deploy without the terminal.
