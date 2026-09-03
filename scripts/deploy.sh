@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # Deploy the GuppiGpt stack with secrets read from 1Password, then publish the page.
 # Extra arguments are passed to `cdk deploy` (for example --hotswap or --require-approval never).
+# `--site-only` skips cdk deploy (and the image build and push) and publishes the page
+# from the outputs of the last deploy; useful on a slow connection.
 set -euo pipefail
+
+SITE_ONLY=0
+if [[ "${1:-}" == "--site-only" ]]; then SITE_ONLY=1; shift; fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ITEM="op://Personal/GuppiGPT Google OAuth"
@@ -21,11 +26,17 @@ echo "deploy log: $LOG"
 for tool in op npx npm uv aws jq docker; do
   command -v "$tool" >/dev/null || { echo "missing: $tool" >&2; exit 1; }
 done
+if [[ "$SITE_ONLY" == 1 && ! -f "$OUTPUTS" ]]; then
+  echo "--site-only needs $OUTPUTS from an earlier deploy" >&2
+  exit 1
+fi
 
 export AWS_REGION="${AWS_REGION:-us-east-1}"
 
 param_args=()
-if op whoami >/dev/null 2>&1; then
+if [[ "$SITE_ONLY" == 1 ]]; then
+  echo "site only: skipping cdk deploy, using $OUTPUTS"
+elif op whoami >/dev/null 2>&1; then
   client_id="$(op read "$ITEM/username")"
   client_secret="$(op read "$ITEM/credential")"
   if [[ -z "$client_id" || -z "$client_secret" ]]; then
@@ -41,11 +52,13 @@ if [[ -n "${GUPPI_ALARM_EMAIL:-}" ]]; then
   param_args+=(--parameters "AlarmEmail=$GUPPI_ALARM_EMAIL")
 fi
 
-cd "$ROOT/infra"
-npx --yes aws-cdk@2 deploy GuppiGpt \
-  "${param_args[@]+"${param_args[@]}"}" \
-  --outputs-file "$OUTPUTS" \
-  "$@"
+if [[ "$SITE_ONLY" == 0 ]]; then
+  cd "$ROOT/infra"
+  npx --yes aws-cdk@2 deploy GuppiGpt \
+    "${param_args[@]+"${param_args[@]}"}" \
+    --outputs-file "$OUTPUTS" \
+    "$@"
+fi
 
 cd "$ROOT/web"
 npm ci --silent --no-audit --no-fund

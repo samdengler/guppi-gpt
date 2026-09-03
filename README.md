@@ -45,6 +45,7 @@ uv sync --all-packages --dev # install everything
 uv run -- pytest             # agent and stack tests
 scripts/deploy.sh            # cdk deploy with secrets read from 1Password, build and sync the page
 scripts/deploy.sh --hotswap  # any extra arguments go to cdk deploy
+scripts/deploy.sh --site-only # publish the page only, no cdk deploy or image push
 scripts/seed-content.sh      # clone the three docs repositories and sync Markdown to the content bucket
 scripts/ingest.sh            # start one ingestion job and wait for it
 ```

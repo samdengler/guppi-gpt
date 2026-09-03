@@ -87,7 +87,8 @@ cd web && npm ci && npm run build   # bundle the page into web/dist/
 builds the page (`npm ci`, `npm run build` in `web/`), writes `web/dist/config.json` from the stack outputs, syncs `web/dist/` to the site bucket, and
 invalidates CloudFront. When `op whoami` fails the script omits both parameters and
 CloudFormation reuses the stack's existing values. `GUPPI_ALARM_EMAIL`, when set, becomes
-the `AlarmEmail` parameter and subscribes that address to the alarm topic. Every run is
+the `AlarmEmail` parameter and subscribes that address to the alarm topic. `scripts/deploy.sh --site-only` skips `cdk deploy` (so no image build or push) and
+publishes the page from the last outputs file. Every run is
 also written to `.deploy/deploy-<timestamp>.log` with `.deploy/latest.log` pointing at the
 newest and a final `deploy exit=<code>` line, so a Claude session can watch a deploy
 started from any terminal. Deploys run on Sam's Mac; the Docker image is built there for
