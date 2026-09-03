@@ -84,7 +84,6 @@ TOOLS_GATEWAY_NAME = "guppi-gpt-tools"
 KB_TARGET_NAME = "docs"  # tools are named docs___Retrieve and docs___AgenticRetrieveStream
 KB_NAME = "guppi-gpt-docs"
 CONTENT_PREFIX = "docs/"  # scripts/seed-content.sh writes docs/<source>/... to the content bucket
-RETRIEVE_RESULTS = 5
 ORIGIN_RESPONSE_TIMEOUT = Duration.seconds(60)
 CLOUDFRONT_HOSTED_ZONE_ID = "Z2FDTNDATAQYW2"  # the same for every CloudFront distribution
 
@@ -581,13 +580,11 @@ class GuppiGptStack(cdk.Stack):
                                     "Search the MCP, Strands Agents, and AG-UI documentation "
                                     "and return the most relevant passages."
                                 ),
+                                # No retrievalConfiguration default: CloudFormation stores the
+                                # JSON numbers in ParameterValues as strings, and the knowledge
+                                # base rejects a string numberOfResults. Service defaults apply.
                                 parameter_values={
                                     "knowledgeBaseId": knowledge_base.attr_knowledge_base_id,
-                                    "retrievalConfiguration": {
-                                        "managedSearchConfiguration": {
-                                            "numberOfResults": RETRIEVE_RESULTS
-                                        }
-                                    },
                                 },
                             ),
                             agentcore.CfnGatewayTarget.ConnectorConfigurationProperty(
