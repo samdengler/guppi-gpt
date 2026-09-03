@@ -21,9 +21,12 @@ from guppi_agent.validation import trim_messages, validate_run
 from httpx import ASGITransport, AsyncClient
 
 TOKEN = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1c2VyLTEifQ."  # header.{"sub":"user-1"}.
+TRACE_ID = "4bf92f3577b34da6a3ce929d0e0e4736"
 HEADERS = {
     "authorization": f"Bearer {TOKEN}",
     "x-amzn-bedrock-agentcore-runtime-session-id": "session-1",
+    "traceparent": f"00-{TRACE_ID}-00f067aa0ba902b7-01",
+    "x-amzn-requestid": "req-1",
 }
 
 
@@ -127,6 +130,9 @@ async def test_run_streams_the_agent_events_in_order(client, fake_agent, caplog)
         "RUN_FINISHED",
     ]
     assert fake_agent.tokens == [TOKEN]
+    # The run id the page minted comes back on the first event, so a reader can pair
+    # the reply on the page with the agent's log record.
+    assert parse_sse(response.text)[0] == {"type": "RUN_STARTED", "threadId": "t1", "runId": "r1"}
 
     records = [json.loads(r.message) for r in caplog.records if r.message.startswith("{")]
     (record,) = records
@@ -134,6 +140,9 @@ async def test_run_streams_the_agent_events_in_order(client, fake_agent, caplog)
     assert record["tool_calls"] == 1
     assert record["messages"] == 1
     assert record["session"] == "session-1"
+    assert record["thread"] == "t1" and record["run"] == "r1"
+    assert record["trace_id"] == TRACE_ID
+    assert record["request_id"] == "req-1"
     assert record["input_tokens"] == 12 and record["output_tokens"] == 3
     assert "first_delta_ms" in record and "total_ms" in record
     assert record["sub"] != "user-1" and len(record["sub"]) == 12
@@ -223,6 +232,38 @@ def test_validate_and_trim_directly():
     assert validate_run(run) is None
     assert [m.role for m in trim_messages(run.messages, budget=0)] == ["user"]
     assert trim_messages(run.messages, budget=10**6) == run.messages
+
+
+async def test_record_marks_missing_trace_and_request_ids(client, fake_agent, caplog):
+    caplog.set_level("INFO", logger="guppi_agent")
+    headers = {"authorization": f"Bearer {TOKEN}"}
+    await post(client, run_body("hello"), headers=headers)
+    (record,) = [json.loads(r.message) for r in caplog.records if r.message.startswith("{")]
+    # No traceparent and no tracer provider: nothing to report, and nothing invented.
+    assert record["trace_id"] == "-"
+    assert record["request_id"] == "-"
+    assert record["session"] == "-"
+
+
+@pytest.mark.parametrize(
+    "header, expected",
+    [
+        (f"00-{TRACE_ID}-00f067aa0ba902b7-01", TRACE_ID),
+        (f"  00-{TRACE_ID.upper()}-00F067AA0BA902B7-00  ", TRACE_ID),
+        (f"00-{TRACE_ID}-00f067aa0ba902b7", "-"),  # flags missing
+        (f"00-{TRACE_ID[:-1]}-00f067aa0ba902b7-01", "-"),  # trace id too short
+        ("Root=1-5759e988-bd862e3fe1be46a994272793;Sampled=1", "-"),  # X-Ray form
+        ("", "-"),
+    ],
+)
+def test_trace_id_reads_only_a_well_formed_traceparent(header, expected):
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/invocations",
+        "headers": [(b"traceparent", header.encode())] if header else [],
+    }
+    assert app_module.trace_id(app_module.Request(scope)) == expected
 
 
 def test_subject_hash_is_stable_and_never_the_sub():

@@ -23,4 +23,11 @@ COPY agent/src agent/src
 RUN uv sync --frozen --package guppi-agent --no-dev --no-editable
 
 EXPOSE 8080
-CMD ["uvicorn", "guppi_agent.app:app", "--host", "0.0.0.0", "--port", "8080"]
+# opentelemetry-instrument (from aws-opentelemetry-distro, a guppi-agent dependency) is
+# the documented AgentCore entrypoint wrapper: it installs the ADOT tracer provider and
+# the FastAPI, httpx, MCP, and botocore instrumentation before uvicorn imports the app,
+# so one trace covers the request, the Strands run, the tools gateway call, and the
+# Bedrock call. The runtime supplies the exporter settings as environment variables
+# (AGENT_OBSERVABILITY_ENABLED and OTEL_*). Local development starts uvicorn directly
+# (AGENTS.md) and needs none of this. See docs/proposals/traceability.md.
+CMD ["opentelemetry-instrument", "uvicorn", "guppi_agent.app:app", "--host", "0.0.0.0", "--port", "8080"]

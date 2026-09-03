@@ -14,6 +14,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import time
 from collections.abc import AsyncIterator
 
@@ -27,6 +28,7 @@ from ag_ui.core import (
 from ag_ui.encoder import EventEncoder
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from opentelemetry import trace as otel_trace
 
 from guppi_agent import agent as agent_module
 from guppi_agent.keepalive import DEFAULT_PING_INTERVAL, with_keepalive
@@ -38,6 +40,29 @@ log = logging.getLogger("guppi_agent")
 app = FastAPI(title="guppi-agent")
 
 SESSION_HEADER = "x-amzn-bedrock-agentcore-runtime-session-id"
+# W3C trace context, minted by the page per run and passed through by the edge gateway
+# target and the runtime allowlists. The runtime's own request id header, when it
+# forwards one, is recorded beside it (docs/proposals/traceability.md).
+TRACE_HEADER = "traceparent"
+REQUEST_ID_HEADER = "x-amzn-requestid"
+TRACEPARENT = re.compile(r"^[0-9a-f]{2}-([0-9a-f]{32})-[0-9a-f]{16}-[0-9a-f]{2}$")
+
+
+def trace_id(request: Request) -> str:
+    """The 32 hex character trace id for this run, or "-" when there is none.
+
+    The traceparent header is the source of truth, since it is what the page minted and
+    what every hop before this one logged. When the container runs under
+    opentelemetry-instrument the active server span carries the same id, and that span
+    is the fallback for a request that arrived without the header.
+    """
+    match = TRACEPARENT.match(request.headers.get(TRACE_HEADER, "").strip().lower())
+    if match:
+        return match.group(1)
+    context = otel_trace.get_current_span().get_span_context()
+    if context.is_valid:
+        return f"{context.trace_id:032x}"
+    return "-"
 
 
 def bearer_token(request: Request) -> str | None:
@@ -172,6 +197,8 @@ async def invocations(request: Request) -> StreamingResponse:
         "session": request.headers.get(SESSION_HEADER, "-"),
         "thread": run.thread_id,
         "run": run.run_id,
+        "trace_id": trace_id(request),
+        "request_id": request.headers.get(REQUEST_ID_HEADER, "-"),
         "messages": len(run.messages),
         "tool_calls": 0,
     }
