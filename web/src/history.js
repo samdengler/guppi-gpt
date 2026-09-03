@@ -1,8 +1,10 @@
-// Local chat history: a small promise wrapper around IndexedDB. No library, no server
-// call, nothing sent anywhere. Stores thread text only, never tokens.
+// Local chat history: a thin wrapper around IndexedDB, built on the idb package. No
+// server call, nothing sent anywhere. Stores thread text only, never tokens.
 //
 // Schema: one object store "threads", keyed by "id", each record
 //   { id, title, createdAt, updatedAt, messages: [{ id, role, content }] }
+
+import { openDB } from "idb";
 
 const DB_NAME = "guppigpt-history";
 const DB_VERSION = 1;
@@ -12,59 +14,43 @@ let dbPromise = null;
 
 function openDb() {
   if (!dbPromise) {
-    dbPromise = new Promise((resolve, reject) => {
-      if (!("indexedDB" in globalThis)) {
-        reject(new Error("indexedDB is not available"));
-        return;
-      }
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
-      request.onupgradeneeded = () => {
-        const db = request.result;
-        if (!db.objectStoreNames.contains(STORE)) {
-          db.createObjectStore(STORE, { keyPath: "id" });
-        }
-      };
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
+    if (!("indexedDB" in globalThis)) {
+      dbPromise = Promise.reject(new Error("indexedDB is not available"));
+    } else {
+      dbPromise = openDB(DB_NAME, DB_VERSION, {
+        upgrade(db) {
+          if (!db.objectStoreNames.contains(STORE)) {
+            db.createObjectStore(STORE, { keyPath: "id" });
+          }
+        },
+      });
+    }
   }
   return dbPromise;
 }
 
-function wrap(request) {
-  return new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-}
-
-async function store(mode) {
-  const db = await openDb();
-  return db.transaction(STORE, mode).objectStore(STORE);
-}
-
 // Replaces (or creates) one thread record.
 export async function putThread(thread) {
-  const objectStore = await store("readwrite");
-  await wrap(objectStore.put(thread));
+  const db = await openDb();
+  await db.put(STORE, thread);
 }
 
 // Removes one thread record by id.
 export async function deleteThread(id) {
-  const objectStore = await store("readwrite");
-  await wrap(objectStore.delete(id));
+  const db = await openDb();
+  await db.delete(STORE, id);
 }
 
 // Removes every thread record.
 export async function clearAll() {
-  const objectStore = await store("readwrite");
-  await wrap(objectStore.clear());
+  const db = await openDb();
+  await db.clear(STORE);
 }
 
 // All threads, newest first.
 export async function listThreads() {
-  const objectStore = await store("readonly");
-  const all = await wrap(objectStore.getAll());
+  const db = await openDb();
+  const all = await db.getAll(STORE);
   return all.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
