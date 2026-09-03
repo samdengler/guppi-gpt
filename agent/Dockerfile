@@ -8,7 +8,7 @@ FROM --platform=linux/arm64 python:3.12-slim
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
-ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_NO_CACHE=1 PYTHONUNBUFFERED=1
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy PYTHONUNBUFFERED=1
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Workspace metadata only: the root project, the lockfile, and each member's pyproject
@@ -16,11 +16,15 @@ ENV PATH="/app/.venv/bin:$PATH"
 COPY pyproject.toml uv.lock ./
 COPY agent/pyproject.toml agent/README.md agent/
 COPY infra/pyproject.toml infra/
-RUN uv sync --frozen --package guppi-agent --no-dev --no-editable --no-install-workspace
+# The cache mount keeps uv's downloads on the build host, outside the image, so a
+# lockfile change fetches only what changed (needs BuildKit, which docker-buildx provides).
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --package guppi-agent --no-dev --no-editable --no-install-workspace
 
 # The agent itself. Only this layer and the sync below rerun on a source change.
 COPY agent/src agent/src
-RUN uv sync --frozen --package guppi-agent --no-dev --no-editable
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --package guppi-agent --no-dev --no-editable
 
 EXPOSE 8080
 CMD ["uvicorn", "guppi_agent.app:app", "--host", "0.0.0.0", "--port", "8080"]
