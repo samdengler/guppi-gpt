@@ -87,8 +87,11 @@ cd web && npm ci && npm run build   # bundle the page into web/dist/
 builds the page (`npm ci`, `npm run build` in `web/`), writes `web/dist/config.json` from the stack outputs, syncs `web/dist/` to the site bucket, and
 invalidates CloudFront. When `op whoami` fails the script omits both parameters and
 CloudFormation reuses the stack's existing values. `GUPPI_ALARM_EMAIL`, when set, becomes
-the `AlarmEmail` parameter and subscribes that address to the alarm topic. Deploys run on
-Sam's Mac; the Docker image is built there for arm64.
+the `AlarmEmail` parameter and subscribes that address to the alarm topic. Every run is
+also written to `.deploy/deploy-<timestamp>.log` with `.deploy/latest.log` pointing at the
+newest and a final `deploy exit=<code>` line, so a Claude session can watch a deploy
+started from any terminal. Deploys run on Sam's Mac; the Docker image is built there for
+arm64.
 
 The runtime's request header allowlist names `Authorization`; without it the runtime
 validates the bearer and drops it, and the agent has no token for the tools gateway.

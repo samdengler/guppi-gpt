@@ -7,6 +7,17 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ITEM="op://Personal/GuppiGPT Google OAuth"
 OUTPUTS="$ROOT/cdk-outputs.json"
 
+# Everything below is also written to .deploy/deploy-<timestamp>.log (gitignored), with
+# .deploy/latest.log pointing at the newest run, so another session can follow a deploy
+# started from any terminal. The last line of a run is always "deploy exit=<code>".
+LOG_DIR="$ROOT/.deploy"
+mkdir -p "$LOG_DIR"
+LOG="$LOG_DIR/deploy-$(date +%Y%m%d-%H%M%S).log"
+ln -sfn "$(basename "$LOG")" "$LOG_DIR/latest.log"
+exec > >(tee -a "$LOG") 2>&1
+trap 'code=$?; echo "deploy exit=$code"; exit $code' EXIT
+echo "deploy log: $LOG"
+
 for tool in op npx npm uv aws jq docker; do
   command -v "$tool" >/dev/null || { echo "missing: $tool" >&2; exit 1; }
 done

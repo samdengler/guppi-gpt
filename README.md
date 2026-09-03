@@ -84,5 +84,3 @@ Preference for anything on the backend: AWS native services, serverless where po
 6. Conversation logging with long term storage in S3, open on how it is written. The
    stored history should be anonymous to the user, with a way to correlate a record back
    to a privileged user when troubleshooting requires it.
-7. `scripts/deploy.sh` should tee its output to a gitignored log file (timestamped, with a
-   `latest` link) so a session can monitor a deploy without the terminal.
