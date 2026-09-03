@@ -25,12 +25,13 @@ Guppi is Bob's ship AI from *We Are Legion (We Are Bob)*.
 
 ```
 docs/                     # design document, decision log, architecture diagrams (self-contained HTML)
+  proposals/              # backlog proposals in Markdown; traceability.md covers run and trace ids
 infra/
   app.py                  # CDK app entry
   guppi_gpt_infra/stack.py
   tests/                  # assertions against the synthesized template
 agent/
-  src/guppi_agent/app.py         # FastAPI app: POST /invocations (SSE), GET /ping, per-run log record
+  src/guppi_agent/app.py         # FastAPI app: POST /invocations (SSE), GET /ping, per-run log record with trace id
   src/guppi_agent/agent.py       # per-run MCP client with the user token, Strands agent, AG-UI adapter
   src/guppi_agent/validation.py  # run input validation and front trimming
   src/guppi_agent/keepalive.py   # CUSTOM ping event after 15 silent seconds
@@ -90,10 +91,15 @@ CloudFormation reuses the stack's existing values. `GUPPI_ALARM_EMAIL`, when set
 the `AlarmEmail` parameter and subscribes that address to the alarm topic. Deploys run on
 Sam's Mac; the Docker image is built there for arm64.
 
-The runtime's request header allowlist names `Authorization`; without it the runtime
-validates the bearer and drops it, and the agent has no token for the tools gateway.
-The runtime container receives `TOOLS_GATEWAY_URL`, `MODEL_ID`, `RETRIEVE_TOOL`, and
-`LOG_LEVEL` from the stack. The web ACL on the edge gateway keeps all three rules in COUNT
+The runtime's request header allowlist names `Authorization` and `traceparent`; without
+the first the runtime validates the bearer and drops it, and the agent has no token for
+the tools gateway; without the second the trace the page started ends at the runtime.
+The edge gateway target's allowed request headers name the session id header and
+`traceparent` for the same reason. The runtime container receives `TOOLS_GATEWAY_URL`,
+`MODEL_ID`, `RETRIEVE_TOOL`, `LOG_LEVEL`, and `OTEL_PYTHON_EXCLUDED_URLS` from the stack;
+the container starts under `opentelemetry-instrument` (`agent/Dockerfile`), and the
+runtime supplies the ADOT exporter settings itself. `docs/proposals/traceability.md`
+describes the identifiers and where each one is logged. The web ACL on the edge gateway keeps all three rules in COUNT
 until `WAF_BLOCK` in `stack.py` is flipped after real traffic has been watched. The billing
 alarm reads `AWS/Billing EstimatedCharges`, which exists only after billing alerts are
 enabled in the account's billing preferences (a console setting, not in the stack).
