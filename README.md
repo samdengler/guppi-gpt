@@ -77,15 +77,19 @@ design document, section 15. Operational notes:
 Preference for anything on the backend: AWS native services, serverless where possible
 (scale to zero, pay per use, automatic scaling).
 
-1. Dynatrace RUM on the page plus the Dynatrace AWS integration, so a browser session ties
-   to the gateway, runtime, and Bedrock traces behind it.
-2. A Dynatrace dashboard for operational metrics.
-3. Troubleshooting design: correlation ids and traceability from the browser through the
-   edge gateway, runtime, tools gateway, and Bedrock calls, so one id finds a whole turn.
-4. An up/down feedback button on each reply. First choice is to capture it as a Dynatrace
-   RUM signal rather than new AWS infrastructure; open to discussion.
-5. Chat history: local to the browser first, and through the frontend AG-UI client if it
-   supports it.
-6. Conversation logging with long term storage in S3, open on how it is written. The
-   stored history should be anonymous to the user, with a way to correlate a record back
-   to a privileged user when troubleshooting requires it.
+1. Dynatrace RUM on the page plus the Dynatrace AWS integration. Groundwork built behind
+   the `rum` flag (`docs/proposals/dynatrace.md`); needs the tenant URL, a RUM application
+   and its beacon origin, an API token, and the AWS integration role on the Dynatrace side.
+2. A Dynatrace dashboard for operational metrics. Draft in `docs/dynatrace/dashboard.json`;
+   import once the tenant exists.
+3. Correlation ids and traceability. Done: `docs/proposals/traceability.md`.
+4. Up/down feedback on each reply. Built dark behind the `feedback` flag as a DOM event for
+   the RUM hook: `docs/proposals/feedback.md`.
+5. Chat history local to the browser. Built dark behind the `history` flag as Chats:
+   `docs/proposals/local-history.md`.
+6. Conversation logging to S3, anonymous with privileged re-identification. Built dark
+   behind the runtime switch and the `logging` flag with the decisions recorded in
+   `docs/proposals/conversation-logging.md`; confirm retention and the investigator
+   principal before flipping.
+7. Operational alarms, vended log delivery, and the per-user rate limit: done, thresholds
+   in `docs/proposals/operations.md`.
