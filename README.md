@@ -59,8 +59,9 @@ Flipping a feature flag: edit `web/features.json`, then run `scripts/deploy.sh
 Deployed and verified in the browser on 3 Sep 2026. Remaining work is listed in the
 design document, section 15. Operational notes:
 
-* `WAF_BLOCK` in `infra/guppi_gpt_infra/stack.py` stays `False` until the web ACL rules
-  have been watched in COUNT against real prompts.
+* `WAF_BLOCK` in `infra/guppi_gpt_infra/stack.py` has been `True` since 4 Sep 2026, after a
+  day in COUNT produced no counts on any rule. Set it back to `False` to return to
+  watching; a direct call to the gateway hostname now gets a 403 from the WAF.
 * The edge gateway's front door answers 403 from its load balancer, before any of the
   stack's WAF rules run, for any request body containing an http or https URL whose host
   is localhost, 127.0.0.1, or 169.254.169.254. Because the page resends the whole thread,
