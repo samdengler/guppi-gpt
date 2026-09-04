@@ -140,9 +140,10 @@ ORIGIN_HEADER_NAME = "X-Origin-Verify"
 # depend on any Dynatrace tenant detail.
 RUM_SCRIPT_PATH = "/dt/ruxitagentjs.js"
 
-# Both WAF rules below start in COUNT so real traffic can be watched before anything is
-# blocked. Flip this once the common rule set has been checked against real prompts.
-WAF_BLOCK = False
+# The WAF rules ran in COUNT from 3 Sep 2026 until real prompts, including code-heavy
+# replies, produced no counts on any rule; they block since 4 Sep 2026. Set False to
+# return to watching.
+WAF_BLOCK = True
 
 # Conversation logging (docs/proposals/conversation-logging.md). The bucket, the key, the
 # HMAC secret, and the investigator role are always created; this switch decides whether the

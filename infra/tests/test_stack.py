@@ -197,7 +197,7 @@ def test_nightly_ingestion_is_a_scheduler_universal_target(template):
     )
 
 
-def test_web_acl_has_three_count_rules_associated_with_the_edge_gateway(template):
+def test_web_acl_has_three_blocking_rules_associated_with_the_edge_gateway(template):
     acls = template.find_resources("AWS::WAFv2::WebACL")
     (acl,) = acls.values()
     assert acl["Properties"]["Scope"] == "REGIONAL"
@@ -207,9 +207,9 @@ def test_web_acl_has_three_count_rules_associated_with_the_edge_gateway(template
     assert names == {"CloudFrontOnly", "AWSManagedRulesCommonRuleSet", "RateLimit"}
     for rule in rules:
         if rule["Name"] == "AWSManagedRulesCommonRuleSet":
-            assert rule["OverrideAction"] == {"Count": {}}
+            assert rule["OverrideAction"] == {"None": {}}
         else:
-            assert rule["Action"] == {"Count": {}}
+            assert rule["Action"] == {"Block": {}}
     template.has_resource_properties(
         "AWS::WAFv2::WebACLAssociation",
         {
