@@ -26,6 +26,7 @@ Guppi is Bob's ship AI from *We Are Legion (We Are Bob)*.
 ```
 docs/                     # design document, decision log, architecture diagrams (self-contained HTML)
   proposals/              # backlog proposals in Markdown; traceability.md covers run and trace ids
+  dynatrace/dashboard.json  # draft DQL dashboard tiles for the queries in docs/proposals/dynatrace.md
 infra/
   app.py                  # CDK app entry
   guppi_gpt_infra/stack.py
@@ -48,10 +49,13 @@ web/
   src/features.js         # OpenFeature static provider; initFeatures() and isEnabled()
   src/copy.js             # the hint and empty-state wording for each combination of the history and logging flags
   src/flags-core.js       # pure override parsing and default/override overlay, tested without a DOM
+  src/rum.js              # Dynatrace RUM: script injection, OpenFeature hook, feedback listener, behind the rum flag
   features.json           # committed feature flag defaults, merged into config.json at deploy time
+  vendor/ruxitagentjs.js  # the Dynatrace RUM script itself; gitignored, not committed
   test/features.test.mjs  # node:test coverage for flags-core.js, run by `npm test`
   test/feedback.test.mjs  # node:test coverage for feedback.js's DOM-free functions
   test/copy.test.js       # node:test coverage for copy.js's wording per flag combination
+  test/rum.test.mjs       # node:test coverage for rum.js's pure property-building functions
   dist/                   # build output plus config.json written by deploy.sh; not committed
 scripts/
   deploy.sh
@@ -76,9 +80,11 @@ scripts/
 - The page renders plain text only: no Markdown parser, no `innerHTML` with model or user text.
 - Tests replace `guppi_agent.agent.build_strands_agent`; nothing in `agent/tests` reaches
   Bedrock or the gateway.
-- Observability code is never behind a feature flag. `web/features.json` and the
-  OpenFeature provider in `web/src/features.js` gate product features only
-  (`docs/proposals/feature-flags.md`).
+- Observability that reads state already reaching the browser is never behind a feature
+  flag. `web/features.json` and the OpenFeature provider in `web/src/features.js` mostly
+  gate product features (`docs/proposals/feature-flags.md`); the one exception is `rum`,
+  since turning it on inserts a script element and starts a vendor library running,
+  which is a page behavior change, not a passive read (`docs/proposals/dynatrace.md`).
 
 ## Dependency Management
 
@@ -146,6 +152,20 @@ gateways' and the runtime's `APPLICATION_LOGS` (and, for the gateways, `TRACES`)
 delivered to CloudWatch Logs groups under `/aws/vendedlogs/bedrock-agentcore/`, 30 day
 retention, alongside alarms on gateway 4xx rate and 5xx count, runtime 5xx count and p90
 latency, and Bedrock throttling, all notifying the alarm topic (`docs/proposals/operations.md`).
+
+Dynatrace is shipped dark: `DynatraceBeaconOrigin`, `DynatraceOtlpEndpoint`, and
+`DynatraceApiToken` are stack parameters that default empty, so the CSP and the runtime's
+trace export env vars render exactly as they do today until Sam supplies real values.
+`scripts/deploy.sh` reads the OTLP endpoint and the API token from 1Password
+(`op://Personal/GuppiGPT Dynatrace/...`, an API Credential item whose `hostname` is the
+endpoint and `credential` is the token) the same way it reads the Google OAuth client,
+skipping them when the item does not exist yet; `GUPPI_DYNATRACE_BEACON_ORIGIN`, when
+set, becomes the `DynatraceBeaconOrigin` parameter the same way `GUPPI_ALARM_EMAIL`
+becomes `AlarmEmail`. The RUM script itself (`web/vendor/ruxitagentjs.js`, gitignored) is
+copied into the bundle at `/dt/ruxitagentjs.js` before the sync when present. Turning RUM
+on for visitors is still the `rum` flag in `web/features.json`, flipped the same way as
+`history` and `feedback`. `docs/proposals/dynatrace.md` has the full flip procedure and
+what Sam has to create in Dynatrace first.
 
 The knowledge base corpus is refreshed by `scripts/seed-content.sh` (three docs repositories
 at revisions pinned in the script, Markdown only, `aws s3 sync --delete` to `docs/<source>/`

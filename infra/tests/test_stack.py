@@ -242,7 +242,10 @@ def test_response_headers_policy_has_the_csp_and_is_on_the_default_behavior(temp
     csp = policy["Properties"]["ResponseHeadersPolicyConfig"]["SecurityHeadersConfig"][
         "ContentSecurityPolicy"
     ]["ContentSecurityPolicy"]
-    assert csp == (
+    # DynatraceBeaconOrigin defaults blank, so the CSP the stack renders without that
+    # parameter set is the false branch of the Fn::If (test_csp_adds_the_beacon_origin_
+    # only_when_the_parameter_is_set below checks both branches).
+    assert csp["Fn::If"][2] == (
         "default-src 'self'; connect-src 'self' https://auth.dengler.io; "
         "img-src 'self' data:; style-src 'self'; script-src 'self'; "
         "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
@@ -287,13 +290,15 @@ def test_runtime_environment_variables_point_at_the_tools_gateway(template):
     template.has_resource_properties(
         "AWS::BedrockAgentCore::Runtime",
         {
-            "EnvironmentVariables": {
-                "LOG_LEVEL": "INFO",
-                "MODEL_ID": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-                "OTEL_PYTHON_EXCLUDED_URLS": "/ping$",
-                "RETRIEVE_TOOL": "docs___Retrieve",
-                "TOOLS_GATEWAY_URL": Match.any_value(),
-            }
+            "EnvironmentVariables": Match.object_like(
+                {
+                    "LOG_LEVEL": "INFO",
+                    "MODEL_ID": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+                    "OTEL_PYTHON_EXCLUDED_URLS": "/ping$",
+                    "RETRIEVE_TOOL": "docs___Retrieve",
+                    "TOOLS_GATEWAY_URL": Match.any_value(),
+                }
+            )
         },
     )
 
@@ -417,6 +422,98 @@ def test_runtime_role_can_let_xray_write_spans_to_its_own_log_group(template):
                 }
             }
         ),
+    )
+
+
+def test_rum_script_path_and_beacon_origin_outputs(template):
+    outputs = template.to_json()["Outputs"]
+    assert outputs["RumScriptPath"]["Value"] == "/dt/ruxitagentjs.js"
+    assert outputs["RumBeaconOrigin"]["Value"] == {"Ref": "DynatraceBeaconOrigin"}
+    template.has_parameter("DynatraceBeaconOrigin", {"Default": ""})
+
+
+def test_csp_adds_the_beacon_origin_only_when_the_parameter_is_set(template):
+    policies = template.find_resources("AWS::CloudFront::ResponseHeadersPolicy")
+    (policy,) = policies.values()
+    csp = policy["Properties"]["ResponseHeadersPolicyConfig"]["SecurityHeadersConfig"][
+        "ContentSecurityPolicy"
+    ]["ContentSecurityPolicy"]
+    if_branches = csp["Fn::If"]
+    assert if_branches[0] == "HasDynatraceBeaconOrigin"
+    # Rendering with the parameter unset (the default): the same CSP the stack had
+    # before Dynatrace, with no beacon origin appended.
+    without_beacon = if_branches[2]
+    assert without_beacon == (
+        "default-src 'self'; connect-src 'self' https://auth.dengler.io; "
+        "img-src 'self' data:; style-src 'self'; script-src 'self'; "
+        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    )
+    # Rendering with the parameter set: the beacon origin joined into connect-src.
+    with_beacon = if_branches[1]
+    joined = with_beacon["Fn::Join"][1]
+    rendered = "".join(
+        part if isinstance(part, str) else "<DynatraceBeaconOrigin>" for part in joined
+    )
+    assert rendered == (
+        "default-src 'self'; connect-src 'self' https://auth.dengler.io "
+        "<DynatraceBeaconOrigin>; img-src 'self' data:; style-src 'self'; "
+        "script-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    )
+    conditions = template.to_json().get("Conditions", {})
+    assert "HasDynatraceBeaconOrigin" in conditions
+
+
+def test_dynatrace_otlp_parameters_and_condition(template):
+    template.has_parameter("DynatraceOtlpEndpoint", {"Default": ""})
+    template.has_parameter("DynatraceApiToken", {"NoEcho": True, "Default": ""})
+    conditions = template.to_json().get("Conditions", {})
+    assert "HasDynatraceOtlp" in conditions
+    # Both parameters must be non-empty; an Fn::And of two Fn::Not/Fn::Equals checks.
+    expression = conditions["HasDynatraceOtlp"]
+    assert "Fn::And" in expression
+    assert len(expression["Fn::And"]) == 2
+
+
+def test_runtime_env_omits_dynatrace_otlp_vars_until_both_parameters_are_set(template):
+    template.has_resource_properties(
+        "AWS::BedrockAgentCore::Runtime",
+        {
+            "EnvironmentVariables": Match.object_like(
+                {
+                    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": {
+                        "Fn::If": [
+                            "HasDynatraceOtlp",
+                            Match.object_like(
+                                {
+                                    "Fn::Join": [
+                                        "",
+                                        [{"Ref": "DynatraceOtlpEndpoint"}, "/v1/traces"],
+                                    ]
+                                }
+                            ),
+                            {"Ref": "AWS::NoValue"},
+                        ]
+                    },
+                    "OTEL_EXPORTER_OTLP_TRACES_HEADERS": {
+                        "Fn::If": [
+                            "HasDynatraceOtlp",
+                            Match.object_like(
+                                {
+                                    "Fn::Join": [
+                                        "",
+                                        [
+                                            "Authorization=Api-Token ",
+                                            {"Ref": "DynatraceApiToken"},
+                                        ],
+                                    ]
+                                }
+                            ),
+                            {"Ref": "AWS::NoValue"},
+                        ]
+                    },
+                }
+            )
+        },
     )
 
 
