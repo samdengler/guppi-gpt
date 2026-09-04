@@ -10,6 +10,7 @@ if [[ "${1:-}" == "--site-only" ]]; then SITE_ONLY=1; shift; fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ITEM="op://Personal/GuppiGPT Google OAuth"
+DT_ITEM_TITLE="GuppiGPT Dynatrace"
 OUTPUTS="$ROOT/cdk-outputs.json"
 
 # Everything below is also written to .deploy/deploy-<timestamp>.log (gitignored), with
@@ -45,11 +46,26 @@ elif op whoami >/dev/null 2>&1; then
     exit 1
   fi
   param_args+=(--parameters "GoogleClientId=$client_id" --parameters "GoogleClientSecret=$client_secret")
+  # Dynatrace backend export: optional, unlike the Google client above. Skipped
+  # entirely (op read with || true, same style) when the item does not exist yet, so a
+  # deploy before Sam has a Dynatrace tenant behaves exactly as it does today.
+  if op item get "$DT_ITEM_TITLE" --vault Personal >/dev/null 2>&1; then
+    dt_endpoint="$(op read "op://Personal/$DT_ITEM_TITLE/hostname" 2>/dev/null || true)"
+    dt_token="$(op read "op://Personal/$DT_ITEM_TITLE/credential" 2>/dev/null || true)"
+    if [[ -n "$dt_endpoint" && -n "$dt_token" ]]; then
+      param_args+=(--parameters "DynatraceOtlpEndpoint=$dt_endpoint" --parameters "DynatraceApiToken=$dt_token")
+    else
+      echo "found the '$DT_ITEM_TITLE' item but hostname or credential was empty; skipping Dynatrace trace export parameters" >&2
+    fi
+  fi
 else
-  echo "not signed in to 1Password (op whoami failed); reusing the stack's existing Google OAuth parameters" >&2
+  echo "not signed in to 1Password (op whoami failed); reusing the stack's existing Google OAuth and Dynatrace parameters" >&2
 fi
 if [[ -n "${GUPPI_ALARM_EMAIL:-}" ]]; then
   param_args+=(--parameters "AlarmEmail=$GUPPI_ALARM_EMAIL")
+fi
+if [[ -n "${GUPPI_DYNATRACE_BEACON_ORIGIN:-}" ]]; then
+  param_args+=(--parameters "DynatraceBeaconOrigin=$GUPPI_DYNATRACE_BEACON_ORIGIN")
 fi
 
 if [[ "$SITE_ONLY" == 0 ]]; then
@@ -64,6 +80,15 @@ cd "$ROOT/web"
 npm ci --silent --no-audit --no-fund
 npm run build --silent
 
+# The Dynatrace RUM script itself is not committed (gitignored, agent/Dockerfile-style
+# vendored asset); this copies it into the bundle when present so a site-only deploy
+# can publish it, but does nothing when it has not been placed yet (docs/proposals/
+# dynatrace.md covers uploading it by hand as the alternative).
+if [[ -f "$ROOT/web/vendor/ruxitagentjs.js" ]]; then
+  mkdir -p dist/dt
+  cp "$ROOT/web/vendor/ruxitagentjs.js" dist/dt/ruxitagentjs.js
+fi
+
 cd "$ROOT"
 bucket="$(jq -r '.GuppiGpt.SiteBucketName' "$OUTPUTS")"
 distribution="$(jq -r '.GuppiGpt.DistributionId' "$OUTPUTS")"
@@ -73,7 +98,12 @@ jq --slurpfile features web/features.json '{
   userPoolClientId: .GuppiGpt.UserPoolClientId,
   authDomain: .GuppiGpt.AuthDomain,
   siteUrl: .GuppiGpt.SiteUrl,
-  features: $features[0]
+  features: $features[0],
+  rum: {
+    scriptPath: .GuppiGpt.RumScriptPath,
+    beaconOrigin: .GuppiGpt.RumBeaconOrigin,
+    identifyUser: false
+  }
 }' "$OUTPUTS" > web/dist/config.json
 
 aws s3 sync web/dist "s3://$bucket" --delete --exclude '.*'

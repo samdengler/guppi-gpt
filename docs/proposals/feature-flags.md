@@ -1,15 +1,19 @@
 # Feature flags for dark-shipped features
 
-Two features are landing on other branches: a chat history panel and a thumbs up or
-down feedback control on each reply. Both need to sit in `main` before they are ready
-for every visitor, so they need a way to ship in the bundle but stay off by default,
-with a way to turn one on without a code change or a redeploy of the stack. This is
-that layer: a committed defaults file, a merge step in `scripts/deploy.sh`, and a page
-provider built on the OpenFeature web SDK.
+Three features are landing on other branches: a chat history panel, a thumbs up or
+down feedback control on each reply, and Dynatrace RUM on the page. Each needs to sit
+in `main` before it is ready for every visitor, so each needs a way to ship in the
+bundle but stay off by default, with a way to turn one on without a code change or a
+redeploy of the stack. This is that layer: a committed defaults file, a merge step in
+`scripts/deploy.sh`, and a page provider built on the OpenFeature web SDK.
 
-Observability code is never behind a flag. Tracing, the per-run log record, and the
-data attributes the reply element carries stay on regardless of what `web/features.json`
-says.
+Observability that reads what already reaches the browser is never behind a flag:
+tracing, the per-run log record, and the data attributes the reply element carries stay
+on regardless of what `web/features.json` says. RUM is the exception, because turning
+it on inserts a script element and starts a vendor library running on every visitor's
+page, not just reads state that already exists; it stays behind a flag the same way
+`history` and `feedback` do, and it depends on tenant details Sam supplies later
+(`docs/proposals/dynatrace.md`).
 
 ## The defaults file
 
@@ -18,7 +22,8 @@ says.
 ```json
 {
   "history": false,
-  "feedback": false
+  "feedback": false,
+  "rum": false
 }
 ```
 
@@ -26,6 +31,7 @@ says.
 | --- | --- |
 | `history` | The chat history panel |
 | `feedback` | The thumbs up/down control on a reply |
+| `rum` | Dynatrace RUM on the page (`docs/proposals/dynatrace.md`) |
 
 Plain JSON, no comments; this document is where the keys are explained. A new flagged
 feature adds a key here with a `false` default.

@@ -129,6 +129,14 @@ RUNTIME_BASE_ENVIRONMENT = {
 
 ORIGIN_HEADER_NAME = "X-Origin-Verify"
 
+# Dynatrace RUM, shipped dark behind the `rum` flag (web/features.json). The script
+# itself is not part of this stack: docs/proposals/dynatrace.md documents uploading it
+# to the site bucket at this path (by hand, or the optional deploy.sh step that copies
+# web/vendor/ruxitagentjs.js into web/dist/dt/ before the sync) once Sam has a tenant.
+# A stack constant, not a parameter, because the path is ours to choose and does not
+# depend on any Dynatrace tenant detail.
+RUM_SCRIPT_PATH = "/dt/ruxitagentjs.js"
+
 # Both WAF rules below start in COUNT so real traffic can be watched before anything is
 # blocked. Flip this once the common rule set has been checked against real prompts.
 WAF_BLOCK = False
@@ -200,6 +208,65 @@ class GuppiGptStack(cdk.Stack):
             "HasAlarmEmail",
             expression=cdk.Fn.condition_not(
                 cdk.Fn.condition_equals(alarm_email.value_as_string, "")
+            ),
+        )
+
+        # ---- Dynatrace, shipped dark ----------------------------------------------------
+        # Every value here defaults empty, so every conditional below renders to the
+        # stack's current behavior (no beacon origin in the CSP, no OTLP export env vars)
+        # until Sam supplies real tenant details (docs/proposals/dynatrace.md). Nothing in
+        # this stack depends on a real value.
+        dynatrace_beacon_origin = cdk.CfnParameter(
+            self,
+            "DynatraceBeaconOrigin",
+            type="String",
+            default="",
+            description=(
+                "Origin the self-hosted RUM script sends its beacon to (for example "
+                "https://bfxxxxxx.bf.dynatrace.com), added to the page's connect-src; "
+                "left blank to leave the CSP unchanged"
+            ),
+        )
+        has_dynatrace_beacon_origin = cdk.CfnCondition(
+            self,
+            "HasDynatraceBeaconOrigin",
+            expression=cdk.Fn.condition_not(
+                cdk.Fn.condition_equals(dynatrace_beacon_origin.value_as_string, "")
+            ),
+        )
+        dynatrace_otlp_endpoint = cdk.CfnParameter(
+            self,
+            "DynatraceOtlpEndpoint",
+            type="String",
+            default="",
+            description=(
+                "Dynatrace OTLP base endpoint, for example "
+                "https://<tenant>.live.dynatrace.com/api/v2/otlp (no trailing slash, no "
+                "/v1/traces suffix); left blank to send no traces to Dynatrace"
+            ),
+        )
+        dynatrace_api_token = cdk.CfnParameter(
+            self,
+            "DynatraceApiToken",
+            type="String",
+            no_echo=True,
+            default="",
+            description=(
+                "Dynatrace API token with the openTelemetryTrace.ingest scope; supplied "
+                "by scripts/deploy.sh from 1Password when both this and "
+                "DynatraceOtlpEndpoint are set"
+            ),
+        )
+        has_dynatrace_otlp = cdk.CfnCondition(
+            self,
+            "HasDynatraceOtlp",
+            expression=cdk.Fn.condition_and(
+                cdk.Fn.condition_not(
+                    cdk.Fn.condition_equals(dynatrace_otlp_endpoint.value_as_string, "")
+                ),
+                cdk.Fn.condition_not(
+                    cdk.Fn.condition_equals(dynatrace_api_token.value_as_string, "")
+                ),
             ),
         )
 
@@ -663,22 +730,46 @@ class GuppiGptStack(cdk.Stack):
             # reference (see OriginVerifySecret above), never a literal in the template.
             custom_headers={ORIGIN_HEADER_NAME: origin_secret_value},
         )
+        # The beacon origin is a CloudFormation parameter, so its value is unknown at
+        # synth time; Fn::If picks between two whole CSP strings at deploy time rather
+        # than the Python code trying to interpolate it (the same Fn::If-plus-condition
+        # pattern as has_alarm_email above, applied to a property value instead of a
+        # resource's Condition). With DynatraceBeaconOrigin left blank (the default) this
+        # renders to the exact CSP the stack already had.
+        csp_without_dynatrace = (
+            "default-src 'self'; "
+            f"connect-src 'self' https://{AUTH_HOST}; "
+            "img-src 'self' data:; "
+            "style-src 'self'; "
+            "script-src 'self'; "
+            "frame-ancestors 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self'"
+        )
+        csp_with_dynatrace = (
+            "default-src 'self'; "
+            f"connect-src 'self' https://{AUTH_HOST} {dynatrace_beacon_origin.value_as_string}; "
+            "img-src 'self' data:; "
+            "style-src 'self'; "
+            "script-src 'self'; "
+            "frame-ancestors 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self'"
+        )
+        content_security_policy = cdk.Token.as_string(
+            cdk.Fn.condition_if(
+                has_dynatrace_beacon_origin.logical_id,
+                csp_with_dynatrace,
+                csp_without_dynatrace,
+            )
+        )
         security_headers_policy = cloudfront.ResponseHeadersPolicy(
             self,
             "SecurityHeadersPolicy",
             comment="CSP and security headers for the static page",
             security_headers_behavior=cloudfront.ResponseSecurityHeadersBehavior(
                 content_security_policy=cloudfront.ResponseHeadersContentSecurityPolicy(
-                    content_security_policy=(
-                        "default-src 'self'; "
-                        f"connect-src 'self' https://{AUTH_HOST}; "
-                        "img-src 'self' data:; "
-                        "style-src 'self'; "
-                        "script-src 'self'; "
-                        "frame-ancestors 'none'; "
-                        "base-uri 'self'; "
-                        "form-action 'self'"
-                    ),
+                    content_security_policy=content_security_policy,
                     override=True,
                 ),
                 strict_transport_security=cloudfront.ResponseHeadersStrictTransportSecurity(
@@ -947,12 +1038,39 @@ class GuppiGptStack(cdk.Stack):
         kb_target.node.add_dependency(tools_gateway_role)
         kb_target.node.add_dependency(data_source)
 
+        # Dynatrace trace export, shipped dark. The runtime's own OTEL_EXPORTER_OTLP_*
+        # values are injected by the AgentCore platform when AGENT_OBSERVABILITY_ENABLED
+        # is set (see RUNTIME_BASE_ENVIRONMENT above); OTEL's env var scheme carries only
+        # one endpoint per signal, so this does not add a second export destination
+        # beside CloudWatch, it redirects trace export to Dynatrace once both parameters
+        # are set (docs/proposals/dynatrace.md covers the tradeoff and what was not
+        # possible to confirm without a real deploy). Fn::If's AWS::NoValue branch omits
+        # the two keys entirely while DynatraceOtlpEndpoint or DynatraceApiToken is
+        # blank, which is the default, so the environment the container sees today does
+        # not change until Sam supplies both.
+        dynatrace_traces_endpoint = cdk.Token.as_string(
+            cdk.Fn.condition_if(
+                has_dynatrace_otlp.logical_id,
+                f"{dynatrace_otlp_endpoint.value_as_string}/v1/traces",
+                cdk.Aws.NO_VALUE,
+            )
+        )
+        dynatrace_traces_headers = cdk.Token.as_string(
+            cdk.Fn.condition_if(
+                has_dynatrace_otlp.logical_id,
+                cdk.Fn.join("", ["Authorization=Api-Token ", dynatrace_api_token.value_as_string]),
+                cdk.Aws.NO_VALUE,
+            )
+        )
+
         # The tools gateway now exists, so the runtime's environment can point at it.
         runtime.environment_variables = {
             **RUNTIME_BASE_ENVIRONMENT,
             "TOOLS_GATEWAY_URL": tools_gateway.attr_gateway_url,
             "MODEL_ID": MODEL_ID,
             "RETRIEVE_TOOL": RETRIEVE_TOOL,
+            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": dynatrace_traces_endpoint,
+            "OTEL_EXPORTER_OTLP_TRACES_HEADERS": dynatrace_traces_headers,
         }
 
         # ---- Outputs -------------------------------------------------------------------
@@ -972,6 +1090,8 @@ class GuppiGptStack(cdk.Stack):
         cdk.CfnOutput(self, "ToolsGatewayUrl", value=tools_gateway.attr_gateway_url)
         cdk.CfnOutput(self, "IngestionScheduleName", value=ingestion.schedule_name)
         cdk.CfnOutput(self, "AlarmTopicArn", value=alarm_topic.topic_arn)
+        cdk.CfnOutput(self, "RumScriptPath", value=RUM_SCRIPT_PATH)
+        cdk.CfnOutput(self, "RumBeaconOrigin", value=dynatrace_beacon_origin.value_as_string)
 
     def _runtime_role(self) -> iam.Role:
         """Execution role for the runtime, following the AgentCore documented policy."""

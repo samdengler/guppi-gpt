@@ -3,6 +3,7 @@ import { initFeatures, isEnabled } from "./features.js";
 import { enabledFlagNames } from "./flags-core.js";
 import * as chatHistory from "./history.js";
 import { renderFeedbackControls, FEEDBACK_EVENT } from "./feedback.js";
+import { initRum, identifyRumUser } from "./rum.js";
 
 (async () => {
   const $ = (id) => document.getElementById(id);
@@ -38,6 +39,11 @@ import { renderFeedbackControls, FEEDBACK_EVENT } from "./feedback.js";
   const config = await (await fetch("config.json", { cache: "no-store" })).json();
   const flags = await initFeatures(config);
   document.body.dataset.features = enabledFlagNames(flags).join(" ");
+  // Registers the OpenFeature hook (when the rum flag and config.rum.scriptPath are
+  // both set) before the isEnabled calls below, so it is in place for the flag
+  // evaluations those calls trigger. A no-op otherwise: no script element, no listener,
+  // no behavior change (docs/proposals/dynatrace.md).
+  initRum(flags, config);
   // Read once at load; the flag layer has no live toggling within a page load.
   const historyEnabled = isEnabled("history");
   const feedbackEnabled = isEnabled("feedback");
@@ -293,6 +299,9 @@ import { renderFeedbackControls, FEEDBACK_EVENT } from "./feedback.js";
     historyWrap.hidden = !historyEnabled;
     signinScreen.hidden = true;
     chatScreen.hidden = false;
+    // A no-op unless RUM is active and config.rum.identifyUser asks for it; the subject
+    // is hashed before it reaches dtrum (web/src/rum.js).
+    identifyRumUser(config, claims.sub);
   }
 
   async function signOut() {
