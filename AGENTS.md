@@ -96,7 +96,11 @@ The runtime container receives `TOOLS_GATEWAY_URL`, `MODEL_ID`, `RETRIEVE_TOOL`,
 `LOG_LEVEL` from the stack. The web ACL on the edge gateway keeps all three rules in COUNT
 until `WAF_BLOCK` in `stack.py` is flipped after real traffic has been watched. The billing
 alarm reads `AWS/Billing EstimatedCharges`, which exists only after billing alerts are
-enabled in the account's billing preferences (a console setting, not in the stack).
+enabled in the account's billing preferences (a console setting, not in the stack). The two
+gateways' and the runtime's `APPLICATION_LOGS` (and, for the gateways, `TRACES`) are
+delivered to CloudWatch Logs groups under `/aws/vendedlogs/bedrock-agentcore/`, 30 day
+retention, alongside alarms on gateway 4xx rate and 5xx count, runtime 5xx count and p90
+latency, and Bedrock throttling, all notifying the alarm topic (`docs/proposals/operations.md`).
 
 The knowledge base corpus is refreshed by `scripts/seed-content.sh` (three docs repositories
 at revisions pinned in the script, Markdown only, `aws s3 sync --delete` to `docs/<source>/`

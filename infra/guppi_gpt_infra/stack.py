@@ -14,6 +14,7 @@ Resource ordering that matters:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import aws_cdk as cdk
@@ -53,6 +54,9 @@ from aws_cdk import (
 )
 from aws_cdk import (
     aws_iam as iam,
+)
+from aws_cdk import (
+    aws_logs as logs,
 )
 from aws_cdk import (
     aws_route53 as route53,
@@ -111,6 +115,29 @@ WAF_BLOCK = False
 
 # Twice the expected monthly figure (design section 11).
 BILLING_ALARM_USD = 50
+
+# The CloudFront behavior for /api/* gives the gateway origin sixty seconds
+# (ORIGIN_RESPONSE_TIMEOUT below) before it gives up on a response. Half of that is the
+# point past which a run is already close to being cut off by CloudFront, not merely slow.
+RUNTIME_LATENCY_P90_THRESHOLD_MS = 30_000
+
+# WAF stays in COUNT (see WAF_BLOCK), so a 4xx from the edge gateway itself, not the web
+# ACL, means a token expired or a request was malformed; ten percent is a starting point
+# pending real traffic, to be tightened once section 15's WAF watch period is done.
+EDGE_GATEWAY_4XX_RATE_THRESHOLD_PERCENT = 10
+
+# Design section 11: bounds spend per signed-in user while any Google account is
+# admitted (Cognito has no allow-list yet). Conservative starting values; the gateway
+# rate limit dimension keys are documented at
+# https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-rate-limits-dimensions.html
+JWT_SUB_CLAIM_DIMENSION = "$.context.jwt.sub"
+RATE_LIMIT_REQUESTS_PER_MINUTE = 30
+RATE_LIMIT_CONCURRENT_CONNECTIONS = 2
+
+# Vended log group naming and retention for the two gateways and the runtime
+# (docs/proposals/operations.md).
+VENDED_LOG_PREFIX = "/aws/vendedlogs/bedrock-agentcore"
+VENDED_LOG_RETENTION = logs.RetentionDays.ONE_MONTH
 
 
 @jsii.implements(route53.IAliasRecordTarget)
@@ -488,6 +515,35 @@ class GuppiGptStack(cdk.Stack):
                 treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
             )
             waf_alarm.add_alarm_action(cloudwatch_actions.SnsAction(alarm_topic))
+
+        # ---- Per-user rate limits --------------------------------------------------------
+        # Requests and concurrency share one entry: CreateGatewayRateLimit refuses two rate
+        # limits on the same gateway with the same dimension keys, and a single dimension
+        # key list (just the sub claim) is what "per signed-in user" needs. The "*" value
+        # is the wildcard entry, which gives every distinct caller an independent bucket at
+        # this rate rather than one shared bucket for all users.
+        agentcore.CfnGatewayRateLimit(
+            self,
+            "EdgeGatewayPerUserRateLimit",
+            gateway_identifier=gateway.attr_gateway_identifier,
+            description="Per-user request rate and concurrency, keyed on the JWT sub claim",
+            dimension_keys=[JWT_SUB_CLAIM_DIMENSION],
+            entries=[
+                agentcore.CfnGatewayRateLimit.LimitEntryProperty(
+                    dimensions={JWT_SUB_CLAIM_DIMENSION: "*"},
+                    requests=[
+                        agentcore.CfnGatewayRateLimit.RateConfigProperty(
+                            rate=RATE_LIMIT_REQUESTS_PER_MINUTE, period="minute"
+                        )
+                    ],
+                    connections=[
+                        agentcore.CfnGatewayRateLimit.RateConfigProperty(
+                            rate=RATE_LIMIT_CONCURRENT_CONNECTIONS, period="second"
+                        )
+                    ],
+                )
+            ],
+        )
 
         # ---- Runtime -------------------------------------------------------------------
         protocol = self.node.try_get_context("runtime_protocol") or "AGUI"
@@ -893,6 +949,224 @@ class GuppiGptStack(cdk.Stack):
             "MODEL_ID": MODEL_ID,
             "RETRIEVE_TOOL": RETRIEVE_TOOL,
         }
+
+        # ---- Operational alarms ----------------------------------------------------------
+        # docs/proposals/operations.md records the thresholds and why. Every metric here is
+        # in the AWS/Bedrock-AgentCore namespace with a "Resource" dimension carrying the
+        # resource's own ARN; the gateway devguide page states that dimension for gateway
+        # invocation metrics (observability-gateway-metrics.html), and the runtime page
+        # (observability-runtime-metrics.html) lists the same metric names without a
+        # dimensions table, so using "Resource" there too is an assumption, not something
+        # the docs state outright (the same caveat the WafBlocks alarms above already carry
+        # for GatewayId).
+        def _resource_error_alarm(
+            construct_id: str, description: str, resource_arn: str
+        ) -> None:
+            alarm = cloudwatch.Alarm(
+                self,
+                construct_id,
+                alarm_description=description,
+                metric=cloudwatch.Metric(
+                    namespace="AWS/Bedrock-AgentCore",
+                    metric_name="SystemErrors",
+                    dimensions_map={"Resource": resource_arn},
+                    statistic="Sum",
+                    period=Duration.minutes(5),
+                ),
+                threshold=1,
+                evaluation_periods=1,
+                comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+                treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
+            )
+            alarm.add_alarm_action(cloudwatch_actions.SnsAction(alarm_topic))
+
+        _resource_error_alarm(
+            "EdgeGateway5xxAlarm",
+            "5xx (SystemErrors) on the GuppiGPT edge gateway crossed zero",
+            gateway.attr_gateway_arn,
+        )
+        _resource_error_alarm(
+            "ToolsGateway5xxAlarm",
+            "5xx (SystemErrors) on the GuppiGPT tools gateway crossed zero",
+            tools_gateway.attr_gateway_arn,
+        )
+        _resource_error_alarm(
+            "Runtime5xxAlarm",
+            "5xx (SystemErrors) on the GuppiGPT runtime crossed zero",
+            runtime.attr_agent_runtime_arn,
+        )
+
+        # UserErrors as a share of Invocations: a math expression rather than a raw count,
+        # since occasional 4xx (an expired token, a malformed request) is expected traffic
+        # and only a rate says whether it is worth looking at.
+        edge_gateway_4xx_rate = cloudwatch.MathExpression(
+            expression="(userErrors / invocations) * 100",
+            using_metrics={
+                "userErrors": cloudwatch.Metric(
+                    namespace="AWS/Bedrock-AgentCore",
+                    metric_name="UserErrors",
+                    dimensions_map={"Resource": gateway.attr_gateway_arn},
+                    statistic="Sum",
+                ),
+                "invocations": cloudwatch.Metric(
+                    namespace="AWS/Bedrock-AgentCore",
+                    metric_name="Invocations",
+                    dimensions_map={"Resource": gateway.attr_gateway_arn},
+                    statistic="Sum",
+                ),
+            },
+            period=Duration.minutes(5),
+            label="EdgeGateway4xxRate",
+        )
+        edge_gateway_4xx_rate_alarm = cloudwatch.Alarm(
+            self,
+            "EdgeGateway4xxRateAlarm",
+            alarm_description=(
+                "4xx (UserErrors) rate on the GuppiGPT edge gateway crossed "
+                f"{EDGE_GATEWAY_4XX_RATE_THRESHOLD_PERCENT}%"
+            ),
+            metric=edge_gateway_4xx_rate,
+            threshold=EDGE_GATEWAY_4XX_RATE_THRESHOLD_PERCENT,
+            evaluation_periods=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
+        )
+        edge_gateway_4xx_rate_alarm.add_alarm_action(cloudwatch_actions.SnsAction(alarm_topic))
+
+        # Runtime "Latency" is end-to-end (receipt to final token), the same quantity the
+        # gateway table calls "Duration". Threshold: RUNTIME_LATENCY_P90_THRESHOLD_MS above.
+        runtime_latency_p90_alarm = cloudwatch.Alarm(
+            self,
+            "RuntimeLatencyP90Alarm",
+            alarm_description=(
+                "GuppiGPT runtime invocation latency p90 crossed "
+                f"{RUNTIME_LATENCY_P90_THRESHOLD_MS} ms"
+            ),
+            metric=cloudwatch.Metric(
+                namespace="AWS/Bedrock-AgentCore",
+                metric_name="Latency",
+                dimensions_map={"Resource": runtime.attr_agent_runtime_arn},
+                statistic="p90",
+                period=Duration.minutes(5),
+            ),
+            threshold=RUNTIME_LATENCY_P90_THRESHOLD_MS,
+            evaluation_periods=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
+        )
+        runtime_latency_p90_alarm.add_alarm_action(cloudwatch_actions.SnsAction(alarm_topic))
+
+        # Bedrock throttling for the one inference profile the runtime calls.
+        bedrock_throttling_alarm = cloudwatch.Alarm(
+            self,
+            "BedrockThrottlingAlarm",
+            alarm_description="Bedrock InvocationThrottles for the GuppiGPT model crossed zero",
+            metric=cloudwatch.Metric(
+                namespace="AWS/Bedrock",
+                metric_name="InvocationThrottles",
+                dimensions_map={"ModelId": MODEL_ID},
+                statistic="Sum",
+                period=Duration.minutes(5),
+            ),
+            threshold=1,
+            evaluation_periods=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
+        )
+        bedrock_throttling_alarm.add_alarm_action(cloudwatch_actions.SnsAction(alarm_topic))
+
+        # ---- Vended log delivery ----------------------------------------------------------
+        # AWS::Logs::DeliverySource, AWS::Logs::DeliveryDestination, and AWS::Logs::Delivery
+        # (the CDK L1s below) wire each resource's APPLICATION_LOGS (and, for the gateways,
+        # TRACES) into a CloudWatch Logs group under VENDED_LOG_PREFIX. Both log types are
+        # valid delivery sources for "Amazon Bedrock AgentCore Runtime" and "Amazon Bedrock
+        # AgentCore Gateway" per the CloudWatch Logs vended-log destinations table
+        # (AWS-logs-destinations-table.html), and both can target a CloudWatch Logs
+        # destination (the "CWL" delivery destination type), not only X-Ray, per the same
+        # table and the PutDeliveryDestination API reference. The resource policy below
+        # grants delivery.logs.amazonaws.com permission to write to the log groups; without
+        # it, only a principal with logs:PutResourcePolicy on the log group gets one created
+        # automatically the first time delivery starts (AWS-logs-infrastructure-V2-
+        # CloudWatchLogs.html), which the deploying principal is not guaranteed to have.
+        def _vended_log_delivery(
+            resource_label: str, resource_name: str, resource_arn: str, log_types: list[str]
+        ) -> None:
+            log_group = logs.LogGroup(
+                self,
+                f"{resource_label}LogGroup",
+                log_group_name=f"{VENDED_LOG_PREFIX}/{resource_name}",
+                retention=VENDED_LOG_RETENTION,
+                removal_policy=RemovalPolicy.DESTROY,
+            )
+            destination = logs.CfnDeliveryDestination(
+                self,
+                f"{resource_label}LogDeliveryDestination",
+                name=f"{resource_name}-logs".replace("_", "-"),
+                delivery_destination_type="CWL",
+                destination_resource_arn=log_group.log_group_arn,
+            )
+            for log_type in log_types:
+                source = logs.CfnDeliverySource(
+                    self,
+                    f"{resource_label}{log_type.title().replace('_', '')}Source",
+                    name=f"{resource_name}-{log_type}".replace("_", "-").lower(),
+                    log_type=log_type,
+                    resource_arn=resource_arn,
+                )
+                delivery = logs.CfnDelivery(
+                    self,
+                    f"{resource_label}{log_type.title().replace('_', '')}Delivery",
+                    delivery_source_name=source.name,
+                    delivery_destination_arn=destination.attr_arn,
+                )
+                delivery.node.add_dependency(source)
+                delivery.node.add_dependency(destination)
+
+        _vended_log_delivery(
+            "EdgeGateway", GATEWAY_NAME, gateway.attr_gateway_arn, ["APPLICATION_LOGS", "TRACES"]
+        )
+        _vended_log_delivery(
+            "ToolsGateway",
+            TOOLS_GATEWAY_NAME,
+            tools_gateway.attr_gateway_arn,
+            ["APPLICATION_LOGS", "TRACES"],
+        )
+        _vended_log_delivery(
+            "Runtime", RUNTIME_NAME, runtime.attr_agent_runtime_arn, ["APPLICATION_LOGS"]
+        )
+
+        # Recommended prefix policy (AWS-logs-infrastructure-V2-CloudWatchLogs.html) rather
+        # than one statement per log group, so a fourth vended-log destination needs no
+        # policy change.
+        logs.CfnResourcePolicy(
+            self,
+            "VendedLogDeliveryPolicy",
+            policy_name="GuppiGptVendedLogDelivery",
+            policy_document=json.dumps(
+                iam.PolicyDocument(
+                    statements=[
+                        iam.PolicyStatement(
+                            sid="AWSLogDeliveryWrite20150319",
+                            effect=iam.Effect.ALLOW,
+                            principals=[iam.ServicePrincipal("delivery.logs.amazonaws.com")],
+                            actions=["logs:CreateLogStream", "logs:PutLogEvents"],
+                            resources=[
+                                f"arn:aws:logs:{self.region}:{self.account}:log-group:"
+                                f"{VENDED_LOG_PREFIX}/*"
+                            ],
+                            conditions={
+                                "StringEquals": {"aws:SourceAccount": self.account},
+                                "ArnLike": {
+                                    "aws:SourceArn": (
+                                        f"arn:aws:logs:{self.region}:{self.account}:*"
+                                    )
+                                },
+                            },
+                        )
+                    ]
+                ).to_json()
+            ),
+        )
 
         # ---- Outputs -------------------------------------------------------------------
         cdk.CfnOutput(self, "SiteUrl", value=SITE_URL)
