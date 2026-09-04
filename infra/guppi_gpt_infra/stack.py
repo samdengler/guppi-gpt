@@ -1429,13 +1429,12 @@ class GuppiGptStack(cdk.Stack):
 
         # ---- Vended log delivery ----------------------------------------------------------
         # AWS::Logs::DeliverySource, AWS::Logs::DeliveryDestination, and AWS::Logs::Delivery
-        # (the CDK L1s below) wire each resource's APPLICATION_LOGS (and, for the gateways,
-        # TRACES) into a CloudWatch Logs group under VENDED_LOG_PREFIX. Both log types are
-        # valid delivery sources for "Amazon Bedrock AgentCore Runtime" and "Amazon Bedrock
-        # AgentCore Gateway" per the CloudWatch Logs vended-log destinations table
-        # (AWS-logs-destinations-table.html), and both can target a CloudWatch Logs
-        # destination (the "CWL" delivery destination type), not only X-Ray, per the same
-        # table and the PutDeliveryDestination API reference. The resource policy below
+        # (the CDK L1s below) wire each resource's APPLICATION_LOGS into a CloudWatch Logs
+        # group under VENDED_LOG_PREFIX. The gateways' TRACES log type is not delivered here:
+        # CloudFormation rejected a CloudWatch Logs destination for it on 4 Sep 2026 with
+        # "Invalid destination type provided for this resource and log type", so gateway
+        # traces would need an X-Ray destination, and the runtime's spans already reach
+        # Transaction Search. The resource policy below
         # grants delivery.logs.amazonaws.com permission to write to the log groups; without
         # it, only a principal with logs:PutResourcePolicy on the log group gets one created
         # automatically the first time delivery starts (AWS-logs-infrastructure-V2-
@@ -1475,13 +1474,10 @@ class GuppiGptStack(cdk.Stack):
                 delivery.node.add_dependency(destination)
 
         _vended_log_delivery(
-            "EdgeGateway", GATEWAY_NAME, gateway.attr_gateway_arn, ["APPLICATION_LOGS", "TRACES"]
+            "EdgeGateway", GATEWAY_NAME, gateway.attr_gateway_arn, ["APPLICATION_LOGS"]
         )
         _vended_log_delivery(
-            "ToolsGateway",
-            TOOLS_GATEWAY_NAME,
-            tools_gateway.attr_gateway_arn,
-            ["APPLICATION_LOGS", "TRACES"],
+            "ToolsGateway", TOOLS_GATEWAY_NAME, tools_gateway.attr_gateway_arn, ["APPLICATION_LOGS"]
         )
         _vended_log_delivery(
             "Runtime", RUNTIME_NAME, runtime.attr_agent_runtime_arn, ["APPLICATION_LOGS"]

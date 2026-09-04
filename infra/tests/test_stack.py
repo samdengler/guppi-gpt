@@ -736,10 +736,10 @@ def test_vended_log_delivery_sources_cover_application_logs_and_traces(template)
         resource_key = json.dumps(props["ResourceArn"])
         log_types_by_resource.setdefault(resource_key, set()).add(props["LogType"])
 
-    # Both gateways get APPLICATION_LOGS and TRACES; the runtime gets APPLICATION_LOGS only.
-    assert sorted(len(v) for v in log_types_by_resource.values()) == [1, 2, 2]
-    assert {"APPLICATION_LOGS", "TRACES"} in log_types_by_resource.values()
-    assert {"APPLICATION_LOGS"} in log_types_by_resource.values()
+    # Every resource gets APPLICATION_LOGS only: a CloudWatch Logs destination for the
+    # gateways' TRACES log type was rejected by CloudFormation on 4 Sep 2026.
+    assert len(log_types_by_resource) == 3
+    assert all(v == {"APPLICATION_LOGS"} for v in log_types_by_resource.values())
 
     # Each delivery depends explicitly on its source and its destination, since the
     # delivery source name that links them is a plain string, not a CloudFormation

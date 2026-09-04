@@ -43,8 +43,8 @@ group:
 
 | Resource | Log group | Log types delivered |
 | --- | --- | --- |
-| Edge gateway | `/aws/vendedlogs/bedrock-agentcore/guppi-gpt-edge` | `APPLICATION_LOGS`, `TRACES` |
-| Tools gateway | `/aws/vendedlogs/bedrock-agentcore/guppi-gpt-tools` | `APPLICATION_LOGS`, `TRACES` |
+| Edge gateway | `/aws/vendedlogs/bedrock-agentcore/guppi-gpt-edge` | `APPLICATION_LOGS` |
+| Tools gateway | `/aws/vendedlogs/bedrock-agentcore/guppi-gpt-tools` | `APPLICATION_LOGS` |
 | Runtime | `/aws/vendedlogs/bedrock-agentcore/guppi_gpt` | `APPLICATION_LOGS` |
 
 Each log group has 30 day retention. Both log types are supported delivery sources for
@@ -52,9 +52,11 @@ Each log group has 30 day retention. Both log types are supported delivery sourc
 CloudWatch Logs vended log destinations table, and both can target a CloudWatch Logs
 destination (the `CWL` delivery destination type), not only the `XRAY` destination type an
 AWS sample script for enabling gateway observability happens to use for traces. That
-combination (`TRACES` delivered to a `CWL` destination for a gateway) has not been
-verified against a real deploy; it follows the documented destinations table rather than
-an example that has been run. It is worth confirming after the first deploy.
+combination (`TRACES` delivered to a `CWL` destination for a gateway) was tried on
+4 Sep 2026 and CloudFormation rejected it: "Invalid destination type provided for this
+resource and log type". The gateways' `TRACES` deliveries were removed; gateway traces
+would need an `XRAY` delivery destination, which is a follow-up, and the runtime's spans
+already reach Transaction Search.
 
 Each resource, log type pair is wired as a CDK L1 triple: `AWS::Logs::DeliverySource`
 (named after the resource and the log type, `ResourceArn` set to the resource's own ARN),
@@ -155,9 +157,9 @@ control.
 - Confirm the `Resource` dimension assumption for the three runtime alarms against real
   CloudWatch metric data once the runtime has taken traffic; the gateway devguide states
   it outright, the runtime devguide does not.
-- Confirm gateway `TRACES` records actually land in the `CWL` destination configured here;
-  verify by sending one request through each gateway and checking its log group for a
-  `TRACES` record, not only `APPLICATION_LOGS`.
+- Deliver the gateways' `TRACES` log type to an `XRAY` delivery destination, the only
+  destination type the service accepted for it, if gateway spans are wanted beside the
+  runtime's.
 - Retune `EdgeGateway4xxRateAlarm`'s ten percent threshold and `RuntimeLatencyP90Alarm`'s
   30000 ms threshold once real traffic has been watched, the same posture the WAF alarms
   and `WAF_BLOCK` already take in `stack.py`.
@@ -169,7 +171,6 @@ control.
   `docs/proposals/traceability.md` already estimated for container spans; at the traffic
   this app sees today the added volume should be small, and the billing alarm bounds the
   surprise either way.
-- Turning on CloudWatch Transaction Search and the runtime and gateway tracing toggles
-  remains outside the stack, as `docs/proposals/traceability.md` already recorded; the
-  `TRACES` delivery added here is independent of that and lands in the vended log groups
-  regardless of whether Transaction Search is on.
+- CloudWatch Transaction Search is owned by the stack since 3 Sep 2026 (see
+  `docs/proposals/traceability.md`); the `APPLICATION_LOGS` deliveries added here are
+  independent of it.
