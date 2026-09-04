@@ -263,7 +263,9 @@ def test_response_headers_policy_has_the_csp_and_is_on_the_default_behavior(temp
 
 def test_billing_alarm_has_the_cost_limit_and_the_alarm_topic(template):
     alarms = template.find_resources("AWS::CloudWatch::Alarm")
-    (alarm,) = [a for a in alarms.values() if a["Properties"]["MetricName"] == "EstimatedCharges"]
+    (alarm,) = [
+        a for a in alarms.values() if a["Properties"].get("MetricName") == "EstimatedCharges"
+    ]
     props = alarm["Properties"]
     assert props["Namespace"] == "AWS/Billing"
     assert props["Dimensions"] == [{"Name": "Currency", "Value": "USD"}]
@@ -422,11 +424,123 @@ def test_transaction_search_is_enabled_with_the_span_log_policy(template):
     template.has_resource_properties(
         "AWS::XRay::TransactionSearchConfig", {"IndexingPercentage": 1}
     )
-    policies = template.find_resources("AWS::Logs::ResourcePolicy")
-    assert len(policies) == 1
-    (policy,) = policies.values()
-    document = policy["Properties"]["PolicyDocument"]
-    assert "xray.amazonaws.com" in document and "log-group:aws/spans:*" in document
+    policies = [
+        p["Properties"]["PolicyDocument"]
+        for p in template.find_resources("AWS::Logs::ResourcePolicy").values()
+        if "xray.amazonaws.com" in p["Properties"]["PolicyDocument"]
+    ]
+    (document,) = policies
+    assert "log-group:aws/spans:*" in document
     searches = template.find_resources("AWS::XRay::TransactionSearchConfig")
     (search,) = searches.values()
     assert any(dep.startswith("TransactionSearchLogsPolicy") for dep in search.get("DependsOn", []))
+
+
+def test_operational_alarms_report_metrics_and_notify_the_alarm_topic(template):
+    (topic_id,) = template.find_resources("AWS::SNS::Topic").keys()
+    alarms = template.find_resources("AWS::CloudWatch::Alarm")
+
+    # docs/proposals/operations.md explains each threshold. Every alarm here is either a
+    # plain metric (MetricName/Namespace at the top level) or a math expression (a Metrics
+    # list of MetricStat entries), so both shapes are read the same way below.
+    expected_metrics = {
+        "EdgeGateway5xxAlarm": {("AWS/Bedrock-AgentCore", "SystemErrors")},
+        "ToolsGateway5xxAlarm": {("AWS/Bedrock-AgentCore", "SystemErrors")},
+        "Runtime5xxAlarm": {("AWS/Bedrock-AgentCore", "SystemErrors")},
+        "RuntimeLatencyP90Alarm": {("AWS/Bedrock-AgentCore", "Latency")},
+        "BedrockThrottlingAlarm": {("AWS/Bedrock", "InvocationThrottles")},
+        "EdgeGateway4xxRateAlarm": {
+            ("AWS/Bedrock-AgentCore", "UserErrors"),
+            ("AWS/Bedrock-AgentCore", "Invocations"),
+        },
+    }
+
+    matched = {}
+    for logical_id, resource in alarms.items():
+        for prefix in expected_metrics:
+            if logical_id.startswith(prefix):
+                matched[prefix] = resource["Properties"]
+                break
+    assert set(matched) == set(expected_metrics)
+
+    for prefix, props in matched.items():
+        assert {"Ref": topic_id} in props["AlarmActions"]
+        if "MetricName" in props:
+            found = {(props["Namespace"], props["MetricName"])}
+        else:
+            found = {
+                (m["MetricStat"]["Metric"]["Namespace"], m["MetricStat"]["Metric"]["MetricName"])
+                for m in props["Metrics"]
+                if "MetricStat" in m
+            }
+        assert found == expected_metrics[prefix]
+        assert props["TreatMissingData"] == "notBreaching"
+
+
+def test_edge_gateway_has_per_user_rate_limit_on_the_jwt_sub_claim(template):
+    template.has_resource_properties(
+        "AWS::BedrockAgentCore::GatewayRateLimit",
+        {
+            "DimensionKeys": ["$.context.jwt.sub"],
+            "Entries": [
+                Match.object_like(
+                    {
+                        "Dimensions": {"$.context.jwt.sub": "*"},
+                        "Requests": [{"Rate": 30, "Period": "minute"}],
+                        "Connections": [{"Rate": 2, "Period": "second"}],
+                    }
+                )
+            ],
+            "GatewayIdentifier": {
+                "Fn::GetAtt": [Match.string_like_regexp("EdgeGateway.*"), "GatewayIdentifier"]
+            },
+        },
+    )
+
+
+def test_vended_log_groups_have_30_day_retention_under_the_shared_prefix(template):
+    groups = template.find_resources("AWS::Logs::LogGroup")
+    names = {g["Properties"]["LogGroupName"] for g in groups.values()}
+    assert names == {
+        "/aws/vendedlogs/bedrock-agentcore/guppi-gpt-edge",
+        "/aws/vendedlogs/bedrock-agentcore/guppi-gpt-tools",
+        "/aws/vendedlogs/bedrock-agentcore/guppi_gpt",
+    }
+    for group in groups.values():
+        assert group["Properties"]["RetentionInDays"] == 30
+
+
+def test_vended_log_delivery_sources_cover_application_logs_and_traces(template):
+    sources = template.find_resources("AWS::Logs::DeliverySource")
+    log_types_by_resource = {}
+    for source in sources.values():
+        props = source["Properties"]
+        resource_key = json.dumps(props["ResourceArn"])
+        log_types_by_resource.setdefault(resource_key, set()).add(props["LogType"])
+
+    # Both gateways get APPLICATION_LOGS and TRACES; the runtime gets APPLICATION_LOGS only.
+    assert sorted(len(v) for v in log_types_by_resource.values()) == [1, 2, 2]
+    assert {"APPLICATION_LOGS", "TRACES"} in log_types_by_resource.values()
+    assert {"APPLICATION_LOGS"} in log_types_by_resource.values()
+
+    # Each delivery depends explicitly on its source and its destination, since the
+    # delivery source name that links them is a plain string, not a CloudFormation
+    # reference CDK would otherwise infer a dependency from.
+    deliveries = template.find_resources("AWS::Logs::Delivery")
+    assert len(deliveries) == len(sources)
+    for delivery in deliveries.values():
+        assert len(delivery.get("DependsOn", [])) == 2
+
+
+def test_vended_log_delivery_resource_policy_grants_the_delivery_service(template):
+    policies = [
+        p["Properties"]["PolicyDocument"]
+        for p in template.find_resources("AWS::Logs::ResourcePolicy").values()
+        if "delivery.logs.amazonaws.com" in p["Properties"]["PolicyDocument"]
+    ]
+    (raw,) = policies
+    document = json.loads(raw)
+    (statement,) = document["Statement"]
+    assert statement["Principal"] == {"Service": "delivery.logs.amazonaws.com"}
+    assert set(statement["Action"]) == {"logs:CreateLogStream", "logs:PutLogEvents"}
+    assert "/aws/vendedlogs/bedrock-agentcore/*" in statement["Resource"]
