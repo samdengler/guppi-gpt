@@ -25,6 +25,7 @@ Guppi is Bob's ship AI from *We Are Legion (We Are Bob)*.
 
 ```
 docs/                     # design document, decision log, architecture diagrams (self-contained HTML)
+  proposals/              # proposals for backlog items, Markdown, kept as the record of what was decided
 infra/
   app.py                  # CDK app entry
   guppi_gpt_infra/stack.py
@@ -34,13 +35,18 @@ agent/
   src/guppi_agent/agent.py       # per-run MCP client with the user token, Strands agent, AG-UI adapter
   src/guppi_agent/validation.py  # run input validation and front trimming
   src/guppi_agent/keepalive.py   # CUSTOM ping event after 15 silent seconds
+  src/guppi_agent/conversation_log.py  # thread record: pseudonym, merge, conditional write to S3
   Dockerfile                     # arm64, uvicorn on 8080; built from the repo root so uv.lock is in context
   tests/
 web/
-  package.json            # esbuild and @ag-ui/client; `npm run build` writes dist/
+  package.json            # esbuild and @ag-ui/client; `npm run build` writes dist/, `npm test` runs node --test
+  features.json           # page feature switches, bundled at build time; new features ship off
   src/index.html          # the page; no inline script or style (CSP is default-src 'self')
   src/app.js              # PKCE sign-in by hand, HttpAgent subscriber, plain text rendering
+  src/features.js         # reads features.json, returns the notice strings for the flags
+  src/copy.js             # the hint and empty-state wording for each combination of the flags
   src/app.css
+  test/                   # node --test over the copy
   dist/                   # build output plus config.json written by deploy.sh; not committed
 scripts/
   deploy.sh
@@ -74,7 +80,8 @@ uv add --package guppi-agent httpx  # add a dependency to one member
 uv run -- pytest                    # run all tests
 uv run -- pytest agent/tests -v
 uv run -- ruff check .
-cd web && npm ci && npm run build   # bundle the page into web/dist/
+cd web && npm ci && npm test        # the page's copy tests, through node --test
+cd web && npm run build             # bundle the page into web/dist/
 ```
 
 - Always use `uv add --package <member>` for dependencies, not manual pyproject edits.
@@ -87,13 +94,25 @@ cd web && npm ci && npm run build   # bundle the page into web/dist/
 builds the page (`npm ci`, `npm run build` in `web/`), writes `web/dist/config.json` from the stack outputs, syncs `web/dist/` to the site bucket, and
 invalidates CloudFront. When `op whoami` fails the script omits both parameters and
 CloudFormation reuses the stack's existing values. `GUPPI_ALARM_EMAIL`, when set, becomes
-the `AlarmEmail` parameter and subscribes that address to the alarm topic. Deploys run on
-Sam's Mac; the Docker image is built there for arm64.
+the `AlarmEmail` parameter and subscribes that address to the alarm topic.
+`GUPPI_INVESTIGATOR_ARN`, when set, becomes the `InvestigatorPrincipalArn` parameter and
+narrows the conversation investigator role's trust to that one ARN; left unset, the role
+trusts the account root. Deploys run on Sam's Mac; the Docker image is built there for arm64.
 
 The runtime's request header allowlist names `Authorization`; without it the runtime
 validates the bearer and drops it, and the agent has no token for the tools gateway.
-The runtime container receives `TOOLS_GATEWAY_URL`, `MODEL_ID`, `RETRIEVE_TOOL`, and
-`LOG_LEVEL` from the stack. The web ACL on the edge gateway keeps all three rules in COUNT
+The runtime container receives `TOOLS_GATEWAY_URL`, `MODEL_ID`, `RETRIEVE_TOOL`,
+`LOG_LEVEL`, `CONVERSATION_LOG_ENABLED`, `CONVERSATION_LOG_BUCKET`, and
+`CONVERSATION_LOG_KEY_SECRET_ARN` from the stack.
+
+Conversation logging (`docs/proposals/conversation-logging.md`) ships behind two switches,
+both off. `CONVERSATION_LOG_ENABLED` in `stack.py` decides whether the agent writes one
+record per thread to the conversation log bucket, uses the keyed pseudonym on the run line,
+and tells the model that conversations are logged; `"logging"` in `web/features.json`
+decides whether the page's hint and empty state say so. Flip the runtime switch and deploy
+first, then the page switch, so the page never promises a record that does not exist; turn
+them off in the other order. The bucket, the KMS key, the HMAC secret, and the investigator
+role are created either way, so flipping a switch is one line and a deploy. The web ACL on the edge gateway keeps all three rules in COUNT
 until `WAF_BLOCK` in `stack.py` is flipped after real traffic has been watched. The billing
 alarm reads `AWS/Billing EstimatedCharges`, which exists only after billing alerts are
 enabled in the account's billing preferences (a console setting, not in the stack).
