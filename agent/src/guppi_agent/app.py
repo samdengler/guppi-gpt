@@ -31,6 +31,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from opentelemetry import trace as otel_trace
 
 from guppi_agent import agent as agent_module
+from guppi_agent import conversation_log
 from guppi_agent.keepalive import DEFAULT_PING_INTERVAL, with_keepalive
 from guppi_agent.validation import trim_messages, validate_run
 
@@ -76,7 +77,9 @@ def bearer_token(request: Request) -> str | None:
 def subject_hash(token: str) -> str:
     """First 12 hex characters of the hashed sub claim; the token is not verified here.
 
-    The runtime validated the token before the request reached the container.
+    The runtime validated the token before the request reached the container. With
+    conversation logging on, the background task replaces this value with the keyed
+    pseudonym before the line is written, so a log line and a thread record match.
     """
     try:
         payload = token.split(".")[1]
@@ -112,14 +115,21 @@ async def run_agent(run: RunAgentInput, token: str, record: dict) -> AsyncIterat
 
     runner = agent_module.build_strands_agent(token)
     started = False
+    reply: list[str] = []
     try:
         async for event in runner.run(run):
             if event.type == EventType.RUN_STARTED:
                 started = True
             elif event.type == EventType.TOOL_CALL_START:
                 record["tool_calls"] = record.get("tool_calls", 0) + 1
-            elif event.type == EventType.TEXT_MESSAGE_CONTENT and "first_delta_ms" not in record:
-                record["first_delta_ms"] = elapsed_ms(record)
+            elif event.type == EventType.TEXT_MESSAGE_START:
+                record.setdefault("_reply_id", event.message_id)
+            elif event.type == EventType.TEXT_MESSAGE_CONTENT:
+                # Underscore keys stay out of the CloudWatch line; the reply text belongs to
+                # the thread record in the bucket and nowhere else.
+                reply.append(event.delta or "")
+                if "first_delta_ms" not in record:
+                    record["first_delta_ms"] = elapsed_ms(record)
             elif event.type == EventType.RUN_ERROR:
                 record["outcome"] = "error"
             yield event
@@ -134,6 +144,7 @@ async def run_agent(run: RunAgentInput, token: str, record: dict) -> AsyncIterat
             type=EventType.RUN_ERROR, message="agent run failed", code="AGENT_ERROR"
         )
     finally:
+        record["_reply"] = "".join(reply)
         usage = getattr(runner, "usage", None)
         if callable(usage):
             record.update(usage())
@@ -147,6 +158,8 @@ async def event_stream(
     run: RunAgentInput, token: str, encoder: EventEncoder, record: dict
 ) -> AsyncIterator[str]:
     record["_t0"] = time.monotonic()
+    record["started_at"] = conversation_log.now_iso()
+    record["model"] = os.environ.get("MODEL_ID", agent_module.DEFAULT_MODEL_ID)
     record.setdefault("outcome", "finished")
     try:
         async for event in with_keepalive(run_agent(run, token, record), DEFAULT_PING_INTERVAL):
@@ -157,7 +170,12 @@ async def event_stream(
     finally:
         record["total_ms"] = elapsed_ms(record)
         record.pop("_t0", None)
-        log.info(json.dumps(record, sort_keys=True))
+        if conversation_log.enabled():
+            # The task writes the run line once it holds the pseudonym, then merges the run
+            # into the thread record. Nothing on the stream waits for it.
+            conversation_log.schedule_write(run, record, token)
+        else:
+            log.info(json.dumps(conversation_log.loggable(record), sort_keys=True))
 
 
 @app.post("/invocations")
@@ -182,9 +200,7 @@ async def invocations(request: Request) -> StreamingResponse:
     if token is None:
         # Header names only: the runtime forwards Authorization solely when its request
         # header allowlist names it, and this line is what shows that it did not.
-        log.warning(
-            "no bearer token; headers present: %s", sorted(set(request.headers.keys()))
-        )
+        log.warning("no bearer token; headers present: %s", sorted(set(request.headers.keys())))
 
         async def unauthorized() -> AsyncIterator[str]:
             for event in started_then_error(run, "bearer token required", "UNAUTHORIZED"):

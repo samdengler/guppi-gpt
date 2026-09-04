@@ -51,6 +51,9 @@ fi
 if [[ -n "${GUPPI_ALARM_EMAIL:-}" ]]; then
   param_args+=(--parameters "AlarmEmail=$GUPPI_ALARM_EMAIL")
 fi
+if [[ -n "${GUPPI_INVESTIGATOR_ARN:-}" ]]; then
+  param_args+=(--parameters "InvestigatorPrincipalArn=$GUPPI_INVESTIGATOR_ARN")
+fi
 
 if [[ "$SITE_ONLY" == 0 ]]; then
   cd "$ROOT/infra"

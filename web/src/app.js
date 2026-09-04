@@ -3,6 +3,7 @@ import { initFeatures, isEnabled } from "./features.js";
 import { enabledFlagNames } from "./flags-core.js";
 import * as chatHistory from "./history.js";
 import { renderFeedbackControls, FEEDBACK_EVENT } from "./feedback.js";
+import { hintText, emptyStateText } from "./copy.js";
 
 (async () => {
   const $ = (id) => document.getElementById(id);
@@ -41,10 +42,10 @@ import { renderFeedbackControls, FEEDBACK_EVENT } from "./feedback.js";
   // Read once at load; the flag layer has no live toggling within a page load.
   const historyEnabled = isEnabled("history");
   const feedbackEnabled = isEnabled("feedback");
-  if (historyEnabled) {
-    emptyCopy.textContent = "Ask anything. Chats are saved on this device only.";
-    composerHint.textContent = "Enter to send, Shift+Enter for a new line. Chats are saved on this device only.";
-  }
+  const loggingEnabled = isEnabled("logging");
+  // The privacy notice states what the switches actually allow.
+  emptyCopy.textContent = emptyStateText(historyEnabled, loggingEnabled);
+  composerHint.textContent = hintText(historyEnabled, loggingEnabled);
   if (feedbackEnabled) {
     // Keeps the in-memory thread in sync with a vote so a later persistCurrentThread
     // call (the next send) does not overwrite it; the store write itself already

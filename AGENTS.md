@@ -35,6 +35,7 @@ agent/
   src/guppi_agent/agent.py       # per-run MCP client with the user token, Strands agent, AG-UI adapter
   src/guppi_agent/validation.py  # run input validation and front trimming
   src/guppi_agent/keepalive.py   # CUSTOM ping event after 15 silent seconds
+  src/guppi_agent/conversation_log.py  # thread record: pseudonym, merge, conditional write to S3
   Dockerfile                     # arm64, uvicorn on 8080; built from the repo root so uv.lock is in context
   tests/
 web/
@@ -45,10 +46,12 @@ web/
   src/history.js          # local chat history: idb wrapper around one "threads" object store, behind the history flag
   src/feedback.js         # up/down reply control: vote toggle, "guppi:feedback" CustomEvent, history write, behind the feedback flag
   src/features.js         # OpenFeature static provider; initFeatures() and isEnabled()
+  src/copy.js             # the hint and empty-state wording for each combination of the history and logging flags
   src/flags-core.js       # pure override parsing and default/override overlay, tested without a DOM
   features.json           # committed feature flag defaults, merged into config.json at deploy time
   test/features.test.mjs  # node:test coverage for flags-core.js, run by `npm test`
   test/feedback.test.mjs  # node:test coverage for feedback.js's DOM-free functions
+  test/copy.test.js       # node:test coverage for copy.js's wording per flag combination
   dist/                   # build output plus config.json written by deploy.sh; not committed
 scripts/
   deploy.sh
@@ -86,7 +89,7 @@ uv run -- pytest                    # run all tests
 uv run -- pytest agent/tests -v
 uv run -- ruff check .
 cd web && npm ci && npm run build   # bundle the page into web/dist/
-cd web && npm test                  # node:test coverage for the feature flag overlay
+cd web && npm test                  # node:test coverage for the feature flag overlay and the copy wording
 ```
 
 Flipping a feature flag: edit `web/features.json`, then run `scripts/deploy.sh --site-only`
@@ -103,7 +106,10 @@ deploy` and no CloudFormation parameter (`docs/proposals/feature-flags.md`).
 builds the page (`npm ci`, `npm run build` in `web/`), writes `web/dist/config.json` from the stack outputs, syncs `web/dist/` to the site bucket, and
 invalidates CloudFront. When `op whoami` fails the script omits both parameters and
 CloudFormation reuses the stack's existing values. `GUPPI_ALARM_EMAIL`, when set, becomes
-the `AlarmEmail` parameter and subscribes that address to the alarm topic. `scripts/deploy.sh --site-only` skips `cdk deploy` (so no image build or push) and
+the `AlarmEmail` parameter and subscribes that address to the alarm topic.
+`GUPPI_INVESTIGATOR_ARN`, when set, becomes the `InvestigatorPrincipalArn` parameter and
+narrows the conversation investigator role's trust to that one ARN; left unset, the role
+trusts the account root. `scripts/deploy.sh --site-only` skips `cdk deploy` (so no image build or push) and
 publishes the page from the last outputs file. Every run is
 also written to `.deploy/deploy-<timestamp>.log` with `.deploy/latest.log` pointing at the
 newest and a final `deploy exit=<code>` line, so a Claude session can watch a deploy
@@ -115,10 +121,22 @@ the first the runtime validates the bearer and drops it, and the agent has no to
 the tools gateway; without the second the trace the page started ends at the runtime.
 The edge gateway target's allowed request headers name the session id header and
 `traceparent` for the same reason. The runtime container receives `TOOLS_GATEWAY_URL`,
-`MODEL_ID`, `RETRIEVE_TOOL`, `LOG_LEVEL`, and `OTEL_PYTHON_EXCLUDED_URLS` from the stack;
-the container starts under `opentelemetry-instrument` (`agent/Dockerfile`), and the
+`MODEL_ID`, `RETRIEVE_TOOL`, `LOG_LEVEL`, `OTEL_PYTHON_EXCLUDED_URLS`,
+`CONVERSATION_LOG_ENABLED`, `CONVERSATION_LOG_BUCKET`, and `CONVERSATION_LOG_KEY_SECRET_ARN`
+from the stack; the container starts under `opentelemetry-instrument` (`agent/Dockerfile`), and the
 runtime supplies the ADOT exporter settings itself. `docs/proposals/traceability.md`
-describes the identifiers and where each one is logged. The stack also owns one account-wide setting, CloudWatch Transaction Search (the span
+describes the identifiers and where each one is logged.
+
+Conversation logging (`docs/proposals/conversation-logging.md`) ships behind two switches,
+both off. `CONVERSATION_LOG_ENABLED` in `stack.py` decides whether the agent writes one
+record per thread to the conversation log bucket, uses the keyed pseudonym on the run line,
+and tells the model that conversations are logged; `"logging"` in `web/features.json`
+decides whether the page's hint and empty state say so. Flip the runtime switch and deploy
+first, then the page switch, so the page never promises a record that does not exist; turn
+them off in the other order. The bucket, the KMS key, the HMAC secret, and the investigator
+role are created either way, so flipping a switch is one line and a deploy.
+
+The stack also owns one account-wide setting, CloudWatch Transaction Search (the span
 destination and a 1 percent indexing rule), because the instrumented container's spans
 are refused until it is on. The web ACL on the edge gateway keeps all three rules in COUNT
 until `WAF_BLOCK` in `stack.py` is flipped after real traffic has been watched. The billing
