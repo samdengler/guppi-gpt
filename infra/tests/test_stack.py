@@ -371,3 +371,138 @@ def test_runtime_forwards_the_bearer_to_the_container(template):
         "AWS::BedrockAgentCore::Runtime",
         {"RequestHeaderConfiguration": {"RequestHeaderAllowlist": ["Authorization"]}},
     )
+
+
+# ---- Conversation log ----------------------------------------------------------------
+
+
+def conversation_bucket(template) -> dict:
+    buckets = template.find_resources("AWS::S3::Bucket")
+    (bucket,) = [
+        b
+        for b in buckets.values()
+        if "LifecycleConfiguration" in b["Properties"]
+        and b["Properties"]["LifecycleConfiguration"]["Rules"][0]["Id"] == "ExpireThreadRecords"
+    ]
+    return bucket
+
+
+def statements(template, logical_id_prefix: str) -> list[dict]:
+    policies = template.find_resources("AWS::IAM::Policy")
+    found = []
+    for logical_id, policy in policies.items():
+        if logical_id.startswith(logical_id_prefix):
+            found.extend(policy["Properties"]["PolicyDocument"]["Statement"])
+    return found
+
+
+def test_conversation_bucket_is_versioned_kms_encrypted_and_expires_at_730_days(template):
+    props = conversation_bucket(template)["Properties"]
+    assert props["VersioningConfiguration"] == {"Status": "Enabled"}
+    encryption = props["BucketEncryption"]["ServerSideEncryptionConfiguration"][0]
+    assert encryption["BucketKeyEnabled"] is True
+    assert encryption["ServerSideEncryptionByDefault"]["SSEAlgorithm"] == "aws:kms"
+    assert "KMSMasterKeyID" in encryption["ServerSideEncryptionByDefault"]
+    assert props["PublicAccessBlockConfiguration"] == {
+        "BlockPublicAcls": True,
+        "BlockPublicPolicy": True,
+        "IgnorePublicAcls": True,
+        "RestrictPublicBuckets": True,
+    }
+    (rule,) = props["LifecycleConfiguration"]["Rules"]
+    assert rule["Prefix"] == "threads/"
+    assert rule["ExpirationInDays"] == 730
+    assert rule["NoncurrentVersionExpiration"] == {"NoncurrentDays": 730}
+
+
+def test_conversation_bucket_policy_denies_readers_other_than_the_two_roles(template):
+    policies = template.find_resources("AWS::S3::BucketPolicy")
+    documents = [p["Properties"]["PolicyDocument"]["Statement"] for p in policies.values()]
+    (document,) = [d for d in documents if any(s.get("Sid") == "DenyOtherReaders" for s in d)]
+    sids = {statement.get("Sid") for statement in document}
+    assert {"RuntimeThreadRecords", "InvestigatorReads", "DenyOtherReaders"} <= sids
+    (deny,) = [s for s in document if s.get("Sid") == "DenyOtherReaders"]
+    assert deny["Effect"] == "Deny"
+    assert deny["Action"] == ["s3:GetObject", "s3:GetObjectVersion"]
+    assert deny["Principal"] == {"AWS": "*"}
+    assert len(deny["Condition"]["StringNotEquals"]["aws:PrincipalArn"]) == 2
+    # enforce_ssl adds its own deny to the same document.
+    assert any(
+        s.get("Condition", {}).get("Bool", {}).get("aws:SecureTransport") == "false"
+        for s in document
+    )
+
+
+def test_runtime_role_reads_and_writes_thread_objects_and_cannot_list_them(template):
+    document = statements(template, "RuntimeRole")
+    (thread_statement,) = [
+        s for s in document if s.get("Action") == ["s3:GetObject", "s3:PutObject"]
+    ]
+    assert "threads/*" in json.dumps(thread_statement["Resource"])
+    actions = json.dumps([s.get("Action") for s in document])
+    assert "s3:ListBucket" not in actions and "s3:DeleteObject" not in actions
+    assert any(s.get("Action") == "secretsmanager:GetSecretValue" for s in document)
+    assert any(s.get("Action") == ["kms:Decrypt", "kms:GenerateDataKey"] for s in document)
+
+
+def test_investigator_role_reads_the_bucket_the_key_and_the_pool_and_nothing_else(template):
+    document = statements(template, "ConversationInvestigatorRole")
+    actions = sorted(
+        action
+        for statement in document
+        for action in (
+            statement["Action"]
+            if isinstance(statement["Action"], list)
+            else [statement["Action"]]
+        )
+    )
+    assert actions == [
+        "cognito-idp:ListUsers",
+        "kms:Decrypt",
+        "s3:GetObject",
+        "s3:GetObjectVersion",
+        "s3:ListBucket",
+        "s3:ListBucketVersions",
+        "secretsmanager:GetSecretValue",
+    ]
+
+
+def test_investigator_trust_is_the_account_root_until_the_parameter_is_set(template):
+    template.has_parameter("InvestigatorPrincipalArn", {"Default": ""})
+    roles = template.find_resources("AWS::IAM::Role")
+    (role,) = [
+        r
+        for r in roles.values()
+        if "resolves a subject" in r["Properties"].get("Description", "")
+    ]
+    principal = role["Properties"]["AssumeRolePolicyDocument"]["Statement"][0]["Principal"]["AWS"]
+    condition_name, when_set, when_blank = principal["Fn::If"]
+    assert condition_name == "HasInvestigatorPrincipal"
+    assert when_set == {"Ref": "InvestigatorPrincipalArn"}
+    assert when_blank == f"arn:aws:iam::{ACCOUNT}:root"
+    assert role["Properties"]["MaxSessionDuration"] == 3600
+
+
+def test_runtime_carries_the_conversation_log_variables_with_the_switch_off(template):
+    template.has_resource_properties(
+        "AWS::BedrockAgentCore::Runtime",
+        {
+            "EnvironmentVariables": Match.object_like(
+                {
+                    "CONVERSATION_LOG_ENABLED": "false",
+                    "CONVERSATION_LOG_BUCKET": Match.any_value(),
+                    "CONVERSATION_LOG_KEY_SECRET_ARN": Match.any_value(),
+                }
+            )
+        },
+    )
+
+
+def test_conversation_key_secret_has_no_template(template):
+    secrets = template.find_resources("AWS::SecretsManager::Secret")
+    (secret,) = [
+        s for s in secrets.values() if "HMAC key" in s["Properties"].get("Description", "")
+    ]
+    generator = secret["Properties"]["GenerateSecretString"]
+    assert generator["PasswordLength"] == 32
+    assert "SecretStringTemplate" not in generator and "GenerateStringKey" not in generator

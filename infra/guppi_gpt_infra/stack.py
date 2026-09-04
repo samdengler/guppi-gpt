@@ -55,6 +55,9 @@ from aws_cdk import (
     aws_iam as iam,
 )
 from aws_cdk import (
+    aws_kms as kms,
+)
+from aws_cdk import (
     aws_route53 as route53,
 )
 from aws_cdk import (
@@ -108,6 +111,14 @@ ORIGIN_HEADER_NAME = "X-Origin-Verify"
 # Both WAF rules below start in COUNT so real traffic can be watched before anything is
 # blocked. Flip this once the common rule set has been checked against real prompts.
 WAF_BLOCK = False
+
+# Conversation logging (docs/proposals/conversation-logging.md). The bucket, the key, the
+# HMAC secret, and the investigator role are always created; this switch decides whether the
+# agent writes thread records, so turning logging on is this line plus a deploy. The page
+# has its own switch in web/features.json and is flipped after this one.
+CONVERSATION_LOG_ENABLED = False
+CONVERSATION_RETENTION_DAYS = 730
+THREADS_PREFIX = "threads/"
 
 # Twice the expected monthly figure (design section 11).
 BILLING_ALARM_USD = 50
@@ -176,6 +187,23 @@ class GuppiGptStack(cdk.Stack):
             "HasAlarmEmail",
             expression=cdk.Fn.condition_not(
                 cdk.Fn.condition_equals(alarm_email.value_as_string, "")
+            ),
+        )
+        investigator_principal_arn = cdk.CfnParameter(
+            self,
+            "InvestigatorPrincipalArn",
+            type="String",
+            default="",
+            description=(
+                "ARN allowed to assume the conversation investigator role; "
+                "left blank the role trusts the account root"
+            ),
+        )
+        has_investigator_principal = cdk.CfnCondition(
+            self,
+            "HasInvestigatorPrincipal",
+            expression=cdk.Fn.condition_not(
+                cdk.Fn.condition_equals(investigator_principal_arn.value_as_string, "")
             ),
         )
 
@@ -783,6 +811,154 @@ class GuppiGptStack(cdk.Stack):
         )
         ingestion_alarm.add_alarm_action(cloudwatch_actions.SnsAction(alarm_topic))
 
+        # ---- Conversation log ------------------------------------------------------------
+        # One JSON object per thread under threads/, written by the runtime after a run's
+        # stream ends. Encryption is SSE-KMS with a stack-created key rather than SSE-S3: the
+        # key is a second gate, so a principal holding s3:GetObject but no kms:Decrypt on this
+        # key reads nothing, and every decrypt is a CloudTrail event. The investigator path
+        # costs one grant for that, which is cheaper than the gate is worth.
+        conversation_key = kms.Key(
+            self,
+            "ConversationLogKey",
+            description="Encrypts the GuppiGPT conversation log bucket",
+            enable_key_rotation=True,
+            alias="guppi-gpt-conversations",
+            removal_policy=RemovalPolicy.RETAIN,
+        )
+        conversation_bucket = s3.Bucket(
+            self,
+            "ConversationLogBucket",
+            versioned=True,  # one version per run, which is the turn-by-turn history
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            encryption=s3.BucketEncryption.KMS,
+            encryption_key=conversation_key,
+            bucket_key_enabled=True,
+            enforce_ssl=True,
+            removal_policy=RemovalPolicy.RETAIN,
+            lifecycle_rules=[
+                s3.LifecycleRule(
+                    id="ExpireThreadRecords",
+                    prefix=THREADS_PREFIX,
+                    expiration=Duration.days(CONVERSATION_RETENTION_DAYS),
+                    noncurrent_version_expiration=Duration.days(CONVERSATION_RETENTION_DAYS),
+                    abort_incomplete_multipart_upload_after=Duration.days(1),
+                )
+            ],
+        )
+        # The secret value is the HMAC key itself, with no JSON template around it, so the
+        # agent uses the bytes of the secret string as they come back.
+        conversation_secret = secretsmanager.Secret(
+            self,
+            "ConversationLogKeySecret",
+            description="HMAC key that turns a Cognito sub into the pseudonym in thread records",
+            generate_secret_string=secretsmanager.SecretStringGenerator(
+                password_length=32, exclude_punctuation=True
+            ),
+        )
+
+        # The investigator role is the only principal outside the runtime that can read a
+        # thread record, and the only one that can read the key and list the user pool, which
+        # is what re-identification takes. Trust is the account root by default, so any
+        # principal in the account holding sts:AssumeRole can assume it; a non-blank
+        # InvestigatorPrincipalArn narrows it to that one ARN.
+        investigator_role = iam.Role(
+            self,
+            "ConversationInvestigatorRole",
+            assumed_by=iam.AccountRootPrincipal(),
+            max_session_duration=Duration.hours(1),
+            description="Reads conversation records and resolves a subject to a Cognito user",
+        )
+        cfn_investigator_role = investigator_role.node.default_child
+        assert isinstance(cfn_investigator_role, iam.CfnRole)
+        cfn_investigator_role.add_property_override(
+            "AssumeRolePolicyDocument.Statement.0.Principal.AWS",
+            cdk.Fn.condition_if(
+                has_investigator_principal.logical_id,
+                investigator_principal_arn.value_as_string,
+                f"arn:aws:iam::{self.account}:root",
+            ),
+        )
+        thread_objects = conversation_bucket.arn_for_objects(f"{THREADS_PREFIX}*")
+        investigator_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["s3:GetObject", "s3:GetObjectVersion"], resources=[thread_objects]
+            )
+        )
+        investigator_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["s3:ListBucket", "s3:ListBucketVersions"],
+                resources=[conversation_bucket.bucket_arn],
+            )
+        )
+        conversation_key.grant(investigator_role, "kms:Decrypt")
+        investigator_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["secretsmanager:GetSecretValue"],
+                resources=[conversation_secret.secret_arn],
+            )
+        )
+        investigator_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["cognito-idp:ListUsers"], resources=[user_pool.user_pool_arn]
+            )
+        )
+
+        # The runtime reads and writes single objects by key. No ListBucket, so a process in
+        # the container reaches only the thread ids it already holds, and no delete.
+        runtime_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["s3:GetObject", "s3:PutObject"], resources=[thread_objects]
+            )
+        )
+        conversation_key.grant(runtime_role, "kms:Decrypt", "kms:GenerateDataKey")
+        runtime_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["secretsmanager:GetSecretValue"],
+                resources=[conversation_secret.secret_arn],
+            )
+        )
+
+        conversation_bucket.add_to_resource_policy(
+            iam.PolicyStatement(
+                sid="RuntimeThreadRecords",
+                principals=[iam.ArnPrincipal(runtime_role.role_arn)],
+                actions=["s3:GetObject", "s3:PutObject"],
+                resources=[thread_objects],
+            )
+        )
+        conversation_bucket.add_to_resource_policy(
+            iam.PolicyStatement(
+                sid="InvestigatorReads",
+                principals=[iam.ArnPrincipal(investigator_role.role_arn)],
+                actions=[
+                    "s3:GetObject",
+                    "s3:GetObjectVersion",
+                    "s3:ListBucket",
+                    "s3:ListBucketVersions",
+                ],
+                resources=[conversation_bucket.bucket_arn, thread_objects],
+            )
+        )
+        # The deny covers reads only, so an administrator keeps the ability to repair the
+        # policy and to delete objects for a data subject deletion.
+        conversation_bucket.add_to_resource_policy(
+            iam.PolicyStatement(
+                sid="DenyOtherReaders",
+                effect=iam.Effect.DENY,
+                principals=[iam.AnyPrincipal()],
+                actions=["s3:GetObject", "s3:GetObjectVersion"],
+                resources=[thread_objects],
+                conditions={
+                    "StringNotEquals": {
+                        "aws:PrincipalArn": [
+                            runtime_role.role_arn,
+                            investigator_role.role_arn,
+                        ]
+                    }
+                },
+            )
+        )
+
         # ---- Tools gateway -------------------------------------------------------------
         tools_gateway_role = iam.Role(
             self,
@@ -892,6 +1068,9 @@ class GuppiGptStack(cdk.Stack):
             "TOOLS_GATEWAY_URL": tools_gateway.attr_gateway_url,
             "MODEL_ID": MODEL_ID,
             "RETRIEVE_TOOL": RETRIEVE_TOOL,
+            "CONVERSATION_LOG_ENABLED": "true" if CONVERSATION_LOG_ENABLED else "false",
+            "CONVERSATION_LOG_BUCKET": conversation_bucket.bucket_name,
+            "CONVERSATION_LOG_KEY_SECRET_ARN": conversation_secret.secret_arn,
         }
 
         # ---- Outputs -------------------------------------------------------------------
@@ -911,6 +1090,9 @@ class GuppiGptStack(cdk.Stack):
         cdk.CfnOutput(self, "ToolsGatewayUrl", value=tools_gateway.attr_gateway_url)
         cdk.CfnOutput(self, "IngestionScheduleName", value=ingestion.schedule_name)
         cdk.CfnOutput(self, "AlarmTopicArn", value=alarm_topic.topic_arn)
+        cdk.CfnOutput(self, "ConversationLogBucketName", value=conversation_bucket.bucket_name)
+        cdk.CfnOutput(self, "ConversationLogKeySecretArn", value=conversation_secret.secret_arn)
+        cdk.CfnOutput(self, "InvestigatorRoleArn", value=investigator_role.role_arn)
 
     def _runtime_role(self) -> iam.Role:
         """Execution role for the runtime, following the AgentCore documented policy."""
