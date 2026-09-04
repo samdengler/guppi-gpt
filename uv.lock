@@ -396,6 +396,7 @@ source = { editable = "agent" }
 dependencies = [
     { name = "ag-ui-protocol" },
     { name = "ag-ui-strands" },
+    { name = "boto3" },
     { name = "fastapi" },
     { name = "strands-agents" },
     { name = "uvicorn", extra = ["standard"] },
@@ -412,6 +413,7 @@ dev = [
 requires-dist = [
     { name = "ag-ui-protocol", specifier = ">=0.1.22" },
     { name = "ag-ui-strands", specifier = ">=0.3.0" },
+    { name = "boto3", specifier = ">=1.43.87" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "strands-agents", specifier = ">=1.54.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },

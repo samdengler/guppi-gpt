@@ -16,16 +16,23 @@ from typing import Any
 
 from ag_ui.core import BaseEvent, RunAgentInput
 
+from guppi_agent import conversation_log
+
 log = logging.getLogger("guppi_agent")
 
 DEFAULT_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 DEFAULT_RETRIEVE_TOOL = "docs___Retrieve"
 DEFAULT_REGION = "us-east-1"
 
-SYSTEM_PROMPT = """You are Guppi, the assistant behind GuppiGPT.
+MEMORY_SENTENCE = "Nothing is saved between page loads, and you cannot recall earlier sessions."
+LOGGED_MEMORY_SENTENCE = (
+    "Conversations are logged for troubleshooting; nothing is saved between page loads, "
+    "and you cannot recall earlier sessions."
+)
 
-You have no memory beyond the conversation on the current page. Nothing is saved between
-page loads, and you cannot recall earlier sessions.
+SYSTEM_PROMPT_TEMPLATE = """You are Guppi, the assistant behind GuppiGPT.
+
+You have no memory beyond the conversation on the current page. {memory}
 
 You have one tool, a search over the documentation of the Model Context Protocol (MCP),
 Strands Agents, and the AG-UI protocol. When a question concerns any of those subjects,
@@ -39,6 +46,14 @@ indent code by four spaces. In examples write server addresses as <server-url>, 
 localhost or a loopback address: the gateway in front of this page rejects any message
 that contains one, which would end the conversation.
 """
+
+
+def system_prompt() -> str:
+    """The prompt for one run. The claim about saving follows the logging switch."""
+    logged = conversation_log.enabled()
+    return SYSTEM_PROMPT_TEMPLATE.format(
+        memory=LOGGED_MEMORY_SENTENCE if logged else MEMORY_SENTENCE
+    )
 
 
 class Settings:
@@ -92,7 +107,7 @@ class StrandsRun:
                     max_tokens=1024,
                     temperature=0.7,
                 ),
-                system_prompt=SYSTEM_PROMPT,
+                system_prompt=system_prompt(),
                 tools=tools,
                 callback_handler=None,
             )

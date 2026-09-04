@@ -6,6 +6,7 @@ requires-python = ">=3.12"
 dependencies = [
     "ag-ui-protocol>=0.1.22",
     "ag-ui-strands>=0.3.0",
+    "boto3>=1.43.87",
     "fastapi>=0.115",
     "strands-agents>=1.54.0",
     "uvicorn[standard]>=0.30",
