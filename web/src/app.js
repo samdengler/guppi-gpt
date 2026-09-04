@@ -1,5 +1,7 @@
 import { HttpAgent } from "@ag-ui/client";
 
+import { notice } from "./features.js";
+
 (async () => {
   const $ = (id) => document.getElementById(id);
 
@@ -22,6 +24,12 @@ import { HttpAgent } from "@ag-ui/client";
   const form = $("composer-form");
   const input = $("composer-input");
   const sendBtn = $("send-btn");
+
+  // The privacy notice states what the switches in features.json actually allow. The HTML
+  // carries the wording for both switches off, so the page reads correctly before this runs.
+  const copy = notice();
+  $("hint").textContent = copy.hint;
+  $("empty-copy").textContent = copy.empty;
 
   const config = await (await fetch("config.json", { cache: "no-store" })).json();
   const authBase = `https://${config.authDomain}`;
