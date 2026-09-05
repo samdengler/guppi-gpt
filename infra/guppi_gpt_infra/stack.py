@@ -149,8 +149,8 @@ WAF_BLOCK = True
 # HMAC secret, and the investigator role are always created; this switch decides whether the
 # agent writes thread records, so turning logging on is this line plus a deploy. The page
 # has its own switch in web/features.json and is flipped after this one.
-CONVERSATION_LOG_ENABLED = False
-CONVERSATION_RETENTION_DAYS = 730
+CONVERSATION_LOG_ENABLED = True
+CONVERSATION_RETENTION_DAYS = 30
 THREADS_PREFIX = "threads/"
 
 # Twice the expected monthly figure (design section 11).

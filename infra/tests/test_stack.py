@@ -618,7 +618,7 @@ def statements(template, logical_id_prefix: str) -> list[dict]:
     return found
 
 
-def test_conversation_bucket_is_versioned_kms_encrypted_and_expires_at_730_days(template):
+def test_conversation_bucket_is_versioned_kms_encrypted_and_expires_at_30_days(template):
     props = conversation_bucket(template)["Properties"]
     assert props["VersioningConfiguration"] == {"Status": "Enabled"}
     encryption = props["BucketEncryption"]["ServerSideEncryptionConfiguration"][0]
@@ -633,8 +633,8 @@ def test_conversation_bucket_is_versioned_kms_encrypted_and_expires_at_730_days(
     }
     (rule,) = props["LifecycleConfiguration"]["Rules"]
     assert rule["Prefix"] == "threads/"
-    assert rule["ExpirationInDays"] == 730
-    assert rule["NoncurrentVersionExpiration"] == {"NoncurrentDays": 730}
+    assert rule["ExpirationInDays"] == 30
+    assert rule["NoncurrentVersionExpiration"] == {"NoncurrentDays": 30}
 
 
 def test_conversation_bucket_policy_denies_readers_other_than_the_two_roles(template):
@@ -701,13 +701,13 @@ def test_investigator_trust_is_the_account_root_until_the_parameter_is_set(templ
     assert role["Properties"]["MaxSessionDuration"] == 3600
 
 
-def test_runtime_carries_the_conversation_log_variables_with_the_switch_off(template):
+def test_runtime_carries_the_conversation_log_variables_with_the_switch_on(template):
     template.has_resource_properties(
         "AWS::BedrockAgentCore::Runtime",
         {
             "EnvironmentVariables": Match.object_like(
                 {
-                    "CONVERSATION_LOG_ENABLED": "false",
+                    "CONVERSATION_LOG_ENABLED": "true",
                     "CONVERSATION_LOG_BUCKET": Match.any_value(),
                     "CONVERSATION_LOG_KEY_SECRET_ARN": Match.any_value(),
                 }
