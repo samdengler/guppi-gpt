@@ -2,5 +2,5 @@
   "history": false,
   "feedback": false,
   "logging": false,
-  "rum": false
+  "rum": true
 }
