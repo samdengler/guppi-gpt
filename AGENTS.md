@@ -37,10 +37,12 @@ agent/
   Dockerfile                     # arm64, uvicorn on 8080; built from the repo root so uv.lock is in context
   tests/
 web/
-  package.json            # esbuild and @ag-ui/client; `npm run build` writes dist/
+  package.json            # esbuild, @ag-ui/client, idb; `npm run build` writes dist/, `npm test` runs node --test
   src/index.html          # the page; no inline script or style (CSP is default-src 'self')
   src/app.js              # PKCE sign-in by hand, HttpAgent subscriber, plain text rendering
+  src/session.js          # idb-backed session store: refresh token, header claims, rotated on use
   src/app.css
+  test/session.test.mjs   # node:test coverage of session.js's pure decision and shaping functions
   dist/                   # build output plus config.json written by deploy.sh; not committed
 scripts/
   deploy.sh
