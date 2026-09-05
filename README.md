@@ -78,19 +78,21 @@ design document, section 15. Operational notes:
 Preference for anything on the backend: AWS native services, serverless where possible
 (scale to zero, pay per use, automatic scaling).
 
-1. Dynatrace RUM on the page plus the Dynatrace AWS integration. Groundwork built behind
-   the `rum` flag (`docs/proposals/dynatrace.md`); needs the tenant URL, a RUM application
-   and its beacon origin, an API token, and the AWS integration role on the Dynatrace side.
+1. Dynatrace RUM on the page plus the Dynatrace AWS integration. Live since 5 Sep 2026 on
+   environment wfd05358: RUM application GuppiGPT (self-hosted script, `rum` flag on), the
+   monitoring role assumed by Dynatrace, Firehose log forwarding from the vended log
+   groups, and OTLP trace export from the runtime. Whether CloudWatch still receives
+   spans alongside Dynatrace is the open check (`docs/proposals/dynatrace.md`).
 2. A Dynatrace dashboard for operational metrics. Draft in `docs/dynatrace/dashboard.json`;
-   import once the tenant exists.
+   import and adjust its two flagged queries.
 3. Correlation ids and traceability. Done: `docs/proposals/traceability.md`.
 4. Up/down feedback on each reply. Built dark behind the `feedback` flag as a DOM event for
    the RUM hook: `docs/proposals/feedback.md`.
 5. Chat history local to the browser. Built dark behind the `history` flag as Chats:
    `docs/proposals/local-history.md`.
-6. Conversation logging to S3, anonymous with privileged re-identification. Built dark
-   behind the runtime switch and the `logging` flag with the decisions recorded in
-   `docs/proposals/conversation-logging.md`; confirm retention and the investigator
-   principal before flipping.
+6. Conversation logging to S3, anonymous with privileged re-identification. Runtime
+   switch on since 5 Sep 2026 with 30 day retention (a proof of concept); the page
+   `logging` flag follows once the first thread object is seen. Decisions in
+   `docs/proposals/conversation-logging.md`.
 7. Operational alarms, vended log delivery, and the per-user rate limit: done, thresholds
    in `docs/proposals/operations.md`.
