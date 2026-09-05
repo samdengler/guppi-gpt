@@ -655,14 +655,18 @@ def test_conversation_bucket_policy_denies_readers_other_than_the_two_roles(temp
     )
 
 
-def test_runtime_role_reads_and_writes_thread_objects_and_cannot_list_them(template):
+def test_runtime_role_reads_writes_and_lists_thread_objects_only(template):
     document = statements(template, "RuntimeRole")
     (thread_statement,) = [
         s for s in document if s.get("Action") == ["s3:GetObject", "s3:PutObject"]
     ]
     assert "threads/*" in json.dumps(thread_statement["Resource"])
+    # ListBucket is scoped to the threads/ prefix: without it S3 answers a GET on a
+    # missing key with 403 rather than 404, and the first write of a thread never happens.
+    (listing,) = [s for s in document if s.get("Action") == "s3:ListBucket"]
+    assert listing["Condition"] == {"StringLike": {"s3:prefix": ["threads/*"]}}
     actions = json.dumps([s.get("Action") for s in document])
-    assert "s3:ListBucket" not in actions and "s3:DeleteObject" not in actions
+    assert "s3:DeleteObject" not in actions
     assert any(s.get("Action") == "secretsmanager:GetSecretValue" for s in document)
     assert any(s.get("Action") == ["kms:Decrypt", "kms:GenerateDataKey"] for s in document)
 

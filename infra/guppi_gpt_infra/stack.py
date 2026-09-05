@@ -1290,11 +1290,20 @@ class GuppiGptStack(cdk.Stack):
             )
         )
 
-        # The runtime reads and writes single objects by key. No ListBucket, so a process in
-        # the container reaches only the thread ids it already holds, and no delete.
+        # The runtime reads and writes single objects by key, and no delete. ListBucket is
+        # granted only under the threads/ prefix: without it S3 answers a GET on a missing
+        # key with 403 instead of 404 (observed on the first run, 5 Sep 2026), so the
+        # first write of every thread failed.
         runtime_role.add_to_policy(
             iam.PolicyStatement(
                 actions=["s3:GetObject", "s3:PutObject"], resources=[thread_objects]
+            )
+        )
+        runtime_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["s3:ListBucket"],
+                resources=[conversation_bucket.bucket_arn],
+                conditions={"StringLike": {"s3:prefix": [f"{THREADS_PREFIX}*"]}},
             )
         )
         conversation_key.grant(runtime_role, "kms:Decrypt", "kms:GenerateDataKey")
@@ -1311,6 +1320,15 @@ class GuppiGptStack(cdk.Stack):
                 principals=[iam.ArnPrincipal(runtime_role.role_arn)],
                 actions=["s3:GetObject", "s3:PutObject"],
                 resources=[thread_objects],
+            )
+        )
+        conversation_bucket.add_to_resource_policy(
+            iam.PolicyStatement(
+                sid="RuntimeThreadListing",
+                principals=[iam.ArnPrincipal(runtime_role.role_arn)],
+                actions=["s3:ListBucket"],
+                resources=[conversation_bucket.bucket_arn],
+                conditions={"StringLike": {"s3:prefix": [f"{THREADS_PREFIX}*"]}},
             )
         )
         conversation_bucket.add_to_resource_policy(
