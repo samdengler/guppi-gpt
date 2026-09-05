@@ -189,3 +189,29 @@ Manual verification, done with both flags on (`web/features.json`'s `feedback` a
    IndexedDB afterward (checks that `persistCurrentThread` did not drop it).
 8. With the `feedback` flag left off (default), confirm no buttons ever appear under a
    reply and `document.body.dataset.features` does not list `feedback`.
+
+## What the Dynatrace tenant records, observed 5 Sep 2026
+
+The tenant wfd05358 runs Dynatrace's new RUM experience (Grail, schema 0.24.0) with RUM
+Classic also enabled on the application. The page's calls succeed on the agent side: the
+agent (1.345.3) returns the action id and reports every property as sent, and the beacons
+reach the beacon origin with 200. Nothing from those calls is stored. Grail's `user.events`
+holds page views, resources, and the automatically detected clicks, with `user_action.name`
+set only on the clicks; no event carries the `reply-feedback` name, the `vote` property, or
+the flag session properties. RUM Classic's user session query returns no user actions at
+all for the same hour, so the classic property declarations made through
+`builtin:rum.web.capture-properties` govern data that never arrives. The agent exposes only
+the classic API surface (44 methods, no custom event call), and no settings schema for
+custom events exists in the new experience. Closing the action after a delay
+(`e02a4ab`) changed nothing.
+
+The conclusion is that under the new RUM experience the classic JavaScript API's custom
+actions and API-reported properties have no ingestion path on this tenant today. The RUM
+signal was chosen to avoid new AWS infrastructure; the alternative that keeps that goal is
+the trace: the page already carries the run id and trace id on the reply element, and the
+agent already emits spans that Dynatrace stores. A vote posted to the runtime as a small
+run input (a `forwardedProps.feedback` value on the next turn, or a dedicated tiny run)
+would let the agent log it and attach it as a span event or attribute on the trace, where
+Dynatrace's distributed tracing and DQL on `fetch spans` find it by trace id. That needs
+no new AWS resources and reuses the traceability work. The control and the DOM event stay
+as built; only the sink changes. Decision pending.
