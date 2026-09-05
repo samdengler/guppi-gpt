@@ -18,15 +18,19 @@ change), and once `window.dtrum` exists:
 - registers an OpenFeature hook that reports each flag evaluation as a RUM session
   property (`{flagName: "true"|"false"}`, since `sendSessionProperties` has no boolean
   property type)
-- listens for the `guppi:feedback` DOM event (`docs/proposals/feedback.md`) and reports
-  it as a RUM custom action named `reply-feedback`, with `vote`, `runId`, `traceId`,
-  `requestId`, and `threadId` as its properties, using `dtrum.enterAction`,
-  `dtrum.addActionProperties`, and `dtrum.leaveAction`
 - calls `dtrum.identifyUser` with a SHA-256 hash of the Cognito `sub` claim, only when
   `config.rum.identifyUser` is `true` (default `false`)
 
-The property-building functions (`buildFeedbackActionProperties`,
-`buildFlagSessionProperty`) and the activation gate (`rumActive`) are pure and covered by
+It also listened for the `guppi:feedback` DOM event and reported it as a RUM custom
+action named `reply-feedback`, using `dtrum.enterAction`, `dtrum.addActionProperties`, and
+`dtrum.leaveAction`. That listener was removed on 5 September 2026, once the tenant was
+found to store nothing from the classic JavaScript API's custom actions under its new RUM
+experience (recorded under "What the Dynatrace tenant records" in
+`docs/proposals/feedback.md`). A vote now goes to Dynatrace as a business event through a
+REST API and EventBridge, described in that proposal; nothing on the RUM path carries it.
+
+The property-building function (`buildFlagSessionProperty`) and the activation gate
+(`rumActive`) are pure and covered by
 `web/test/rum.test.mjs`; the DOM and `dtrum` calls that wrap them are not, the same split
 `feedback.js` uses. `web/src/app.js` calls `initRum(flags, config)` right after
 `initFeatures` resolves and before it reads `isEnabled("history")` or
@@ -145,8 +149,9 @@ run outcome split, retrieval rate, token usage, feedback up/down ratio, WAF coun
 (`agent/src/guppi_agent/app.py`: `run`, `first_delta_ms`, `outcome`, `tool_calls`,
 `input_tokens`, `output_tokens`), assuming Dynatrace's log ingest parses that JSON
 content into top-level fields once the Firehose forwarding above is set up; this was not
-verified against a real tenant. The feedback tile queries the `reply-feedback` custom
-action's `vote` property; its Grail table name is the least certain query in the file.
+verified against a real tenant. The feedback tile now queries `fetch bizevents` for the
+`guppigpt.reply-feedback` business event, since that is where a vote lands
+(`docs/proposals/feedback.md`); it queried the RUM custom action until 5 September 2026.
 The WAF tile and the 403 loopback tile depend on the AWS integration (above) delivering
 CloudWatch metrics into Dynatrace, and the 403 tile is an approximation: nothing in the
 stack breaks the loopback-URL rejection out from other 4xx responses on the edge
@@ -207,9 +212,10 @@ Dynatrace's AWS integration imports its built-in service metrics by default. The
 6. Edit `web/features.json`, set `"rum": true`, run `scripts/deploy.sh --site-only`
    (`docs/proposals/feature-flags.md`'s flip procedure) to publish the flag flip alone.
 7. Verify: load the page, confirm `window.dtrum` is defined in the browser console,
-   confirm a RUM session appears in Dynatrace within a few minutes, send a message and
-   vote on the reply, and confirm a `reply-feedback` custom action appears with the
-   expected `vote`, `runId`, and `traceId`. Send a turn and check whether spans still
+   confirm a RUM session appears in Dynatrace within a few minutes, and confirm the flag
+   session properties are attached to it. A vote no longer appears in RUM: with the
+   `feedback` flag on, it appears under `fetch bizevents` instead
+   (`docs/proposals/feedback.md`). Send a turn and check whether spans still
    reach CloudWatch Transaction Search for that trace id, since step 5 also changed
    where the runtime exports traces (see below); if CloudWatch tracing stopped, that
    confirms the platform's own OTLP settings do not coexist with this stack's, which the

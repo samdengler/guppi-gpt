@@ -105,11 +105,11 @@
         "width": 456,
         "height": 304
       },
-      "reliesOn": "The RUM custom action reply-feedback with its API-reported property vote, declared on APPLICATION-F1A41F354D402914 through builtin:rum.web.capture-properties on 5 Sep 2026. user.events and user_action.name are the fields the tenant returned for RUM actions.",
+      "reliesOn": "The business event guppigpt.reply-feedback, ingested through the EventBridge API destination the stack creates (docs/proposals/feedback.md). The RUM custom action this tile used to query was never stored by the tenant; the vote now arrives on the bizevents table with vote, run.id, and trace.id as top-level fields.",
       "queries": [
         {
           "id": "a",
-          "query": "fetch user.events\n| filter user_action.name == \"reply-feedback\"\n| summarize votes = count(), by: {vote}"
+          "query": "fetch bizevents\n| filter event.type == \"guppigpt.reply-feedback\"\n| summarize votes = count(), by: {vote}"
         }
       ]
     },

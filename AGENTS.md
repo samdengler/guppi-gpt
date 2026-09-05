@@ -16,7 +16,7 @@ Guppi is Bob's ship AI from *We Are Legion (We Are Bob)*.
 - Infrastructure: AWS CDK v2 in Python, one stack `GuppiGpt`, region `us-east-1`
 - Agent: Python 3.12, FastAPI, AG-UI over SSE, Strands Agents with the `ag-ui-strands` adapter, arm64 container on AgentCore Runtime
 - Model: Claude Haiku 4.5 through the `us.` cross-region inference profile (`MODEL_ID` in the stack)
-- Edge: CloudFront in front of an AgentCore Gateway runtime target; Cognito user pool federated to Google
+- Edge: CloudFront in front of an AgentCore Gateway runtime target, plus an `/api/feedback` behavior in front of a small API Gateway REST API that puts reply votes straight onto an EventBridge bus; Cognito user pool federated to Google
 - Page: static HTML and vanilla JavaScript in `web/src/`, bundled once by esbuild into `web/dist/` with `@ag-ui/client` as the stream reader, served from S3 through CloudFront
 - Package manager: uv workspace (`infra` and `agent` are members)
 - Secrets: 1Password CLI at deploy time for the Google OAuth client; the origin header value is generated in Secrets Manager by the stack; nothing secret is checked in
@@ -46,11 +46,11 @@ web/
   src/session.js          # idb-backed session store: refresh token, header claims, rotated on use
   src/app.css
   src/history.js          # local chat history: idb wrapper around one "threads" object store, behind the history flag
-  src/feedback.js         # up/down reply control: vote toggle, "guppi:feedback" CustomEvent, history write, behind the feedback flag
+  src/feedback.js         # up/down reply control: vote toggle, "guppi:feedback" CustomEvent, history write, POST to /api/feedback, behind the feedback flag
   src/features.js         # OpenFeature static provider; initFeatures() and isEnabled()
   src/copy.js             # the hint and empty-state wording for each combination of the history and logging flags
   src/flags-core.js       # pure override parsing and default/override overlay, tested without a DOM
-  src/rum.js              # Dynatrace RUM: script injection, OpenFeature hook, feedback listener, behind the rum flag
+  src/rum.js              # Dynatrace RUM: script injection, OpenFeature hook, behind the rum flag
   features.json           # committed feature flag defaults, merged into config.json at deploy time
   vendor/ruxitagentjs.js  # the Dynatrace RUM script itself; gitignored, not committed
   test/features.test.mjs  # node:test coverage for flags-core.js, run by `npm test`
@@ -173,6 +173,16 @@ integration assumes and, reusing the OTLP parameters above, a Firehose stream th
 forwards the vended logs to Dynatrace, both dark until Sam supplies the account id and
 external id from Dynatrace's AWS integration setup page. `docs/proposals/dynatrace.md`
 has the full flip procedure and what Sam has to create in Dynatrace first.
+
+Reply votes take their own path, off the chat runtime and off the trace
+(`docs/proposals/feedback.md`). The page posts one to `/api/feedback`, a CloudFront
+behavior listed ahead of `/api/*` because behaviors are matched in the order they appear;
+behind it, an API Gateway REST API validates the body, checks the same Cognito token
+(naming the `openid` scope, without which the authorizer refuses the page's access token),
+and integrates directly with `events:PutEvents` on the `guppi-gpt-feedback` bus. A 30 day
+archive on the bus keeps every vote; the rule that forwards them to Dynatrace as business
+events turns on with the same two parameters as log forwarding. The `feedback` flag in
+`web/features.json` is what puts the control on the page, and it is off.
 
 The knowledge base corpus is refreshed by `scripts/seed-content.sh` (three docs repositories
 at revisions pinned in the script, Markdown only, `aws s3 sync --delete` to `docs/<source>/`

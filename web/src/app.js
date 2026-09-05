@@ -2,7 +2,7 @@ import { HttpAgent } from "@ag-ui/client";
 import { initFeatures, isEnabled } from "./features.js";
 import { enabledFlagNames } from "./flags-core.js";
 import * as chatHistory from "./history.js";
-import { renderFeedbackControls, FEEDBACK_EVENT } from "./feedback.js";
+import { renderFeedbackControls, initFeedbackSink, FEEDBACK_EVENT } from "./feedback.js";
 import { hintText, emptyStateText } from "./copy.js";
 import { initRum, identifyRumUser } from "./rum.js";
 import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideOnLoad } from "./session.js";
@@ -67,6 +67,13 @@ import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideO
 
   const tokens = {};        // access_token, id_token, refresh_token; access/id token: memory only
   let tokenExpiresAt = 0;    // epoch ms when access_token expires
+
+  if (feedbackEnabled) {
+    // The second subscriber to the same event: a vote also goes to the feedback API on
+    // this origin, with the same bearer runTurn sends. Fire and forget, so a vote never
+    // delays or breaks the page (docs/proposals/feedback.md).
+    initFeedbackSink(() => tokens.access_token);
+  }
 
   let sessionId = newSessionId();
   let threadId = crypto.randomUUID();

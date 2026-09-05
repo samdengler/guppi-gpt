@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { nextVote, buildFeedbackDetail } from "../src/feedback.js";
+import { nextVote, buildFeedbackDetail, buildFeedbackRequestBody } from "../src/feedback.js";
 
 test("nextVote sets a vote from no vote", () => {
   assert.equal(nextVote(null, "up"), "up");
@@ -53,4 +53,40 @@ test("buildFeedbackDetail normalizes a missing request id to null", () => {
     vote: "down",
   });
   assert.equal(detail.requestId, null);
+});
+
+test("buildFeedbackRequestBody carries a full detail through", () => {
+  assert.deepEqual(
+    buildFeedbackRequestBody({
+      threadId: "t1",
+      runId: "r1",
+      traceId: "tr1",
+      requestId: "req1",
+      messageId: "m1",
+      vote: "up",
+    }),
+    { vote: "up", runId: "r1", threadId: "t1", traceId: "tr1", requestId: "req1", messageId: "m1" },
+  );
+});
+
+test("buildFeedbackRequestBody sends a withdrawn vote as none", () => {
+  const body = buildFeedbackRequestBody({ threadId: "t1", runId: "r1", vote: null });
+  assert.equal(body.vote, "none");
+});
+
+test("buildFeedbackRequestBody leaves out the identifiers it was not given", () => {
+  const body = buildFeedbackRequestBody({
+    threadId: "t1",
+    runId: "r1",
+    traceId: null,
+    requestId: null,
+    messageId: null,
+    vote: "down",
+  });
+  assert.deepEqual(body, { vote: "down", runId: "r1", threadId: "t1" });
+});
+
+test("buildFeedbackRequestBody keeps the required fields present on an empty detail", () => {
+  assert.deepEqual(buildFeedbackRequestBody({}), { vote: "none", runId: "", threadId: "" });
+  assert.deepEqual(buildFeedbackRequestBody(undefined), { vote: "none", runId: "", threadId: "" });
 });
