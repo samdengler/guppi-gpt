@@ -1,17 +1,22 @@
 // Up/down feedback on a committed reply. Ships dark behind the `feedback` flag
-// (web/features.json, docs/proposals/feature-flags.md). Nothing here reaches the
-// network: a vote becomes a DOM attribute, a CustomEvent on `document`, and, when local
-// history is on, a field on the stored message.
+// (web/features.json, docs/proposals/feature-flags.md). A vote becomes a DOM attribute,
+// a CustomEvent on `document`, and, when local history is on, a field on the stored
+// message.
 //
-// The CustomEvent is the integration point for a future Dynatrace RUM hook: a listener
-// on "guppi:feedback" turns each detail into a RUM custom action or a session property
-// without any change to the code below. See docs/proposals/feedback.md for the mapping
-// this proposal picked.
+// The CustomEvent is the integration point. One subscriber is in this file:
+// initFeedbackSink posts the vote to /api/feedback, a REST API that puts it on an
+// EventBridge bus and from there into Dynatrace as a business event
+// (docs/proposals/feedback.md). The vote does not travel with the chat request and it is
+// not attached to the turn's trace.
 
 import { isEnabled } from "./features.js";
 import { setMessageFeedback } from "./history.js";
 
 export const FEEDBACK_EVENT = "guppi:feedback";
+export const FEEDBACK_ENDPOINT = "/api/feedback";
+// A vote is worth nothing if it costs the page anything: one request, no retry, and a
+// short deadline after which the attempt is dropped.
+const FEEDBACK_TIMEOUT_MS = 3000;
 
 /**
  * Toggles a vote: clicking the already-active choice withdraws it (null); clicking the
@@ -36,6 +41,61 @@ export function buildFeedbackDetail({ threadId, runId, traceId, requestId, messa
     messageId: messageId ?? null,
     vote: vote ?? null,
   };
+}
+
+/**
+ * The request body for POST /api/feedback, built from one "guppi:feedback" detail. Pure,
+ * so this is what web/test/feedback.test.mjs checks. A withdrawn vote travels as "none"
+ * rather than as an absent field, so a withdrawal is a record of its own. The three
+ * optional identifiers are left out when they are absent: the API's request model
+ * accepts no null and no unknown property, so an empty field would be a 400 rather than
+ * a vote.
+ */
+export function buildFeedbackRequestBody(detail) {
+  const body = {
+    vote: detail?.vote ?? "none",
+    runId: String(detail?.runId ?? ""),
+    threadId: String(detail?.threadId ?? ""),
+  };
+  for (const field of ["traceId", "requestId", "messageId"]) {
+    const value = detail?.[field];
+    if (value) body[field] = String(value);
+  }
+  return body;
+}
+
+/**
+ * Posts one vote to the feedback API with the same bearer the chat request carries, and
+ * forgets about it: no retry, no reading of the response, nothing logged, and an abort
+ * after FEEDBACK_TIMEOUT_MS. A vote cast without a token in hand is dropped rather than
+ * queued. getToken is a function so the current access token is read at the moment of
+ * the vote rather than at the moment the sink was registered.
+ */
+export function sendFeedback(detail, getToken) {
+  const token = getToken?.();
+  if (!token) return;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FEEDBACK_TIMEOUT_MS);
+  fetch(FEEDBACK_ENDPOINT, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify(buildFeedbackRequestBody(detail)),
+    // Lets the request outlive a page that is closing right after the click.
+    keepalive: true,
+    signal: controller.signal,
+  })
+    .catch(() => {
+      // A failed vote is not worth a console entry or a second attempt.
+    })
+    .finally(() => clearTimeout(timer));
+}
+
+/**
+ * Subscribes the feedback API to the "guppi:feedback" event. Call once, only when the
+ * feedback flag is on; every other subscriber attaches the same way.
+ */
+export function initFeedbackSink(getToken) {
+  document.addEventListener(FEEDBACK_EVENT, (event) => sendFeedback(event.detail, getToken));
 }
 
 /**

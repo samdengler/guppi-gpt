@@ -8,13 +8,17 @@
 // <script src> tag would be. Once it defines window.dtrum, this module:
 //   - registers an OpenFeature hook that reports each flag evaluation as a RUM session
 //     property (docs/proposals/feature-flags.md, "Attaching Dynatrace later")
-//   - listens for "guppi:feedback" and reports it as a custom action named
-//     "reply-feedback" (docs/proposals/feedback.md, "The Dynatrace RUM mapping")
 //   - optionally calls dtrum.identifyUser with a hashed subject, only when
 //     config.rum.identifyUser is true (default false)
 //
-// The dtrum methods used here (enterAction, addActionProperties, leaveAction,
-// sendSessionProperties, identifyUser) are confirmed against Dynatrace's published
+// Reply votes are not reported here. This module reported each vote as a custom action
+// named "reply-feedback" until 5 Sep 2026, when the tenant was found to store nothing
+// from the classic JavaScript API's custom actions under its new RUM experience: the
+// agent accepted every call and Grail held none of them. A vote now goes to the feedback
+// API as a business event instead (docs/proposals/feedback.md).
+//
+// The dtrum methods used here (sendSessionProperties, identifyUser) are confirmed
+// against Dynatrace's published
 // TypeScript declarations, @dynatrace/dtrum-api-types
 // (https://unpkg.com/@dynatrace/dtrum-api-types/dtrum.d.ts); the prose page named in the
 // task, docs.dynatrace.com's RUM JavaScript API reference, 404s as of 3 Sep 2026, and
@@ -23,7 +27,6 @@
 // examples use, so the method names and argument shapes below are not a guess.
 
 import { OpenFeature } from "@openfeature/web-sdk";
-import { FEEDBACK_EVENT } from "./feedback.js";
 
 const DTRUM_POLL_MS = 200;
 const DTRUM_POLL_ATTEMPTS = 25; // ~5 seconds; a slow or missing script gives up quietly
@@ -38,25 +41,6 @@ let dtrumInstance = null;
  */
 export function rumActive(flags, config) {
   return Boolean(flags?.rum) && Boolean(config?.rum?.scriptPath);
-}
-
-/**
- * The RUM custom-action property groups for one "guppi:feedback" event detail. Pure: no
- * dtrum call, no DOM, so this is what web/test/rum.test.mjs checks directly.
- * addActionProperties has no null representation, so a withdrawn vote (vote: null) is
- * reported as the string "withdrawn" rather than dropped, and every identifier is
- * normalized to "-" when absent so a masked property does not silently disappear from
- * the action.
- */
-export function buildFeedbackActionProperties(detail) {
-  const str = (value) => (value === null || value === undefined ? "-" : String(value));
-  return {
-    vote: str(detail?.vote === null ? "withdrawn" : detail?.vote),
-    runId: str(detail?.runId),
-    traceId: str(detail?.traceId),
-    requestId: str(detail?.requestId),
-    threadId: str(detail?.threadId),
-  };
 }
 
 /**
@@ -90,17 +74,6 @@ function waitForDtrum() {
     };
     check();
   });
-}
-
-function reportFeedbackAction(dtrum, detail) {
-  const properties = buildFeedbackActionProperties(detail);
-  const actionId = dtrum.enterAction("reply-feedback");
-  if (!actionId) return; // 0 means dtrum did not create the action
-  dtrum.addActionProperties(actionId, undefined, undefined, properties);
-  // An action that opens and closes in the same tick has no duration and the agent
-  // discards it (observed 5 Sep 2026: votes never reached the tenant); a short delay
-  // keeps it. The vote is already recorded on the element and in history by now.
-  setTimeout(() => dtrum.leaveAction(actionId), 250);
 }
 
 // A no-op until window.dtrum exists, so it is safe to register immediately (before the
@@ -138,7 +111,6 @@ export function initRum(flags, config) {
     .then((dtrum) => {
       if (!dtrum) return;
       dtrumInstance = dtrum;
-      document.addEventListener(FEEDBACK_EVENT, (event) => reportFeedbackAction(dtrum, event.detail));
     })
     .catch(() => {
       // Same-origin fetch failed, most likely because the script has not been uploaded
