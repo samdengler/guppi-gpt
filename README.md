@@ -73,6 +73,14 @@ design document, section 15. Operational notes:
   Gmail, spam included. Until one is confirmed no alarm delivers anywhere. Confirm from the
   SNS console (Subscriptions, Request confirmation) or subscribe a different address.
 
+## Sign-in session
+
+Since 5 Sep 2026 the page keeps the refresh token in IndexedDB, restores the session with a
+silent refresh on load, rotates the refresh token on every use (the app client has rotation
+enabled with a 30 second grace period), and clears it on sign out. The access and id tokens
+stay in memory. Before this, every reload redirected through Cognito and often to Google's
+account chooser.
+
 ## Backlog
 
 Preference for anything on the backend: AWS native services, serverless where possible
