@@ -31,6 +31,18 @@ def test_secret_parameter_is_no_echo(template):
     template.has_parameter("GoogleClientSecret", {"NoEcho": True})
 
 
+def test_web_client_rotates_refresh_tokens(template):
+    template.has_resource_properties(
+        "AWS::Cognito::UserPoolClient",
+        {
+            "ClientName": "guppi-gpt-web",
+            "RefreshTokenRotation": {"Feature": "ENABLED", "RetryGracePeriodSeconds": 30},
+            # Unchanged: 30 days, expressed in minutes by CloudFormation.
+            "RefreshTokenValidity": 43200,
+        },
+    )
+
+
 def test_apex_placeholder_record(template):
     template.has_resource_properties(
         "AWS::Route53::RecordSet",

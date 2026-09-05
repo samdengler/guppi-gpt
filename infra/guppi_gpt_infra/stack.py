@@ -646,6 +646,16 @@ class GuppiGptStack(cdk.Stack):
             prevent_user_existence_errors=True,
         )
         client.node.add_dependency(google)
+        # Refresh token rotation is not yet an L2 property (aws-cdk-lib 2.268.0); set it on
+        # the underlying CfnUserPoolClient. Rotation issues a new refresh token on every use
+        # so a stolen token is good for one refresh; the grace period covers a client retry
+        # of the same request racing the rotation.
+        cfn_client = client.node.default_child
+        assert isinstance(cfn_client, cognito.CfnUserPoolClient)
+        cfn_client.refresh_token_rotation = cognito.CfnUserPoolClient.RefreshTokenRotationProperty(
+            feature="ENABLED",
+            retry_grace_period_seconds=30,
+        )
 
         domain = user_pool.add_domain(
             "Domain",
