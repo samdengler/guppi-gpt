@@ -1,6 +1,6 @@
 {
   "history": false,
   "feedback": false,
-  "logging": false,
+  "logging": true,
   "rum": true
 }
