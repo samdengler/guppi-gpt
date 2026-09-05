@@ -176,6 +176,10 @@ None of this exists yet; the parameters above stay empty until it does.
    follow-up, since a CloudFormation subscription filter cannot target a log group the
    service creates lazily rather than the stack.
 
+## CloudWatch namespaces the integration must import
+
+Dynatrace's AWS integration imports its built-in service metrics by default. The metrics this design alarms on live in `AWS/Bedrock-AgentCore` (Invocations, Latency, UserErrors, SystemErrors, Throttles, WafBlocks and the other WAF counters, all observed in the account on 5 Sep 2026) and `AWS/Bedrock` (InvocationThrottles), which are not in that default set. In the Clouds app, edit the AWS connection and add both namespaces as custom metric sources, keying on the gateway and runtime dimensions the metrics carry (Operation, Method, and the resource id). Until that is done, the dashboard's WAF and 4xx tiles show nothing while every span and RUM tile works.
+
 ## The flip procedure, in order
 
 1. Complete the five steps above in Dynatrace: tenant, RUM application (note its beacon
