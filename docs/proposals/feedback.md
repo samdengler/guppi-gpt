@@ -228,7 +228,7 @@ and without a Lambda, described next.
 
 ## The pipeline as built
 
-The page posts a vote to `/api/feedback` on the existing CloudFront domain. From there:
+The page posts a vote to `/api/feedback` on the existing CloudFront domain. CloudFront forwards the viewer path unchanged under the origin path `/prod`, so the API's resource tree is `/api/feedback` too; a resource at `/feedback` alone answered `/prod/api/feedback` with "Missing Authentication Token" on the first deploy. From there:
 
 **The REST API.** `aws_apigateway.RestApi` named `guppi-gpt-feedback`, regional endpoint,
 one stage named `prod`, no CORS configuration (the page is same origin with the API

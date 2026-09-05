@@ -328,7 +328,7 @@ DYNATRACE_BIZEVENTS_INGEST_PATH = "/api/v2/bizevents/ingest"
 # (docs/proposals/feedback.md).
 FEEDBACK_API_NAME = "guppi-gpt-feedback"
 FEEDBACK_STAGE_NAME = "prod"
-FEEDBACK_PATH = "feedback"  # /feedback on the API, /api/feedback through CloudFront
+FEEDBACK_PATH = "feedback"  # under /api on the API, so /api/feedback through CloudFront lands on it
 FEEDBACK_BUS_NAME = "guppi-gpt-feedback"
 FEEDBACK_EVENT_SOURCE = "guppigpt.feedback"
 FEEDBACK_DETAIL_TYPE = "reply-feedback"
@@ -1193,7 +1193,11 @@ class GuppiGptStack(cdk.Stack):
                 ],
             ),
         )
-        feedback_resource = feedback_api.root.add_resource(FEEDBACK_PATH)
+        # CloudFront forwards the viewer path unchanged (/api/feedback) under the origin
+        # path (/prod), so the API's resource tree mirrors it; a resource at /feedback alone
+        # answered the doubled path /prod/api/feedback with "Missing Authentication Token"
+        # (observed 5 Sep 2026).
+        feedback_resource = feedback_api.root.add_resource("api").add_resource(FEEDBACK_PATH)
         feedback_resource.add_method(
             "POST",
             feedback_integration,
@@ -1324,7 +1328,7 @@ class GuppiGptStack(cdk.Stack):
 
         # The origin the /api/feedback behavior below points at: the API's regional
         # endpoint, with the stage as the origin path so the browser's /api/feedback
-        # reaches /prod/feedback. It carries no X-Origin-Verify header, unlike the edge
+        # reaches /prod/api/feedback. It carries no X-Origin-Verify header, unlike the edge
         # gateway origin, because this API authorizes every request itself; a caller who
         # finds the execute-api hostname is refused by the Cognito authorizer.
         feedback_api_origin = origins.HttpOrigin(
@@ -2267,7 +2271,9 @@ class GuppiGptStack(cdk.Stack):
         cdk.CfnOutput(self, "ConversationLogBucketName", value=conversation_bucket.bucket_name)
         cdk.CfnOutput(self, "ConversationLogKeySecretArn", value=conversation_secret.secret_arn)
         cdk.CfnOutput(self, "InvestigatorRoleArn", value=investigator_role.role_arn)
-        cdk.CfnOutput(self, "FeedbackApiUrl", value=feedback_api.url_for_path(f"/{FEEDBACK_PATH}"))
+        cdk.CfnOutput(
+            self, "FeedbackApiUrl", value=feedback_api.url_for_path(f"/api/{FEEDBACK_PATH}")
+        )
         cdk.CfnOutput(self, "FeedbackBusName", value=feedback_bus.event_bus_name)
         cdk.CfnOutput(self, "RumScriptPath", value=RUM_SCRIPT_PATH)
         cdk.CfnOutput(self, "RumBeaconOrigin", value=dynatrace_beacon_origin.value_as_string)

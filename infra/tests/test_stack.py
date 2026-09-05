@@ -1029,6 +1029,6 @@ def test_feedback_reaches_dynatrace_only_when_the_parameters_are_set(template):
 
 def test_feedback_outputs_name_the_api_and_the_bus(template):
     outputs = template.to_json()["Outputs"]
-    assert json.dumps(outputs["FeedbackApiUrl"]["Value"]).endswith('"/feedback"]]}')
+    assert json.dumps(outputs["FeedbackApiUrl"]["Value"]).endswith('"/api/feedback"]]}')
     (bus_id,) = template.find_resources("AWS::Events::EventBus").keys()
     assert outputs["FeedbackBusName"]["Value"] == {"Ref": bus_id}
