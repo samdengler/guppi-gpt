@@ -97,7 +97,10 @@ function reportFeedbackAction(dtrum, detail) {
   const actionId = dtrum.enterAction("reply-feedback");
   if (!actionId) return; // 0 means dtrum did not create the action
   dtrum.addActionProperties(actionId, undefined, undefined, properties);
-  dtrum.leaveAction(actionId);
+  // An action that opens and closes in the same tick has no duration and the agent
+  // discards it (observed 5 Sep 2026: votes never reached the tenant); a short delay
+  // keeps it. The vote is already recorded on the element and in history by now.
+  setTimeout(() => dtrum.leaveAction(actionId), 250);
 }
 
 // A no-op until window.dtrum exists, so it is safe to register immediately (before the
