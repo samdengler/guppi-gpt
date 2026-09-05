@@ -303,7 +303,7 @@ h2:hover .anchor { opacity: 1; }
 
 <p><strong>Thread.</strong> User messages sit on the right in a filled bubble. Agent replies sit on the left with no bubble, a small label, and plain text with newlines preserved. When the agent calls the retrieval tool, a muted status line ("Searching the knowledge base") appears above the reply and settles to past tense when the tool returns. The thread scrolls to the bottom on every new delta unless the user has scrolled up, in which case a small "Jump to latest" pill appears.</p>
 
-<p><strong>Composer.</strong> A textarea that grows to a maximum of eight lines, a send button, and a one-line hint. With the <code>history</code> flag on, the hint's second sentence becomes "Chats are saved on this device only." and a Chats control joins the header. With the <code>feedback</code> flag on, two muted arrows under each finished reply take an up or down vote. The hint states the keyboard behavior and that nothing is saved; the second sentence is the only privacy notice the app needs, and it stays visible at all times.</p>
+<p><strong>Composer.</strong> A textarea that grows to a maximum of eight lines, a send button, and a one-line hint. With the <code>history</code> flag on, the hint's second sentence becomes "Chats are saved on this device only." and a Chats control joins the header. With the <code>feedback</code> flag on, two muted thumbs under each finished reply take an up or down vote. The hint states the keyboard behavior and that nothing is saved; the second sentence is the only privacy notice the app needs, and it stays visible at all times.</p>
 
 <h3>States</h3>
 
@@ -345,7 +345,7 @@ h2:hover .anchor { opacity: 1; }
 
 <h3>Visual treatment</h3>
 
-<p>Warm off-white background, a single accent color for the caret and send button, system font stack, no icons beyond the arrow and the Google mark. Dark mode follows <code>prefers-color-scheme</code> with the same accent values. The visual target is a page that looks finished with about 150 lines of CSS.</p>
+<p>Warm off-white background, a single accent color for the caret and send button, system font stack, no icons beyond the arrow, the Google mark, and the two thumbs on the feedback control (inline SVG, outlined until pressed). Dark mode follows <code>prefers-color-scheme</code> with the same accent values. The visual target is a page that looks finished with about 150 lines of CSS.</p>
 
 <h2 id="architecture">4. Architecture</h2>
 

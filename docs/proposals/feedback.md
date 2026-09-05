@@ -15,7 +15,7 @@ true today.
 ## The control
 
 Two buttons sit under a reply, after it has finished streaming: `▲` for a good reply,
-`▼` for a bad one, plain Unicode triangles rather than icons, matching the page's plain
+`▼` for a bad one, plain inline SVG thumbs rather than icons, matching the page's plain
 text rendering rule. Both are muted (`--muted`) until hovered (`--fg`) or chosen
 (`--accent`), reusing the color tokens already in `web/src/app.css` rather than adding
 new ones. `aria-pressed` on each button reflects whether it is the chosen one;

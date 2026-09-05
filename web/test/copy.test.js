@@ -8,9 +8,8 @@ const flags = JSON.parse(readFileSync(new URL("../features.json", import.meta.ur
 const KEYS = "Enter to send, Shift+Enter for a new line.";
 
 test("the product flags that have not launched ship off", () => {
-  // history and feedback stay dark; logging and rum were turned on 5 Sep 2026.
+  // history stays dark; logging, rum, and feedback were turned on 5 Sep 2026.
   assert.equal(flags.history, false);
-  assert.equal(flags.feedback, false);
 });
 
 test("with both switches off the page says nothing is saved", () => {

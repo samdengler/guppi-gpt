@@ -127,6 +127,27 @@ export function recordFeedback({ replyEl, threadId, runId, traceId, requestId, m
  * id, trace id, and request id are read off the reply element's own data attributes
  * (set by markReply in app.js) instead of being passed in again.
  */
+// A thumb outline as inline SVG (no external asset, so the Content Security Policy is
+// untouched). The down thumb is the same path rotated a half turn. The stroke follows the
+// button's color and the fill appears only while the button is pressed (app.css).
+const THUMB_PATH =
+  "M7 10v11H3V10h4zm2 0 4.2-7.1a1.5 1.5 0 0 1 2.7.9V9h4.4a2 2 0 0 1 2 2.3l-1.2 7.6" +
+  "a2 2 0 0 1-2 1.7H9V10z";
+
+function thumbIcon(down) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", "16");
+  svg.setAttribute("height", "16");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", THUMB_PATH);
+  if (down) path.setAttribute("transform", "rotate(180 12 12)");
+  svg.appendChild(path);
+  return svg;
+}
+
 export function renderFeedbackControls(replyEl, { threadId, messageId }) {
   replyEl.querySelector(".feedback-controls")?.remove();
 
@@ -136,14 +157,14 @@ export function renderFeedbackControls(replyEl, { threadId, messageId }) {
   const up = document.createElement("button");
   up.type = "button";
   up.className = "feedback-btn feedback-up";
-  up.textContent = "▲";
+  up.appendChild(thumbIcon(false));
   up.setAttribute("aria-label", "Good reply");
   up.setAttribute("aria-pressed", "false");
 
   const down = document.createElement("button");
   down.type = "button";
   down.className = "feedback-btn feedback-down";
-  down.textContent = "▼";
+  down.appendChild(thumbIcon(true));
   down.setAttribute("aria-label", "Bad reply");
   down.setAttribute("aria-pressed", "false");
 
