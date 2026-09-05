@@ -369,3 +369,7 @@ onto the bus.
 - Reading `FailedEntryCount` from the PutEvents response. The integration answers 202
   whenever PutEvents answers 200, including the case where EventBridge accepted the call
   and rejected the entry. The archive and the dead letter queue are what would show it.
+
+## Verified on 5 Sep 2026
+
+After the resource path fix, a vote cast from the signed-in page answered 202 through CloudFront, and within a minute Dynatrace returned it from `fetch bizevents` with `event.type` guppigpt.reply-feedback, `event.provider` guppigpt, the vote, and the run id the reply element carried. An unauthenticated call through CloudFront gets 403 and a direct call to the execute-api hostname without a token gets 401 from the authorizer. The EventBridge archive count lags by minutes and is not a live check.

@@ -94,8 +94,12 @@ Preference for anything on the backend: AWS native services, serverless where po
 2. A Dynatrace dashboard for operational metrics. Draft in `docs/dynatrace/dashboard.json`;
    import and adjust its two flagged queries.
 3. Correlation ids and traceability. Done: `docs/proposals/traceability.md`.
-4. Up/down feedback on each reply. Built dark behind the `feedback` flag as a DOM event for
-   the RUM hook: `docs/proposals/feedback.md`.
+4. Up/down feedback on each reply. Live since 5 Sep 2026 (`feedback` flag on): the page
+   posts the vote to `/api/feedback`, a REST API with a Cognito authorizer integrates
+   directly with EventBridge, and an API destination turns it into a Dynatrace business
+   event (`fetch bizevents | filter event.type == "guppigpt.reply-feedback"`). RUM custom
+   actions were tried first and the tenant's new RUM does not ingest them:
+   `docs/proposals/feedback.md`.
 5. Chat history local to the browser. Built dark behind the `history` flag as Chats:
    `docs/proposals/local-history.md`.
 6. Conversation logging to S3, anonymous with privileged re-identification. Runtime
