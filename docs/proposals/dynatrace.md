@@ -217,6 +217,8 @@ None of this exists yet; the parameters above stay empty until it does.
 
 ## What was not possible to confirm
 
+**Observed on 5 Sep 2026.** With the Dynatrace parameters set, the container's environment won: the turn's 19 spans (invocation, agent loop, model call, MCP retrieval, Secrets Manager and S3 calls) appeared in Dynatrace and none reached CloudWatch Transaction Search. The export is redirected, as the paragraph below predicted; dual export needs the second exporter in code.
+
 **Simultaneous export to CloudWatch and Dynatrace.** The runtime supplies its own
 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (observed pointing at
 `https://xray.<region>.amazonaws.com/v1/traces`, SigV4 signed, no header needed) when
