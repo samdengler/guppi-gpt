@@ -37,7 +37,9 @@ export AWS_REGION="${AWS_REGION:-us-east-1}"
 param_args=()
 if [[ "$SITE_ONLY" == 1 ]]; then
   echo "site only: skipping cdk deploy, using $OUTPUTS"
-elif op whoami >/dev/null 2>&1; then
+# `op whoami` can report "not signed in" while reads succeed through the desktop app
+# integration, so the gate is a read of the item itself.
+elif op read "$ITEM/username" >/dev/null 2>&1; then
   client_id="$(op read "$ITEM/username")"
   client_secret="$(op read "$ITEM/credential")"
   if [[ -z "$client_id" || -z "$client_secret" ]]; then
@@ -63,7 +65,7 @@ elif op whoami >/dev/null 2>&1; then
     dt_external_id="$(op read "op://Personal/$DT_ITEM_TITLE/external_id" 2>/dev/null || true)"
   fi
 else
-  echo "not signed in to 1Password (op whoami failed); reusing the stack's existing Google OAuth and Dynatrace parameters" >&2
+  echo "1Password is not readable (op read failed); reusing the stack's existing Google OAuth and Dynatrace parameters" >&2
 fi
 if [[ -n "${GUPPI_ALARM_EMAIL:-}" ]]; then
   param_args+=(--parameters "AlarmEmail=$GUPPI_ALARM_EMAIL")
