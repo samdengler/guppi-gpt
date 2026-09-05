@@ -7,6 +7,11 @@ preference is AWS native services for anything on the backend; this feature sets
 preference aside for the reasons below and captures the signal in the browser instead,
 with no new AWS infrastructure.
 
+The RUM mapping did not survive contact with the tenant, and the sink that was built is
+neither the RUM action nor the trace. The sections run in the order the work happened;
+"What the Dynatrace tenant records" and "The pipeline as built", at the end, are what is
+true today.
+
 ## The control
 
 Two buttons sit under a reply, after it has finished streaming: `▲` for a good reply,
@@ -214,4 +219,153 @@ run input (a `forwardedProps.feedback` value on the next turn, or a dedicated ti
 would let the agent log it and attach it as a span event or attribute on the trace, where
 Dynatrace's distributed tracing and DQL on `fetch spans` find it by trace id. That needs
 no new AWS resources and reuses the traceability work. The control and the DOM event stay
-as built; only the sink changes. Decision pending.
+as built; only the sink changes.
+
+Sam decided on 5 September 2026 against both the RUM action and the trace: a vote is a
+business event, not a turn and not a span, so it does not travel with the chat request
+and it is not attached to the trace the turn started. It gets its own path, serverless
+and without a Lambda, described next.
+
+## The pipeline as built
+
+The page posts a vote to `/api/feedback` on the existing CloudFront domain. From there:
+
+**The REST API.** `aws_apigateway.RestApi` named `guppi-gpt-feedback`, regional endpoint,
+one stage named `prod`, no CORS configuration (the page is same origin with the API
+through CloudFront, so no preflight is ever sent). A REST API rather than an HTTP API,
+which is Sam's requirement: the direct AWS service integration below, request validation
+against a model, and gateway response templates are all REST API features. The account
+level API Gateway CloudWatch role is left alone (`cloud_watch_role=False`), since it is an
+account wide setting this stack does not own.
+
+**The authorizer.** `CognitoUserPoolsAuthorizer` on the existing user pool, on the one
+`POST /feedback` method. The method also names one authorization scope, `openid`. Without
+a scope, API Gateway treats the bearer as an identity token and refuses an access token,
+which carries `client_id` rather than `aud` ("Integrate a REST API with an Amazon Cognito
+user pool", API Gateway developer guide). The page holds both tokens but sends the access
+token everywhere, so naming a scope switches the authorizer to access token validation.
+Every token this app client issues claims `openid`, since the page asks for `openid`,
+`email`, and `profile` at sign-in, so the scope check passes for every signed-in visitor
+and grants nothing finer than the authorizer already does.
+
+**The request validator.** A body-only validator and a JSON schema model: an object with
+`vote` (one of `up`, `down`, `none`), `runId` (a UUID), and `threadId` required;
+`traceId` (32 hex digits), `requestId`, and `messageId` optional; no additional
+properties. A body that fails is a 400 from API Gateway with a JSON message, before the
+integration runs.
+
+**The integration.** `AwsIntegration` to `events:PutEvents`, `POST`, with a credentials
+role that trusts `apigateway.amazonaws.com` and may put events on the one bus. The two
+request parameters are the target header (`AWSEvents.PutEvents`) and the JSON 1.1 content
+type the EventBridge API expects. The body mapping template reads each field from the
+validated body, escapes it for JSON, and builds one entry whose `Detail` is a string, as
+PutEvents requires. Two fields do not come from the body: `subject`, the Cognito `sub`
+claim the authorizer verified (`$context.authorizer.claims.sub`), and `receivedAt`, the
+epoch millisecond API Gateway received the request (`$context.requestTimeEpoch`). A 200
+from PutEvents maps to a 202 with an empty body, and a 4xx to a 400.
+
+**The bus and the rule.** An `aws_events.EventBus` named `guppi-gpt-feedback`, with one
+rule matching `source: guppigpt.feedback`.
+
+**The API destination.** Under the existing `HasDynatraceLogs` condition, the same
+condition that turns on log forwarding, so the two Dynatrace parameters switch both on
+together. An `aws_events.Connection` with API key authorization puts the token in the
+`Authorization` header as `Api-Token <token>`, and an `aws_events.ApiDestination` posts to
+the tenant's business events endpoint, `https://<tenant>.live.dynatrace.com/api/v2/bizevents/ingest`,
+derived from `DynatraceOtlpEndpoint` the same way the Firehose logs endpoint is: split off
+the fixed `/api/v2/otlp` suffix, append the ingest path. The rule's input transformer
+builds the body: `event.type` is `guppigpt.reply-feedback`, `event.provider` is
+`guppigpt`, and the vote, `run.id`, `trace.id`, `thread.id`, `message.id`, `request.id`,
+`subject`, and `received_at` follow as flat fields, since Grail stores every top-level
+attribute of an ingested event as a top-level field and turns a nested object into a
+string. The target retries twice and sends what it cannot deliver to an SQS dead letter
+queue that holds it for 14 days.
+
+The ingest facts above come from "Ingest business events via API"
+(https://docs.dynatrace.com/docs/observe/business-analytics/ba-api-ingest, which redirects
+to `.../observe/business-observability/bo-events-capturing/bo-events-capturing-external-sources`,
+read 5 September 2026): the endpoint URL and its POST method, `Content-Type:
+application/json` for the pure JSON format, the token attached as `Authorization: Api-Token
+<token>` with the Ingest bizevents scope, and the note that pure JSON has no mandatory
+fields while `event.type` and `event.provider` are the attributes the guidance asks a
+caller to set so its events can be told apart. The payload limit is 5 MB, which one vote
+is in no danger of reaching.
+
+**The archive.** An `aws_events.Archive` on the bus, 30 day retention, matching the same
+source, created whether or not Dynatrace is configured. Every vote is therefore kept and
+replayable even while the tenant details are missing, and a replay refills Dynatrace once
+they are supplied. Firehose to S3 is more than a handful of votes a day needs; it is the
+upgrade if long term storage is wanted, and the vended log forwarding stream in
+`docs/proposals/dynatrace.md` is the shape it would take.
+
+**The CloudFront behavior.** An additional behavior for the exact path `/api/feedback`,
+whose origin is the REST API's regional hostname with `/prod` as the origin path, HTTPS
+only, all methods allowed, caching disabled, and the same
+`AllViewerExceptHostHeader` origin request policy `/api/*` uses, so the `Authorization`
+header reaches the API while the `Host` header stays the API's own. CloudFront compares a
+request path against behaviors in the order they are listed, so this one is listed before
+`/api/*`, which would otherwise send every vote to the edge gateway. The stack builds the
+feedback section before the distribution for that reason, and a test asserts the order in
+the synthesized template. The origin carries no `X-Origin-Verify` header, unlike the edge
+gateway origin: this API authorizes every request itself, so a caller who finds the
+`execute-api` hostname is refused by the Cognito authorizer rather than by a WAF rule.
+
+**No Lambda.** Nothing in this path is compute owned by this stack, which the existing
+test in `infra/tests/test_stack.py` enforces for the whole template.
+
+### What the page sends
+
+Everything stays behind the `feedback` page flag, which is off. With it on,
+`initFeedbackSink` in `web/src/feedback.js` subscribes to the same `guppi:feedback` event
+the DOM stamp and the history write already use, and posts:
+
+```json
+{"vote": "up", "runId": "...", "threadId": "...", "traceId": "...", "requestId": "...", "messageId": "..."}
+```
+
+with `content-type: application/json` and `Authorization: Bearer <access token>`, read
+from the same place `runTurn` reads it. A withdrawn vote is `"none"` rather than an absent
+field, so a withdrawal is a record of its own. The three optional identifiers are left out
+when the page does not have them, since the model accepts no null and no unknown property.
+The request is fire and forget: no retry, no reading of the response, nothing written to
+the console, `keepalive` so a vote survives a page that is closing, and an abort after
+three seconds. `buildFeedbackRequestBody`, the pure function that shapes the body, is what
+`web/test/feedback.test.mjs` covers.
+
+### Querying the votes
+
+In Dynatrace, the votes are business events:
+
+```
+fetch bizevents
+| filter event.type == "guppigpt.reply-feedback"
+| summarize count(), by: {vote}
+```
+
+`trace.id` on each record is the same trace id the reply element carries and the runtime
+logs (`docs/proposals/traceability.md`), so a down vote leads straight to the turn behind
+it. Without a Dynatrace tenant, the same votes are on the bus archive and can be replayed
+onto the bus.
+
+### Follow-ups
+
+- Hashing the subject to the pseudonym the agent already uses. The event carries the raw
+  Cognito `sub` today, because the mapping template has no HMAC and the agent's pseudonym
+  is a keyed hash of the same claim (`agent/src/guppi_agent/conversation_log.py`). Until
+  that is closed, a vote cannot be joined to a conversation record by subject, only by
+  run id and trace id, and the raw subject sits in Dynatrace. Closing it needs the hash
+  computed somewhere: an EventBridge input transformer cannot do it, so the candidates are
+  the page (which does not hold the key) or a processing step the no-Lambda rule rules
+  out. The simplest answer may be to stop sending the subject at all.
+- An S3 archive through Firehose, if votes are ever wanted beyond the 30 days the bus
+  archive keeps.
+- An `OPTIONS` mock method on the resource, if a preflight ever appears. It cannot today:
+  the page and the API share an origin, and a simple POST with `content-type:
+  application/json` from another origin would be blocked by the missing CORS headers
+  rather than by a preflight.
+- A usage plan on the API. Throttling is API Gateway's account-wide default today
+  (10,000 requests a second), which is far above anything one page can produce, and the
+  Cognito authorizer already bounds who can reach it.
+- Reading `FailedEntryCount` from the PutEvents response. The integration answers 202
+  whenever PutEvents answers 200, including the case where EventBridge accepted the call
+  and rejected the entry. The archive and the dead letter queue are what would show it.
