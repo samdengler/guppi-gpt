@@ -1,4 +1,5 @@
 import { HttpAgent } from "@ag-ui/client";
+import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideOnLoad } from "./session.js";
 
 (async () => {
   const $ = (id) => document.getElementById(id);
@@ -27,7 +28,7 @@ import { HttpAgent } from "@ag-ui/client";
   const authBase = `https://${config.authDomain}`;
   const redirectUri = config.siteUrl;
 
-  const tokens = {};        // access_token, id_token, refresh_token; memory only, never persisted
+  const tokens = {};        // access_token, id_token, refresh_token; access/id token: memory only
   let tokenExpiresAt = 0;    // epoch ms when access_token expires
 
   let sessionId = newSessionId();
@@ -84,12 +85,22 @@ import { HttpAgent } from "@ag-ui/client";
     });
     if (!response.ok) throw new Error(`token exchange failed: ${response.status}`);
     applyTokens(await response.json());
+    await persistSession();
     history.replaceState(null, "", location.pathname);
   }
 
   function applyTokens(payload) {
     Object.assign(tokens, payload);
     tokenExpiresAt = Date.now() + (payload.expires_in || 3600) * 1000;
+  }
+
+  // Saves the refresh token now in `tokens` plus the header claims from the current id
+  // token. Cognito issues a new refresh_token on every rotated use; when a response omits
+  // one, applyTokens leaves the previous value in `tokens.refresh_token` in place, which is
+  // what ends up saved here, so the old token is kept only when no new one arrived.
+  async function persistSession() {
+    if (!tokens.refresh_token || !tokens.id_token) return;
+    await saveSession(tokens.refresh_token, decodeJwt(tokens.id_token));
   }
 
   async function refreshTokenIfNeeded() {
@@ -110,6 +121,39 @@ import { HttpAgent } from "@ag-ui/client";
     // on its own and land in the error state with Retry.
     if (!response.ok) return;
     applyTokens(await response.json());
+    await persistSession();
+  }
+
+  // Attempts a silent refresh against a stored session on startup. Never throws: a network
+  // failure and an OAuth error both come back as a classified result for decideOnLoad.
+  async function silentRefresh(session) {
+    const body = new URLSearchParams({
+      grant_type: "refresh_token",
+      client_id: config.userPoolClientId,
+      refresh_token: session.refreshToken,
+    });
+    let response;
+    try {
+      response = await fetch(`${authBase}/oauth2/token`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body,
+      });
+    } catch {
+      return { ok: false, kind: classifyRefreshFailure({ networkError: true }) };
+    }
+    if (!response.ok) {
+      let errorBody = null;
+      try {
+        errorBody = await response.json();
+      } catch {
+        // Not a JSON body; classifyRefreshFailure treats that conservatively as a network error.
+      }
+      return { ok: false, kind: classifyRefreshFailure({ status: response.status, body: errorBody }) };
+    }
+    applyTokens(await response.json());
+    await persistSession();
+    return { ok: true };
   }
 
   function accountInitials(claims) {
@@ -133,10 +177,11 @@ import { HttpAgent } from "@ag-ui/client";
     chatScreen.hidden = false;
   }
 
-  function signOut() {
+  async function signOut() {
     Object.keys(tokens).forEach((key) => delete tokens[key]);
     tokenExpiresAt = 0;
     auth = "anonymous";
+    await clearSession();
     const params = new URLSearchParams({
       client_id: config.userPoolClientId,
       logout_uri: config.siteUrl,
@@ -415,6 +460,13 @@ import { HttpAgent } from "@ag-ui/client";
   }
 
   // ---- Boot ----
+  //
+  // A URL carrying an OAuth code always wins: finish that sign-in as before, whatever a
+  // stored session might say. Otherwise, a stored session gets a silent refresh: success
+  // shows the chat with no redirect; an OAuth error (the refresh token is no longer good)
+  // clears the stored session; a network error leaves the stored session in place so a
+  // later reload can try again, and shows the sign-in screen with its usual button either
+  // way. No stored session is the plain no-session case, unchanged.
 
   const code = new URLSearchParams(location.search).get("code");
   if (code) {
@@ -425,6 +477,21 @@ import { HttpAgent } from "@ag-ui/client";
       return;
     } catch (error) {
       // The exchange failed; fall back to the sign-in screen, where it can be retried.
+    }
+  } else {
+    const storedSession = await loadSession();
+    const refreshResult = storedSession ? await silentRefresh(storedSession) : undefined;
+    switch (decideOnLoad(storedSession, refreshResult)) {
+      case "show-chat":
+        showChat();
+        render();
+        return;
+      case "clear-and-show-sign-in":
+        await clearSession();
+        break;
+      default:
+      // "show-sign-in" (nothing stored) and "keep-and-show-sign-in" (network error) both
+      // fall through to the sign-in screen with the stored session untouched.
     }
   }
 
