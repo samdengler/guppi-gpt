@@ -57,6 +57,10 @@ elif op whoami >/dev/null 2>&1; then
     else
       echo "found the '$DT_ITEM_TITLE' item but hostname or credential was empty; skipping Dynatrace trace export parameters" >&2
     fi
+    # The AWS monitoring role's external id, read from the same item as the OTLP
+    # endpoint and token above; GUPPI_DYNATRACE_EXTERNAL_ID below is the fallback when
+    # the field is not there yet.
+    dt_external_id="$(op read "op://Personal/$DT_ITEM_TITLE/external_id" 2>/dev/null || true)"
   fi
 else
   echo "not signed in to 1Password (op whoami failed); reusing the stack's existing Google OAuth and Dynatrace parameters" >&2
@@ -69,6 +73,18 @@ if [[ -n "${GUPPI_INVESTIGATOR_ARN:-}" ]]; then
 fi
 if [[ -n "${GUPPI_DYNATRACE_BEACON_ORIGIN:-}" ]]; then
   param_args+=(--parameters "DynatraceBeaconOrigin=$GUPPI_DYNATRACE_BEACON_ORIGIN")
+fi
+if [[ -n "${GUPPI_DYNATRACE_AWS_ACCOUNT_ID:-}" ]]; then
+  param_args+=(--parameters "DynatraceAwsAccountId=$GUPPI_DYNATRACE_AWS_ACCOUNT_ID")
+fi
+# The external id prefers the 1Password field read above; GUPPI_DYNATRACE_EXTERNAL_ID
+# covers a first run before that field exists, or a shell where op is not signed in.
+external_id="${dt_external_id:-}"
+if [[ -z "$external_id" ]]; then
+  external_id="${GUPPI_DYNATRACE_EXTERNAL_ID:-}"
+fi
+if [[ -n "$external_id" ]]; then
+  param_args+=(--parameters "DynatraceExternalId=$external_id")
 fi
 
 if [[ "$SITE_ONLY" == 0 ]]; then

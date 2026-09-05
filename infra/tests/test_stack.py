@@ -772,3 +772,136 @@ def test_conversation_key_secret_has_no_template(template):
     generator = secret["Properties"]["GenerateSecretString"]
     assert generator["PasswordLength"] == 32
     assert "SecretStringTemplate" not in generator and "GenerateStringKey" not in generator
+
+
+def test_dynatrace_aws_parameters_and_condition(template):
+    template.has_parameter("DynatraceAwsAccountId", {"Default": ""})
+    template.has_parameter("DynatraceExternalId", {"NoEcho": True, "Default": ""})
+    conditions = template.to_json().get("Conditions", {})
+    assert "HasDynatraceAws" in conditions
+    expression = conditions["HasDynatraceAws"]
+    assert "Fn::And" in expression
+    assert len(expression["Fn::And"]) == 2
+
+
+def test_dynatrace_monitoring_role_is_conditional_and_trusts_with_an_external_id(template):
+    roles = template.find_resources("AWS::IAM::Role")
+    (role,) = [
+        r
+        for r in roles.values()
+        if r["Properties"].get("RoleName") == "GuppiGptDynatraceMonitoring"
+    ]
+    assert role["Condition"] == "HasDynatraceAws"
+    statement = role["Properties"]["AssumeRolePolicyDocument"]["Statement"][0]
+    assert statement["Principal"]["AWS"] == {
+        "Fn::Join": ["", ["arn:aws:iam::", {"Ref": "DynatraceAwsAccountId"}, ":root"]]
+    }
+    assert statement["Condition"]["StringEquals"]["sts:ExternalId"] == {
+        "Ref": "DynatraceExternalId"
+    }
+
+
+def test_dynatrace_monitoring_role_carries_the_read_only_metrics_actions(template):
+    roles = template.find_resources("AWS::IAM::Role")
+    (role,) = [
+        r
+        for r in roles.values()
+        if r["Properties"].get("RoleName") == "GuppiGptDynatraceMonitoring"
+    ]
+    (policy,) = role["Properties"]["Policies"]
+    (statement,) = policy["PolicyDocument"]["Statement"]
+    actions = set(statement["Action"])
+    assert {
+        "cloudwatch:GetMetricData",
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:ListMetrics",
+        "sts:GetCallerIdentity",
+        "tag:GetResources",
+        "logs:DescribeLogGroups",
+        "cloudfront:ListDistributions",
+        "wafv2:List*",
+        "s3:ListAllMyBuckets",
+        "lambda:ListFunctions",
+    }.issubset(actions)
+    assert statement["Resource"] == "*"
+
+
+def test_dynatrace_monitoring_role_arn_output_is_conditional(template):
+    outputs = template.to_json()["Outputs"]
+    assert outputs["DynatraceMonitoringRoleArn"]["Condition"] == "HasDynatraceAws"
+
+
+def test_dynatrace_logs_condition_reuses_the_otlp_parameters(template):
+    conditions = template.to_json().get("Conditions", {})
+    assert "HasDynatraceLogs" in conditions
+    expression = conditions["HasDynatraceLogs"]
+    assert "Fn::And" in expression
+    assert len(expression["Fn::And"]) == 2
+    rendered = json.dumps(expression)
+    assert "DynatraceOtlpEndpoint" in rendered
+    assert "DynatraceApiToken" in rendered
+
+
+def test_dynatrace_log_backup_bucket_is_small_and_conditional(template):
+    buckets = template.find_resources("AWS::S3::Bucket")
+    (backup,) = [
+        b
+        for b in buckets.values()
+        if b["Properties"].get("LifecycleConfiguration", {}).get("Rules", [{}])[0].get("Id")
+        == "ExpireFailedDeliveries"
+    ]
+    assert backup["Condition"] == "HasDynatraceLogs"
+    (rule,) = backup["Properties"]["LifecycleConfiguration"]["Rules"]
+    assert rule["ExpirationInDays"] == 7
+    # Not the site, content, or conversation log buckets.
+    assert len(buckets) == 4
+
+
+def test_dynatrace_firehose_stream_targets_the_dynatrace_http_endpoint(template):
+    streams = template.find_resources("AWS::KinesisFirehose::DeliveryStream")
+    (stream,) = streams.values()
+    assert stream["Condition"] == "HasDynatraceLogs"
+    config = stream["Properties"]["HttpEndpointDestinationConfiguration"]
+    assert config["EndpointConfiguration"]["Name"] == "Dynatrace"
+    assert config["EndpointConfiguration"]["AccessKey"] == {"Ref": "DynatraceApiToken"}
+    # The ingest URL is derived from DynatraceOtlpEndpoint: split off its fixed
+    # "/api/v2/otlp" suffix to recover the tenant's base URL, then append the logs
+    # ingest path, rather than a separate parameter naming the same tenant again.
+    assert config["EndpointConfiguration"]["Url"] == {
+        "Fn::Join": [
+            "",
+            [
+                {
+                    "Fn::Select": [
+                        0,
+                        {"Fn::Split": ["/api/v2/otlp", {"Ref": "DynatraceOtlpEndpoint"}]},
+                    ]
+                },
+                "/api/v2/logs/ingest/aws_firehose",
+            ],
+        ]
+    }
+    assert config["BufferingHints"] == {"IntervalInSeconds": 60, "SizeInMBs": 1}
+    assert config["RequestConfiguration"]["ContentEncoding"] == "GZIP"
+    assert config["S3BackupMode"] == "FailedDataOnly"
+
+
+def test_dynatrace_subscription_filters_target_the_three_vended_log_groups(template):
+    filters = template.find_resources("AWS::Logs::SubscriptionFilter")
+    dynatrace_filters = {
+        k: v for k, v in filters.items() if v.get("Condition") == "HasDynatraceLogs"
+    }
+    assert len(dynatrace_filters) == 3
+    (stream_logical_id,) = template.find_resources("AWS::KinesisFirehose::DeliveryStream").keys()
+    log_group_refs = set()
+    for f in dynatrace_filters.values():
+        props = f["Properties"]
+        assert props["DestinationArn"] == {"Fn::GetAtt": [stream_logical_id, "Arn"]}
+        log_group_refs.add(props["LogGroupName"]["Ref"])
+    vended_log_group_ids = set(
+        template.find_resources(
+            "AWS::Logs::LogGroup",
+            Match.object_like({"Properties": {"LogGroupName": Match.any_value()}}),
+        ).keys()
+    )
+    assert log_group_refs == vended_log_group_ids

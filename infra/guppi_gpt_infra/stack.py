@@ -24,6 +24,7 @@ from aws_cdk import (
     Fn,
     RemovalPolicy,
     SecretValue,
+    Size,
 )
 from aws_cdk import (
     aws_bedrock as bedrock,
@@ -56,10 +57,16 @@ from aws_cdk import (
     aws_iam as iam,
 )
 from aws_cdk import (
+    aws_kinesisfirehose as firehose,
+)
+from aws_cdk import (
     aws_kms as kms,
 )
 from aws_cdk import (
     aws_logs as logs,
+)
+from aws_cdk import (
+    aws_logs_destinations as logs_destinations,
 )
 from aws_cdk import (
     aws_route53 as route53,
@@ -179,6 +186,118 @@ RATE_LIMIT_CONCURRENT_CONNECTIONS = 2
 VENDED_LOG_PREFIX = "/aws/vendedlogs/bedrock-agentcore"
 VENDED_LOG_RETENTION = logs.RetentionDays.ONE_MONTH
 
+# Dynatrace AWS monitoring role (docs/proposals/dynatrace.md), shipped dark under
+# HasDynatraceAws below. The action list is Dynatrace's own read-only CloudWatch metrics
+# monitoring policy, taken verbatim from the MonitoringPolicy statement in
+# https://github.com/dynatrace-oss/cloud-snippets/blob/main/aws/role-based-access/
+# role_based_access_monitored_account_template.yml (the CloudFormation template
+# Dynatrace's own AWS integration setup page generates), cross-checked against
+# https://docs.dynatrace.com/docs/ingest-from/amazon-web-services/ingest-telemetry/
+# aws-cloudwatch-metrics, which confirms the external-id trust policy and the
+# cloudwatch:ListMetrics and cloudwatch:GetMetricData calls but does not itself list every
+# action. The two set-up pages named in the original ask
+# (aws-platform/set-up-aws-monitoring[-role]) return 404 as of 4 September 2026, the same
+# finding docs/proposals/dynatrace.md already recorded for a different Dynatrace page.
+# wafv2:List* is added on top of Dynatrace's list: WAF is a service this stack uses that
+# is not one of the roughly ninety services in Dynatrace's own list.
+DYNATRACE_MONITORING_POLICY_ACTIONS = [
+    "acm-pca:ListCertificateAuthorities",
+    "apigateway:GET",
+    "apprunner:ListServices",
+    "appstream:DescribeFleets",
+    "appsync:ListGraphqlApis",
+    "athena:ListWorkGroups",
+    "autoscaling:DescribeAutoScalingGroups",
+    "cloudformation:ListStackResources",
+    "cloudfront:ListDistributions",
+    "cloudhsm:DescribeClusters",
+    "cloudsearch:DescribeDomains",
+    "cloudwatch:GetMetricData",
+    "cloudwatch:GetMetricStatistics",
+    "cloudwatch:ListMetrics",
+    "codebuild:ListProjects",
+    "datasync:ListTasks",
+    "dax:DescribeClusters",
+    "directconnect:DescribeConnections",
+    "dms:DescribeReplicationInstances",
+    "dynamodb:ListTables",
+    "dynamodb:ListTagsOfResource",
+    "ec2:DescribeAvailabilityZones",
+    "ec2:DescribeInstances",
+    "ec2:DescribeNatGateways",
+    "ec2:DescribeSpotFleetRequests",
+    "ec2:DescribeTransitGateways",
+    "ec2:DescribeVolumes",
+    "ec2:DescribeVpnConnections",
+    "ecs:ListClusters",
+    "eks:ListClusters",
+    "elasticache:DescribeCacheClusters",
+    "elasticbeanstalk:DescribeEnvironmentResources",
+    "elasticbeanstalk:DescribeEnvironments",
+    "elasticfilesystem:DescribeFileSystems",
+    "elasticloadbalancing:DescribeInstanceHealth",
+    "elasticloadbalancing:DescribeListeners",
+    "elasticloadbalancing:DescribeLoadBalancers",
+    "elasticloadbalancing:DescribeRules",
+    "elasticloadbalancing:DescribeTags",
+    "elasticloadbalancing:DescribeTargetHealth",
+    "elasticmapreduce:ListClusters",
+    "elastictranscoder:ListPipelines",
+    "es:ListDomainNames",
+    "events:ListEventBuses",
+    "firehose:ListDeliveryStreams",
+    "fsx:DescribeFileSystems",
+    "gamelift:ListFleets",
+    "glue:GetJobs",
+    "inspector:ListAssessmentTemplates",
+    "kafka:ListClusters",
+    "kinesis:ListStreams",
+    "kinesisanalytics:ListApplications",
+    "kinesisvideo:ListStreams",
+    "lambda:ListFunctions",
+    "lambda:ListTags",
+    "lex:GetBots",
+    "logs:DescribeLogGroups",
+    "mediaconnect:ListFlows",
+    "mediaconvert:DescribeEndpoints",
+    "mediapackage-vod:ListPackagingConfigurations",
+    "mediapackage:ListChannels",
+    "mediatailor:ListPlaybackConfigurations",
+    "opsworks:DescribeStacks",
+    "qldb:ListLedgers",
+    "rds:DescribeDBClusters",
+    "rds:DescribeDBInstances",
+    "rds:DescribeEvents",
+    "rds:ListTagsForResource",
+    "redshift:DescribeClusters",
+    "robomaker:ListSimulationJobs",
+    "route53:ListHostedZones",
+    "route53resolver:ListResolverEndpoints",
+    "s3:ListAllMyBuckets",
+    "sagemaker:ListEndpoints",
+    "sns:ListTopics",
+    "sqs:ListQueues",
+    "storagegateway:ListGateways",
+    "sts:GetCallerIdentity",
+    "swf:ListDomains",
+    "tag:GetResources",
+    "tag:GetTagKeys",
+    "transfer:ListServers",
+    "workmail:ListOrganizations",
+    "workspaces:DescribeWorkspaces",
+    "wafv2:List*",
+]
+
+# Dynatrace log ingest path for a Firehose "Dynatrace" destination, appended to the
+# tenant's base URL (docs.dynatrace.com/docs/ingest-from/amazon-web-services/
+# integrate-with-aws/aws-logs-ingest/lma-stream-logs-with-firehose): "use the full URL
+# https://<environment_ID>.live.dynatrace.com/api/v2/logs/ingest/aws_firehose in the
+# Firehose HTTP endpoint destination configuration."
+DYNATRACE_LOGS_INGEST_PATH = "/api/v2/logs/ingest/aws_firehose"
+# The fixed suffix of DynatraceOtlpEndpoint (docs/proposals/dynatrace.md: "no trailing
+# slash, no /v1/traces suffix"), split off to recover the tenant's base URL.
+DYNATRACE_OTLP_SUFFIX = "/api/v2/otlp"
+
 
 @jsii.implements(route53.IAliasRecordTarget)
 class CognitoDomainAlias:
@@ -198,6 +317,20 @@ class CognitoDomainAlias:
         return route53.AliasRecordTargetConfig(
             dns_name=self._dns_name, hosted_zone_id=CLOUDFRONT_HOSTED_ZONE_ID
         )
+
+
+def _apply_condition(construct: Construct, condition: cdk.CfnCondition) -> None:
+    """Set condition on every CloudFormation resource nested under construct.
+
+    An L2 construct can create more than one underlying resource (a role's default
+    policy, a bucket's SSL-enforcement policy); node.default_child only reaches the
+    first. Walking the whole subtree catches every one of them, so a conditional L2
+    construct never leaves a resource behind that CloudFormation would try to create
+    unconditionally.
+    """
+    for child in construct.node.find_all():
+        if isinstance(child, cdk.CfnResource):
+            child.cfn_options.condition = condition
 
 
 def _waf_rule_action() -> wafv2.CfnWebACL.RuleActionProperty:
@@ -318,6 +451,55 @@ class GuppiGptStack(cdk.Stack):
                 ),
                 cdk.Fn.condition_not(
                     cdk.Fn.condition_equals(dynatrace_api_token.value_as_string, "")
+                ),
+            ),
+        )
+        # Backend log forwarding shares the trace export parameters rather than asking for
+        # the same tenant a third time: once Sam has set the OTLP endpoint and the API
+        # token, both trace export and log forwarding turn on together.
+        has_dynatrace_logs = cdk.CfnCondition(
+            self,
+            "HasDynatraceLogs",
+            expression=cdk.Fn.condition_and(
+                cdk.Fn.condition_not(
+                    cdk.Fn.condition_equals(dynatrace_otlp_endpoint.value_as_string, "")
+                ),
+                cdk.Fn.condition_not(
+                    cdk.Fn.condition_equals(dynatrace_api_token.value_as_string, "")
+                ),
+            ),
+        )
+        dynatrace_aws_account_id = cdk.CfnParameter(
+            self,
+            "DynatraceAwsAccountId",
+            type="String",
+            default="",
+            description=(
+                "AWS account id Dynatrace uses to assume the GuppiGptDynatraceMonitoring "
+                "role, from Dynatrace's AWS integration setup page; left blank to create "
+                "no role"
+            ),
+        )
+        dynatrace_external_id = cdk.CfnParameter(
+            self,
+            "DynatraceExternalId",
+            type="String",
+            no_echo=True,
+            default="",
+            description=(
+                "External id from the same Dynatrace AWS integration setup page, required "
+                "together with DynatraceAwsAccountId"
+            ),
+        )
+        has_dynatrace_aws = cdk.CfnCondition(
+            self,
+            "HasDynatraceAws",
+            expression=cdk.Fn.condition_and(
+                cdk.Fn.condition_not(
+                    cdk.Fn.condition_equals(dynatrace_aws_account_id.value_as_string, "")
+                ),
+                cdk.Fn.condition_not(
+                    cdk.Fn.condition_equals(dynatrace_external_id.value_as_string, "")
                 ),
             ),
         )
@@ -1442,7 +1624,7 @@ class GuppiGptStack(cdk.Stack):
         # CloudWatchLogs.html), which the deploying principal is not guaranteed to have.
         def _vended_log_delivery(
             resource_label: str, resource_name: str, resource_arn: str, log_types: list[str]
-        ) -> None:
+        ) -> logs.LogGroup:
             log_group = logs.LogGroup(
                 self,
                 f"{resource_label}LogGroup",
@@ -1474,15 +1656,22 @@ class GuppiGptStack(cdk.Stack):
                 delivery.node.add_dependency(source)
                 delivery.node.add_dependency(destination)
 
-        _vended_log_delivery(
-            "EdgeGateway", GATEWAY_NAME, gateway.attr_gateway_arn, ["APPLICATION_LOGS"]
-        )
-        _vended_log_delivery(
-            "ToolsGateway", TOOLS_GATEWAY_NAME, tools_gateway.attr_gateway_arn, ["APPLICATION_LOGS"]
-        )
-        _vended_log_delivery(
-            "Runtime", RUNTIME_NAME, runtime.attr_agent_runtime_arn, ["APPLICATION_LOGS"]
-        )
+            return log_group
+
+        vended_log_groups = {
+            "EdgeGateway": _vended_log_delivery(
+                "EdgeGateway", GATEWAY_NAME, gateway.attr_gateway_arn, ["APPLICATION_LOGS"]
+            ),
+            "ToolsGateway": _vended_log_delivery(
+                "ToolsGateway",
+                TOOLS_GATEWAY_NAME,
+                tools_gateway.attr_gateway_arn,
+                ["APPLICATION_LOGS"],
+            ),
+            "Runtime": _vended_log_delivery(
+                "Runtime", RUNTIME_NAME, runtime.attr_agent_runtime_arn, ["APPLICATION_LOGS"]
+            ),
+        }
 
         # Recommended prefix policy (AWS-logs-infrastructure-V2-CloudWatchLogs.html) rather
         # than one statement per log group, so a fourth vended-log destination needs no
@@ -1517,6 +1706,164 @@ class GuppiGptStack(cdk.Stack):
             ),
         )
 
+        # ---- Dynatrace AWS integration ----------------------------------------------------
+        # The monitoring role and the log forwarding stream are both shipped dark: every
+        # parameter above defaults empty, so both conditions below render to nothing until
+        # Sam has a Dynatrace tenant (docs/proposals/dynatrace.md).
+        dynatrace_monitoring_role = iam.Role(
+            self,
+            "DynatraceMonitoringRole",
+            role_name="GuppiGptDynatraceMonitoring",
+            assumed_by=iam.ArnPrincipal(
+                f"arn:aws:iam::{dynatrace_aws_account_id.value_as_string}:root"
+            ),
+            external_ids=[dynatrace_external_id.value_as_string],
+            description=(
+                "Read-only role Dynatrace's AWS monitoring integration assumes to poll "
+                "CloudWatch metrics for this account"
+            ),
+            inline_policies={
+                "DynatraceMonitoringPolicy": iam.PolicyDocument(
+                    statements=[
+                        iam.PolicyStatement(
+                            actions=DYNATRACE_MONITORING_POLICY_ACTIONS, resources=["*"]
+                        )
+                    ]
+                )
+            },
+        )
+        _apply_condition(dynatrace_monitoring_role, has_dynatrace_aws)
+
+        # Log forwarding: a Firehose delivery stream with the "Dynatrace" HTTP endpoint
+        # destination (docs.dynatrace.com/docs/ingest-from/amazon-web-services/
+        # integrate-with-aws/aws-logs-ingest/lma-stream-logs-with-firehose), subscribed to
+        # the three vended log groups above. The runtime's own log group
+        # (/aws/bedrock-agentcore/runtimes/guppi_gpt-*) is created lazily by the service,
+        # not by this stack (only _runtime_role's policy names its pattern); a
+        # CloudFormation subscription filter needs an exact, stack-owned log group, so that
+        # group is a follow-up, not something this change subscribes.
+        #
+        # The log ingest URL is derived from DynatraceOtlpEndpoint (Fn::Split on its fixed
+        # "/api/v2/otlp" suffix recovers the tenant's base URL, then Fn::Join appends the
+        # logs ingest path) rather than a separate DynatraceLogsEndpoint parameter: the
+        # OTLP endpoint already names the tenant, and asking Sam to enter the same tenant a
+        # second time would be redundant and one more way for the two to drift apart.
+        dynatrace_logs_base_url = cdk.Fn.select(
+            0, cdk.Fn.split(DYNATRACE_OTLP_SUFFIX, dynatrace_otlp_endpoint.value_as_string)
+        )
+        dynatrace_logs_endpoint = cdk.Fn.join(
+            "", [dynatrace_logs_base_url, DYNATRACE_LOGS_INGEST_PATH]
+        )
+
+        # Failed deliveries only, in a small bucket of its own: the site and content
+        # buckets are not reused for this.
+        dynatrace_log_backup_bucket = s3.Bucket(
+            self,
+            "DynatraceLogBackupBucket",
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            enforce_ssl=True,
+            removal_policy=RemovalPolicy.DESTROY,
+            lifecycle_rules=[
+                s3.LifecycleRule(id="ExpireFailedDeliveries", expiration=Duration.days(7))
+            ],
+        )
+        dynatrace_firehose_role = iam.Role(
+            self,
+            "DynatraceFirehoseRole",
+            assumed_by=iam.ServicePrincipal("firehose.amazonaws.com"),
+            description=(
+                "Lets Firehose write failed Dynatrace log deliveries to the backup bucket"
+            ),
+            inline_policies={
+                "BackupBucketWrite": iam.PolicyDocument(
+                    statements=[
+                        iam.PolicyStatement(
+                            actions=["s3:PutObject", "s3:GetBucketLocation", "s3:ListBucket"],
+                            resources=[
+                                dynatrace_log_backup_bucket.bucket_arn,
+                                dynatrace_log_backup_bucket.arn_for_objects("*"),
+                            ],
+                        )
+                    ]
+                )
+            },
+        )
+
+        # Buffer hints, content encoding, and the backup mode default (failed data only)
+        # follow docs.dynatrace.com/docs/ingest-from/amazon-web-services/integrate-with-aws/
+        # aws-logs-ingest/lma-stream-logs-with-firehose: 1 MiB or 60 seconds, GZIP, the
+        # API token as the destination's access key.
+        dynatrace_http_destination = firehose.HttpEndpoint(
+            endpoint_config=firehose.HttpEndpointConfig(
+                url=dynatrace_logs_endpoint,
+                name="Dynatrace",
+                access_key=SecretValue.cfn_parameter(dynatrace_api_token),
+            ),
+            buffering_hints=firehose.HttpBufferingHints(
+                interval=Duration.seconds(60), size=Size.mebibytes(1)
+            ),
+            request_compression=firehose.HttpCompression.GZIP,
+            # The default error log group has no expiry and this stack retains everything
+            # else at 30 days (VENDED_LOG_RETENTION); disabled on both the HTTP endpoint
+            # and its S3 backup rather than adding a fifth retention policy for a log
+            # group failed deliveries already land in, in S3.
+            s3_backup=firehose.DestinationS3BackupProps(
+                bucket=dynatrace_log_backup_bucket, logging_config=firehose.DisableLogging()
+            ),
+            role=dynatrace_firehose_role,
+            logging_config=firehose.DisableLogging(),
+        )
+        dynatrace_delivery_stream = firehose.DeliveryStream(
+            self, "DynatraceLogDeliveryStream", destination=dynatrace_http_destination
+        )
+
+        dynatrace_logs_to_firehose_role = iam.Role(
+            self,
+            "DynatraceLogsToFirehoseRole",
+            assumed_by=iam.ServicePrincipal("logs.amazonaws.com"),
+            description=(
+                "Lets CloudWatch Logs subscription filters write to the Dynatrace Firehose stream"
+            ),
+            inline_policies={
+                "PutToFirehose": iam.PolicyDocument(
+                    statements=[
+                        iam.PolicyStatement(
+                            actions=["firehose:PutRecord", "firehose:PutRecordBatch"],
+                            resources=[dynatrace_delivery_stream.delivery_stream_arn],
+                        )
+                    ]
+                )
+            },
+        )
+        dynatrace_firehose_destination = logs_destinations.FirehoseDestination(
+            dynatrace_delivery_stream, role=dynatrace_logs_to_firehose_role
+        )
+        dynatrace_subscription_filters = [
+            logs.SubscriptionFilter(
+                self,
+                f"Dynatrace{label}SubscriptionFilter",
+                log_group=log_group,
+                destination=dynatrace_firehose_destination,
+                filter_pattern=logs.FilterPattern.all_events(),
+            )
+            for label, log_group in vended_log_groups.items()
+        ]
+
+        # Every resource above (the backup bucket, its own SSL-enforcement policy, both
+        # roles and the default policies grant_write and the destination's internal grants
+        # add to them, the delivery stream, and the three subscription filters) is
+        # conditional on the same switch, applied last so every nested resource each L2
+        # construct created along the way is caught.
+        for construct in (
+            dynatrace_log_backup_bucket,
+            dynatrace_firehose_role,
+            dynatrace_delivery_stream,
+            dynatrace_logs_to_firehose_role,
+            *dynatrace_subscription_filters,
+        ):
+            _apply_condition(construct, has_dynatrace_logs)
+
         # ---- Outputs -------------------------------------------------------------------
         cdk.CfnOutput(self, "SiteUrl", value=SITE_URL)
         cdk.CfnOutput(self, "SiteBucketName", value=site_bucket.bucket_name)
@@ -1539,6 +1886,12 @@ class GuppiGptStack(cdk.Stack):
         cdk.CfnOutput(self, "InvestigatorRoleArn", value=investigator_role.role_arn)
         cdk.CfnOutput(self, "RumScriptPath", value=RUM_SCRIPT_PATH)
         cdk.CfnOutput(self, "RumBeaconOrigin", value=dynatrace_beacon_origin.value_as_string)
+        cdk.CfnOutput(
+            self,
+            "DynatraceMonitoringRoleArn",
+            value=dynatrace_monitoring_role.role_arn,
+            condition=has_dynatrace_aws,
+        )
 
     def _runtime_role(self) -> iam.Role:
         """Execution role for the runtime, following the AgentCore documented policy."""
