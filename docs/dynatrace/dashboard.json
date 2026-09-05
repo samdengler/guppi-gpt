@@ -1,10 +1,12 @@
 {
-  "_comment": "Draft only. This is written by hand as the JSON shape the Dynatrace platform dashboard editor exports (dashboardMetadata plus a tiles array of DQL query tiles), not exported from a real tenant, since no tenant exists yet (docs/proposals/dynatrace.md). The wrapper (dashboardMetadata, bounds, tileType, queries[].id) may need adjusting on import; each tile's query and its 'reliesOn' note are the deliverable. Queries assume the agent's per-run JSON record (agent/src/guppi_agent/app.py) reaches Grail as log events with its keys as top-level fields, which is how Dynatrace's automatic JSON log parsing behaves on well-formed JSON content once the Firehose log forwarding in docs/proposals/dynatrace.md is set up; none of this was verified against a real tenant.",
+  "_comment": "Dashboard for the GuppiGPT tenant wfd05358. Written by hand in the shape of a platform dashboard export; import it through the Dashboards app (Upload). Queries were revised on 5 Sep 2026 against what the tenant holds: spans from the instrumented runtime (service guppi_gpt.DEFAULT), RUM user.events, and CloudWatch metrics under cloud.aws.bedrock_agentcore once the AWS integration imports that namespace.",
   "dashboardMetadata": {
     "name": "GuppiGPT operations",
     "shared": true,
     "owner": "sam@dengler.io",
-    "tags": ["guppigpt"],
+    "tags": [
+      "guppigpt"
+    ],
     "preset": false,
     "hasConsistentColors": false
   },
@@ -12,96 +14,136 @@
     {
       "name": "Runs per hour",
       "tileType": "data",
-      "bounds": { "top": 0, "left": 0, "width": 456, "height": 304 },
-      "reliesOn": "The agent's per-run record, field run (agent/src/guppi_agent/app.py)",
+      "bounds": {
+        "top": 0,
+        "left": 0,
+        "width": 456,
+        "height": 304
+      },
+      "reliesOn": "One server span named POST /invocations per run, service guppi_gpt.DEFAULT, exported by the instrumented container (observed in the tenant 5 Sep 2026).",
       "queries": [
         {
           "id": "a",
-          "query": "fetch logs\n| filter isNotNull(run)\n| summarize count(), by: bin(timestamp, 1h)"
+          "query": "fetch spans\n| filter span.name == \"POST /invocations\" and service.name == \"guppi_gpt.DEFAULT\"\n| summarize runs = count(), by: {bin(start_time, 1h)}"
         }
       ]
     },
     {
       "name": "First delta latency p50/p90",
       "tileType": "data",
-      "bounds": { "top": 0, "left": 456, "width": 456, "height": 304 },
-      "reliesOn": "The agent's per-run record, field first_delta_ms (record[\"first_delta_ms\"] set in agent/src/guppi_agent/app.py's event_stream)",
+      "bounds": {
+        "top": 0,
+        "left": 456,
+        "width": 456,
+        "height": 304
+      },
+      "reliesOn": "Duration of the POST /invocations server span, which is the whole run rather than the first delta; the first delta lives only on the agent's log line in CloudWatch (runtime-logs), which Firehose does not forward.",
       "queries": [
         {
           "id": "a",
-          "query": "fetch logs\n| filter isNotNull(first_delta_ms)\n| summarize p50 = percentile(first_delta_ms, 50), p90 = percentile(first_delta_ms, 90), by: bin(timestamp, 1h)"
+          "query": "fetch spans\n| filter span.name == \"POST /invocations\" and service.name == \"guppi_gpt.DEFAULT\"\n| summarize p50 = percentile(duration, 50), p90 = percentile(duration, 90), by: {bin(start_time, 1h)}"
         }
       ]
     },
     {
       "name": "Run outcome split",
       "tileType": "data",
-      "bounds": { "top": 0, "left": 912, "width": 456, "height": 304 },
-      "reliesOn": "The agent's per-run record, field outcome (finished, error, client_disconnected)",
+      "bounds": {
+        "top": 0,
+        "left": 912,
+        "width": 456,
+        "height": 304
+      },
+      "reliesOn": "The failure flag on the POST /invocations server span. RUN_ERROR events emitted on a 200 stream are not failures here; the outcome field on the agent's CloudWatch log line is the finer source.",
       "queries": [
         {
           "id": "a",
-          "query": "fetch logs\n| filter isNotNull(outcome)\n| summarize count(), by: outcome"
+          "query": "fetch spans\n| filter span.name == \"POST /invocations\" and service.name == \"guppi_gpt.DEFAULT\"\n| summarize runs = count(), by: {request_is_failed}"
         }
       ]
     },
     {
       "name": "Retrieval rate",
       "tileType": "data",
-      "bounds": { "top": 0, "left": 1368, "width": 456, "height": 304 },
-      "reliesOn": "The agent's per-run record, field tool_calls (incremented once per Retrieve/AgenticRetrieveStream call in run_agent)",
+      "bounds": {
+        "top": 0,
+        "left": 1368,
+        "width": 456,
+        "height": 304
+      },
+      "reliesOn": "The MCP client span named mcp tools/call docs___Retrieve appears once per retrieval; runs are the POST /invocations spans.",
       "queries": [
         {
           "id": "a",
-          "query": "fetch logs\n| filter isNotNull(run)\n| summarize withRetrieval = countIf(tool_calls > 0), runs = count()\n| fields retrievalRatePct = withRetrieval * 100.0 / runs"
+          "query": "fetch spans\n| filter service.name == \"guppi_gpt.DEFAULT\" and (span.name == \"POST /invocations\" or span.name == \"mcp tools/call docs___Retrieve\")\n| summarize runs = countIf(span.name == \"POST /invocations\"), retrievals = countIf(span.name == \"mcp tools/call docs___Retrieve\")\n| fields retrievalRatePct = retrievals * 100.0 / runs"
         }
       ]
     },
     {
       "name": "Token usage",
       "tileType": "data",
-      "bounds": { "top": 304, "left": 0, "width": 456, "height": 304 },
-      "reliesOn": "The agent's per-run record, fields input_tokens and output_tokens (StrandsRun.usage in agent/src/guppi_agent/agent.py)",
+      "bounds": {
+        "top": 304,
+        "left": 0,
+        "width": 456,
+        "height": 304
+      },
+      "reliesOn": "The Strands model span (named chat <model id>) carries the GenAI semantic convention usage attributes; if the attribute names differ in this Strands version, inspect one chat span in Distributed Tracing and adjust.",
       "queries": [
         {
           "id": "a",
-          "query": "fetch logs\n| filter isNotNull(input_tokens)\n| summarize input = sum(input_tokens), output = sum(output_tokens), by: bin(timestamp, 1h)"
+          "query": "fetch spans\n| filter startsWith(span.name, \"chat \") and service.name == \"guppi_gpt.DEFAULT\"\n| summarize input = sum(gen_ai.usage.input_tokens), output = sum(gen_ai.usage.output_tokens), by: {bin(start_time, 1h)}"
         }
       ]
     },
     {
       "name": "Feedback up/down ratio",
       "tileType": "data",
-      "bounds": { "top": 304, "left": 456, "width": 456, "height": 304 },
-      "reliesOn": "The RUM custom action reply-feedback and its vote property (web/src/rum.js buildFeedbackActionProperties, docs/proposals/feedback.md). Least certain of the eight: the Grail table and field names for a RUM custom action's properties were not confirmed against a real tenant; adjust the fetch source and action.properties.vote path against what a real reply-feedback action looks like once RUM is live.",
+      "bounds": {
+        "top": 304,
+        "left": 456,
+        "width": 456,
+        "height": 304
+      },
+      "reliesOn": "The RUM custom action reply-feedback with its API-reported property vote, declared on APPLICATION-F1A41F354D402914 through builtin:rum.web.capture-properties on 5 Sep 2026. user.events and user_action.name are the fields the tenant returned for RUM actions.",
       "queries": [
         {
           "id": "a",
-          "query": "fetch dt.session.events\n| filter action.name == \"reply-feedback\"\n| summarize count(), by: {action.properties.vote}"
+          "query": "fetch user.events\n| filter user_action.name == \"reply-feedback\"\n| summarize votes = count(), by: {vote}"
         }
       ]
     },
     {
       "name": "WAF counts",
       "tileType": "data",
-      "bounds": { "top": 304, "left": 912, "width": 456, "height": 304 },
-      "reliesOn": "CloudWatch metrics WafBlocks, WafFailCloses, WafFailOpens in namespace AWS/Bedrock-AgentCore, dimension GatewayId (infra/guppi_gpt_infra/stack.py, the per-metric_name alarm loop). Metric key names below follow Dynatrace's usual cloud.aws.<namespace>.<metric> convention for AWS integration metrics; not confirmed against a real tenant, since the AWS integration is not connected (docs/proposals/dynatrace.md).",
+      "bounds": {
+        "top": 304,
+        "left": 912,
+        "width": 456,
+        "height": 304
+      },
+      "reliesOn": "CloudWatch metric WafBlocks in AWS/Bedrock-AgentCore, which exists in the account since the rules moved to BLOCK on 4 Sep 2026; the Dynatrace key follows its cloud.aws.<namespace>.<metric> convention and the AWS integration must import the Bedrock-AgentCore namespace (a custom namespace in the integration's metric selection).",
       "queries": [
         {
           "id": "a",
-          "query": "fetch metrics\n| filter startsWith(metric.key, \"cloud.aws.bedrock_agentcore.waf_\")\n| summarize sum(value), by: {metric.key, bin(timestamp, 1h)}"
+          "query": "timeseries blocks = sum(cloud.aws.bedrock_agentcore.waf_blocks), by: {aws.resource.id}"
         }
       ]
     },
     {
       "name": "403 loopback rejections",
       "tileType": "data",
-      "bounds": { "top": 304, "left": 1368, "width": 456, "height": 304 },
-      "reliesOn": "Approximate: the edge gateway's front door answers 403 for a request body containing a localhost or loopback URL before any WAF rule in this stack runs (README.md, Status), and nothing in the stack breaks that reason out from other 4xx responses. This counts every 4xx on the edge gateway as the closest available proxy; verify against gateway access logs, once those are enabled, before trusting the exact count.",
+      "bounds": {
+        "top": 304,
+        "left": 1368,
+        "width": 456,
+        "height": 304
+      },
+      "reliesOn": "CloudWatch metric UserErrors on the edge gateway; the loopback URL rejection happens at the gateway's load balancer and is not separately counted, so this tile shows all 4xx.",
       "queries": [
         {
           "id": "a",
-          "query": "fetch metrics\n| filter metric.key == \"cloud.aws.bedrock_agentcore.4xx_error\"\n| summarize sum(value), by: bin(timestamp, 1h)"
+          "query": "timeseries userErrors = sum(cloud.aws.bedrock_agentcore.user_errors), by: {aws.resource.id}"
         }
       ]
     }
