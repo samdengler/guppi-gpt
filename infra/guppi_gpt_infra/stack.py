@@ -10,6 +10,8 @@ Resource ordering that matters:
   gateway -> runtime (runtime authorizer names the gateway as its allowed workload)
   runtime -> gateway role policy -> gateway target
   tools gateway -> runtime environment variables (the runtime needs the tools gateway url)
+  feedback API -> CloudFront (its /api/feedback behavior is listed before /api/*, and
+                  CloudFront matches behaviors in the order they appear)
 """
 
 from __future__ import annotations
@@ -25,6 +27,9 @@ from aws_cdk import (
     RemovalPolicy,
     SecretValue,
     Size,
+)
+from aws_cdk import (
+    aws_apigateway as apigateway,
 )
 from aws_cdk import (
     aws_bedrock as bedrock,
@@ -52,6 +57,12 @@ from aws_cdk import (
 )
 from aws_cdk import (
     aws_ecr_assets as ecr_assets,
+)
+from aws_cdk import (
+    aws_events as events,
+)
+from aws_cdk import (
+    aws_events_targets as events_targets,
 )
 from aws_cdk import (
     aws_iam as iam,
@@ -88,6 +99,9 @@ from aws_cdk import (
 )
 from aws_cdk import (
     aws_sns as sns,
+)
+from aws_cdk import (
+    aws_sqs as sqs,
 )
 from aws_cdk import (
     aws_wafv2 as wafv2,
@@ -297,6 +311,80 @@ DYNATRACE_LOGS_INGEST_PATH = "/api/v2/logs/ingest/aws_firehose"
 # The fixed suffix of DynatraceOtlpEndpoint (docs/proposals/dynatrace.md: "no trailing
 # slash, no /v1/traces suffix"), split off to recover the tenant's base URL.
 DYNATRACE_OTLP_SUFFIX = "/api/v2/otlp"
+# Dynatrace business events ingest, on the same tenant host as the two paths above
+# ("Ingest business events via API", docs.dynatrace.com/docs/observe/business-analytics/
+# ba-api-ingest, which redirects to .../observe/business-observability/bo-events-capturing/
+# bo-events-capturing-external-sources): "Endpoint URL: https://{your-environment-id}.live.
+# dynatrace.com/api/v2/bizevents/ingest", method POST, Content-Type application/json for
+# the pure JSON format, and the token attached as "Authorization: Api-Token <token>" with
+# the Ingest bizevents scope. Pure JSON has no mandatory fields; Grail stores every
+# top-level attribute as a top-level field, and event.type and event.provider are the two
+# attributes the ingest guidance asks a caller to set so the events can be told apart.
+DYNATRACE_BIZEVENTS_INGEST_PATH = "/api/v2/bizevents/ingest"
+
+# ---- Reply feedback ------------------------------------------------------------------
+# A vote is a business event, not a turn: it travels its own path (REST API to EventBridge
+# to a Dynatrace business event) rather than through the chat runtime or the trace
+# (docs/proposals/feedback.md).
+FEEDBACK_API_NAME = "guppi-gpt-feedback"
+FEEDBACK_STAGE_NAME = "prod"
+FEEDBACK_PATH = "feedback"  # /feedback on the API, /api/feedback through CloudFront
+FEEDBACK_BUS_NAME = "guppi-gpt-feedback"
+FEEDBACK_EVENT_SOURCE = "guppigpt.feedback"
+FEEDBACK_DETAIL_TYPE = "reply-feedback"
+FEEDBACK_ARCHIVE_RETENTION_DAYS = 30
+# What the Dynatrace business event carries as its two identifying attributes.
+DYNATRACE_FEEDBACK_EVENT_TYPE = "guppigpt.reply-feedback"
+DYNATRACE_EVENT_PROVIDER = "guppigpt"
+
+# The page mints run ids with crypto.randomUUID (web/src/app.js), so the request validator
+# can hold runId to that shape; the trace id is the 16 byte W3C value as 32 hex digits
+# (docs/proposals/traceability.md).
+UUID_PATTERN = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+TRACE_ID_PATTERN = "^[0-9a-f]{32}$"
+FEEDBACK_ID_MAX_LENGTH = 200
+
+# The body mapping template for the PutEvents integration. Every value comes from the
+# request body the validator already accepted, escaped for JSON with escapeJavaScript.
+# escapeJavaScript also escapes an apostrophe as \', which JSON does not accept, so
+# replaceAll puts it back. A missing optional field leaves its Velocity reference unset
+# (Velocity skips a #set whose right side is null), so each optional field is given an
+# empty string before it is escaped. PutEvents takes Detail as a string rather than an
+# object, which is what the escaped braces below build. subject and receivedAt do not come
+# from the body: the subject is the Cognito sub claim the authorizer verified, and
+# receivedAt is the epoch millisecond API Gateway received the request.
+_FEEDBACK_TEMPLATE_SETUP = r"""
+#set($vote = $util.escapeJavaScript($input.path('$.vote')).replaceAll("\\'", "'"))
+#set($runId = $util.escapeJavaScript($input.path('$.runId')).replaceAll("\\'", "'"))
+#set($threadId = $util.escapeJavaScript($input.path('$.threadId')).replaceAll("\\'", "'"))
+#set($traceId = $input.path('$.traceId'))
+#if(!$traceId)#set($traceId = "")#end
+#set($traceId = $util.escapeJavaScript($traceId).replaceAll("\\'", "'"))
+#set($requestId = $input.path('$.requestId'))
+#if(!$requestId)#set($requestId = "")#end
+#set($requestId = $util.escapeJavaScript($requestId).replaceAll("\\'", "'"))
+#set($messageId = $input.path('$.messageId'))
+#if(!$messageId)#set($messageId = "")#end
+#set($messageId = $util.escapeJavaScript($messageId).replaceAll("\\'", "'"))
+""".lstrip()
+_FEEDBACK_TEMPLATE_DETAIL = (
+    r"{\"vote\":\"$vote\",\"runId\":\"$runId\",\"threadId\":\"$threadId\","
+    r"\"traceId\":\"$traceId\",\"requestId\":\"$requestId\",\"messageId\":\"$messageId\","
+    r"\"subject\":\"$context.authorizer.claims.sub\","
+    r"\"receivedAt\":$context.requestTimeEpoch}"
+)
+FEEDBACK_REQUEST_TEMPLATE = (
+    _FEEDBACK_TEMPLATE_SETUP
+    + '{"Entries":[{"Source":"'
+    + FEEDBACK_EVENT_SOURCE
+    + '","DetailType":"'
+    + FEEDBACK_DETAIL_TYPE
+    + '","EventBusName":"'
+    + FEEDBACK_BUS_NAME
+    + '","Detail":"'
+    + _FEEDBACK_TEMPLATE_DETAIL
+    + '"}]}'
+)
 
 
 @jsii.implements(route53.IAliasRecordTarget)
@@ -468,6 +556,12 @@ class GuppiGptStack(cdk.Stack):
                     cdk.Fn.condition_equals(dynatrace_api_token.value_as_string, "")
                 ),
             ),
+        )
+        # The tenant's base URL, recovered by splitting the OTLP endpoint on its fixed
+        # suffix rather than naming the same tenant in a second parameter. Log forwarding
+        # and the feedback API destination each append their own ingest path to it.
+        dynatrace_base_url = cdk.Fn.select(
+            0, cdk.Fn.split(DYNATRACE_OTLP_SUFFIX, dynatrace_otlp_endpoint.value_as_string)
         )
         dynatrace_aws_account_id = cdk.CfnParameter(
             self,
@@ -983,6 +1077,262 @@ class GuppiGptStack(cdk.Stack):
         )
         target.node.add_dependency(invoke_policy)
 
+        # ---- Reply feedback --------------------------------------------------------------
+        # A vote on a reply is a business event, not part of the chat, so it does not go
+        # through the chat runtime and it is not attached to the turn's trace. The page
+        # posts it to /api/feedback on the existing CloudFront domain; a REST API with a
+        # Cognito authorizer validates the body and puts one event on a bus of its own,
+        # with no compute in between. A rule forwards the event to Dynatrace as a business
+        # event once the Dynatrace parameters are set, and an archive on the bus keeps
+        # every vote for 30 days either way (docs/proposals/feedback.md).
+        feedback_bus = events.EventBus(self, "FeedbackBus", event_bus_name=FEEDBACK_BUS_NAME)
+        feedback_api_role = iam.Role(
+            self,
+            "FeedbackApiRole",
+            assumed_by=iam.ServicePrincipal("apigateway.amazonaws.com"),
+            description="Lets the feedback REST API put one event on the feedback bus",
+            inline_policies={
+                "PutFeedbackEvent": iam.PolicyDocument(
+                    statements=[
+                        iam.PolicyStatement(
+                            actions=["events:PutEvents"], resources=[feedback_bus.event_bus_arn]
+                        )
+                    ]
+                )
+            },
+        )
+        feedback_api = apigateway.RestApi(
+            self,
+            "FeedbackApi",
+            rest_api_name=FEEDBACK_API_NAME,
+            description="Reply votes from the page, put straight onto the feedback bus",
+            endpoint_types=[apigateway.EndpointType.REGIONAL],
+            deploy_options=apigateway.StageOptions(stage_name=FEEDBACK_STAGE_NAME),
+            # The account-level API Gateway CloudWatch role is an account-wide setting this
+            # stack does not own; execution logging stays off with it.
+            cloud_watch_role=False,
+            # No CORS: the page reaches this API through CloudFront on its own origin, so
+            # the browser never sends a preflight.
+        )
+        feedback_authorizer = apigateway.CognitoUserPoolsAuthorizer(
+            self,
+            "FeedbackAuthorizer",
+            authorizer_name="guppi-gpt-feedback",
+            cognito_user_pools=[user_pool],
+        )
+        feedback_validator = feedback_api.add_request_validator(
+            "FeedbackBodyValidator",
+            request_validator_name="feedback-body",
+            validate_request_body=True,
+            validate_request_parameters=False,
+        )
+        feedback_model = feedback_api.add_model(
+            "FeedbackVoteModel",
+            model_name="FeedbackVote",
+            content_type="application/json",
+            description="One vote on one reply",
+            schema=apigateway.JsonSchema(
+                schema=apigateway.JsonSchemaVersion.DRAFT4,
+                title="FeedbackVote",
+                type=apigateway.JsonSchemaType.OBJECT,
+                required=["vote", "runId", "threadId"],
+                additional_properties=False,
+                properties={
+                    # "none" is a withdrawn vote: the page reports it so the withdrawal is
+                    # itself a record rather than a gap.
+                    "vote": apigateway.JsonSchema(
+                        type=apigateway.JsonSchemaType.STRING, enum=["up", "down", "none"]
+                    ),
+                    "runId": apigateway.JsonSchema(
+                        type=apigateway.JsonSchemaType.STRING, pattern=UUID_PATTERN
+                    ),
+                    "threadId": apigateway.JsonSchema(
+                        type=apigateway.JsonSchemaType.STRING,
+                        min_length=1,
+                        max_length=FEEDBACK_ID_MAX_LENGTH,
+                    ),
+                    "traceId": apigateway.JsonSchema(
+                        type=apigateway.JsonSchemaType.STRING, pattern=TRACE_ID_PATTERN
+                    ),
+                    "requestId": apigateway.JsonSchema(
+                        type=apigateway.JsonSchemaType.STRING, max_length=FEEDBACK_ID_MAX_LENGTH
+                    ),
+                    "messageId": apigateway.JsonSchema(
+                        type=apigateway.JsonSchemaType.STRING, max_length=FEEDBACK_ID_MAX_LENGTH
+                    ),
+                },
+            ),
+        )
+        feedback_integration = apigateway.AwsIntegration(
+            service="events",
+            action="PutEvents",
+            integration_http_method="POST",
+            options=apigateway.IntegrationOptions(
+                credentials_role=feedback_api_role,
+                passthrough_behavior=apigateway.PassthroughBehavior.NEVER,
+                request_parameters={
+                    "integration.request.header.X-Amz-Target": "'AWSEvents.PutEvents'",
+                    "integration.request.header.Content-Type": "'application/x-amz-json-1.1'",
+                },
+                request_templates={"application/json": FEEDBACK_REQUEST_TEMPLATE},
+                integration_responses=[
+                    apigateway.IntegrationResponse(
+                        status_code="202",
+                        selection_pattern="200",
+                        # The page does not read a body, and there is nothing to say back:
+                        # the vote is on the bus.
+                        response_templates={"application/json": ""},
+                    ),
+                    apigateway.IntegrationResponse(
+                        status_code="400",
+                        selection_pattern="4\\d{2}",
+                        response_templates={
+                            "application/json": '{"message":"The vote was rejected."}'
+                        },
+                    ),
+                ],
+            ),
+        )
+        feedback_resource = feedback_api.root.add_resource(FEEDBACK_PATH)
+        feedback_resource.add_method(
+            "POST",
+            feedback_integration,
+            authorization_type=apigateway.AuthorizationType.COGNITO,
+            authorizer=feedback_authorizer,
+            # The page holds the access token, not the id token, and sends it as the bearer
+            # everywhere else. A Cognito authorizer with no authorization scopes reads the
+            # bearer as an id token and rejects an access token, which carries client_id
+            # rather than aud ("Integrate a REST API with an Amazon Cognito user pool",
+            # API Gateway developer guide). Naming a scope switches the authorizer to
+            # access token validation; "openid" is in the scope claim of every token this
+            # app client issues, since the page asks for openid, email, and profile.
+            authorization_scopes=["openid"],
+            request_validator=feedback_validator,
+            request_models={"application/json": feedback_model},
+            method_responses=[
+                apigateway.MethodResponse(status_code="202"),
+                apigateway.MethodResponse(status_code="400"),
+            ],
+        )
+        # The default gateway responses for a rejected token and a body the validator
+        # refused are text; the page and anything else calling this API read JSON.
+        feedback_api.add_gateway_response(
+            "FeedbackUnauthorizedResponse",
+            type=apigateway.ResponseType.UNAUTHORIZED,
+            templates={"application/json": '{"message":$context.error.messageString}'},
+        )
+        feedback_api.add_gateway_response(
+            "FeedbackBadRequestBodyResponse",
+            type=apigateway.ResponseType.BAD_REQUEST_BODY,
+            templates={
+                "application/json": (
+                    '{"message":$context.error.messageString,'
+                    '"detail":"$context.error.validationErrorString"}'
+                )
+            },
+        )
+
+        # Every vote is kept on the bus itself for 30 days, whether or not Dynatrace is
+        # configured, so the signal is not lost while the tenant details are missing and a
+        # replay can refill Dynatrace afterwards. Long term storage is a Firehose stream to
+        # S3, which is more than a vote a day needs (docs/proposals/feedback.md).
+        events.Archive(
+            self,
+            "FeedbackArchive",
+            source_event_bus=feedback_bus,
+            archive_name="guppi-gpt-feedback",
+            description="Reply votes, kept for replay",
+            retention=Duration.days(FEEDBACK_ARCHIVE_RETENTION_DAYS),
+            event_pattern=events.EventPattern(source=[FEEDBACK_EVENT_SOURCE]),
+        )
+
+        # Dynatrace business events, under the same switch as log forwarding: an API
+        # destination posting to the tenant's /api/v2/bizevents/ingest endpoint with the
+        # API token in the Authorization header, and a rule that reshapes the event into
+        # the flat JSON object Grail stores as top-level fields.
+        feedback_connection = events.Connection(
+            self,
+            "DynatraceBizeventsConnection",
+            connection_name="guppi-gpt-dynatrace-bizevents",
+            description="Api-Token header for the Dynatrace business events endpoint",
+            # Connection takes a SecretValue. cfn_parameter would carry the bare token, and
+            # the header needs the "Api-Token " realm in front of it, so the value is the
+            # join of the two; it reaches the template as a Ref to the no_echo parameter.
+            authorization=events.Authorization.api_key(
+                "Authorization",
+                SecretValue.unsafe_plain_text(
+                    cdk.Fn.join("", ["Api-Token ", dynatrace_api_token.value_as_string])
+                ),
+            ),
+        )
+        feedback_destination = events.ApiDestination(
+            self,
+            "DynatraceBizeventsDestination",
+            api_destination_name="guppi-gpt-dynatrace-bizevents",
+            connection=feedback_connection,
+            endpoint=cdk.Fn.join("", [dynatrace_base_url, DYNATRACE_BIZEVENTS_INGEST_PATH]),
+            http_method=events.HttpMethod.POST,
+            rate_limit_per_second=10,
+            description="Dynatrace business events ingest",
+        )
+        # A vote that Dynatrace refuses is worth keeping: the queue holds it for two weeks
+        # rather than letting EventBridge drop it after the retries below.
+        feedback_dlq = sqs.Queue(
+            self,
+            "FeedbackDeadLetterQueue",
+            retention_period=Duration.days(14),
+            enforce_ssl=True,
+        )
+        feedback_rule = events.Rule(
+            self,
+            "FeedbackToDynatrace",
+            rule_name="guppi-gpt-feedback-to-dynatrace",
+            description="Reply votes to Dynatrace as business events",
+            event_bus=feedback_bus,
+            event_pattern=events.EventPattern(source=[FEEDBACK_EVENT_SOURCE]),
+            targets=[
+                events_targets.ApiDestination(
+                    feedback_destination,
+                    # Grail keeps every top-level attribute as a top-level field, so the
+                    # body is flat and dotted names are field names, not nesting.
+                    event=events.RuleTargetInput.from_object(
+                        {
+                            "event.type": DYNATRACE_FEEDBACK_EVENT_TYPE,
+                            "event.provider": DYNATRACE_EVENT_PROVIDER,
+                            "vote": events.EventField.from_path("$.detail.vote"),
+                            "run.id": events.EventField.from_path("$.detail.runId"),
+                            "trace.id": events.EventField.from_path("$.detail.traceId"),
+                            "thread.id": events.EventField.from_path("$.detail.threadId"),
+                            "message.id": events.EventField.from_path("$.detail.messageId"),
+                            "request.id": events.EventField.from_path("$.detail.requestId"),
+                            "subject": events.EventField.from_path("$.detail.subject"),
+                            "received_at": events.EventField.from_path("$.detail.receivedAt"),
+                        }
+                    ),
+                    dead_letter_queue=feedback_dlq,
+                    retry_attempts=2,
+                )
+            ],
+        )
+        for construct in (
+            feedback_connection,
+            feedback_destination,
+            feedback_dlq,
+            feedback_rule,
+        ):
+            _apply_condition(construct, has_dynatrace_logs)
+
+        # The origin the /api/feedback behavior below points at: the API's regional
+        # endpoint, with the stage as the origin path so the browser's /api/feedback
+        # reaches /prod/feedback. It carries no X-Origin-Verify header, unlike the edge
+        # gateway origin, because this API authorizes every request itself; a caller who
+        # finds the execute-api hostname is refused by the Cognito authorizer.
+        feedback_api_origin = origins.HttpOrigin(
+            f"{feedback_api.rest_api_id}.execute-api.{self.region}.amazonaws.com",
+            origin_path=f"/{FEEDBACK_STAGE_NAME}",
+            protocol_policy=cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+        )
+
         # ---- Site and CloudFront -------------------------------------------------------
         site_bucket = s3.Bucket(
             self,
@@ -1076,7 +1426,17 @@ class GuppiGptStack(cdk.Stack):
                 cache_policy=cloudfront.CachePolicy.CACHING_OPTIMIZED,
                 response_headers_policy=security_headers_policy,
             ),
+            # CloudFront compares the request path against these patterns in the order
+            # they are listed, so the exact feedback path comes before the wildcard that
+            # would otherwise swallow it and send a vote to the edge gateway.
             additional_behaviors={
+                "/api/feedback": cloudfront.BehaviorOptions(
+                    origin=feedback_api_origin,
+                    viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
+                    allowed_methods=cloudfront.AllowedMethods.ALLOW_ALL,
+                    cache_policy=cloudfront.CachePolicy.CACHING_DISABLED,
+                    origin_request_policy=cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+                ),
                 "/api/*": cloudfront.BehaviorOptions(
                     origin=gateway_origin,
                     viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
@@ -1085,7 +1445,7 @@ class GuppiGptStack(cdk.Stack):
                     # Forwarding Host breaks the gateway's TLS and routing.
                     origin_request_policy=cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
                     compress=False,
-                )
+                ),
             },
         )
         for record_type, record_class in (("A", route53.ARecord), ("AAAA", route53.AaaaRecord)):
@@ -1776,12 +2136,7 @@ class GuppiGptStack(cdk.Stack):
         # logs ingest path) rather than a separate DynatraceLogsEndpoint parameter: the
         # OTLP endpoint already names the tenant, and asking Sam to enter the same tenant a
         # second time would be redundant and one more way for the two to drift apart.
-        dynatrace_logs_base_url = cdk.Fn.select(
-            0, cdk.Fn.split(DYNATRACE_OTLP_SUFFIX, dynatrace_otlp_endpoint.value_as_string)
-        )
-        dynatrace_logs_endpoint = cdk.Fn.join(
-            "", [dynatrace_logs_base_url, DYNATRACE_LOGS_INGEST_PATH]
-        )
+        dynatrace_logs_endpoint = cdk.Fn.join("", [dynatrace_base_url, DYNATRACE_LOGS_INGEST_PATH])
 
         # Failed deliveries only, in a small bucket of its own: the site and content
         # buckets are not reused for this.
@@ -1912,6 +2267,8 @@ class GuppiGptStack(cdk.Stack):
         cdk.CfnOutput(self, "ConversationLogBucketName", value=conversation_bucket.bucket_name)
         cdk.CfnOutput(self, "ConversationLogKeySecretArn", value=conversation_secret.secret_arn)
         cdk.CfnOutput(self, "InvestigatorRoleArn", value=investigator_role.role_arn)
+        cdk.CfnOutput(self, "FeedbackApiUrl", value=feedback_api.url_for_path(f"/{FEEDBACK_PATH}"))
+        cdk.CfnOutput(self, "FeedbackBusName", value=feedback_bus.event_bus_name)
         cdk.CfnOutput(self, "RumScriptPath", value=RUM_SCRIPT_PATH)
         cdk.CfnOutput(self, "RumBeaconOrigin", value=dynatrace_beacon_origin.value_as_string)
         cdk.CfnOutput(

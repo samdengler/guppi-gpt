@@ -124,16 +124,18 @@ def test_api_behavior_streams_through_cloudfront(template):
         {
             "DistributionConfig": {
                 "Aliases": ["chat.dengler.io"],
-                "CacheBehaviors": [
-                    Match.object_like(
-                        {
-                            "PathPattern": "/api/*",
-                            "Compress": False,
-                            "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
-                            "OriginRequestPolicyId": "b689b0a8-53d0-40ab-baf2-68738e2966ac",
-                        }
-                    )
-                ],
+                "CacheBehaviors": Match.array_with(
+                    [
+                        Match.object_like(
+                            {
+                                "PathPattern": "/api/*",
+                                "Compress": False,
+                                "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+                                "OriginRequestPolicyId": "b689b0a8-53d0-40ab-baf2-68738e2966ac",
+                            }
+                        )
+                    ]
+                ),
                 "Origins": Match.array_with(
                     [
                         Match.object_like(
@@ -237,10 +239,12 @@ def test_cloudfront_gateway_origin_carries_the_origin_verify_header(template):
     assert "X-Origin-Verify" in rendered
     origins = template.find_resources("AWS::CloudFront::Distribution")
     (distribution,) = origins.values()
+    # Two custom origins now: the edge gateway and the feedback API. Only the gateway
+    # origin carries the header, since the feedback API checks the caller's token itself.
     custom_origins = [
         origin
         for origin in distribution["Properties"]["DistributionConfig"]["Origins"]
-        if "CustomOriginConfig" in origin
+        if "OriginCustomHeaders" in origin
     ]
     (gateway_origin,) = custom_origins
     (header,) = gateway_origin["OriginCustomHeaders"]
@@ -921,3 +925,110 @@ def test_dynatrace_subscription_filters_target_the_three_vended_log_groups(templ
         ).keys()
     )
     assert log_group_refs == vended_log_group_ids
+
+
+def test_feedback_method_needs_a_cognito_token_and_a_validated_body(template):
+    methods = template.find_resources("AWS::ApiGateway::Method")
+    (method,) = [m for m in methods.values() if m["Properties"]["HttpMethod"] == "POST"]
+    props = method["Properties"]
+    assert props["AuthorizationType"] == "COGNITO_USER_POOLS"
+    assert "AuthorizerId" in props
+    # A user pool authorizer with no scope reads the bearer as an id token; the page holds
+    # the access token, so the method names a scope every issued token claims.
+    assert props["AuthorizationScopes"] == ["openid"]
+    assert "RequestValidatorId" in props
+    assert props["MethodResponses"] == [{"StatusCode": "202"}, {"StatusCode": "400"}]
+    (validator,) = template.find_resources("AWS::ApiGateway::RequestValidator").values()
+    assert validator["Properties"]["ValidateRequestBody"] is True
+    (model,) = template.find_resources("AWS::ApiGateway::Model").values()
+    schema = model["Properties"]["Schema"]
+    assert schema["additionalProperties"] is False
+    assert set(schema["required"]) == {"vote", "runId", "threadId"}
+    assert schema["properties"]["vote"]["enum"] == ["up", "down", "none"]
+
+
+def test_feedback_integration_puts_one_event_on_the_bus_with_no_compute(template):
+    methods = template.find_resources("AWS::ApiGateway::Method")
+    (method,) = [m for m in methods.values() if m["Properties"]["HttpMethod"] == "POST"]
+    integration = method["Properties"]["Integration"]
+    assert integration["Type"] == "AWS"
+    assert integration["IntegrationHttpMethod"] == "POST"
+    assert "apigateway:us-east-1:events:action/PutEvents" in json.dumps(integration["Uri"])
+    assert integration["RequestParameters"] == {
+        "integration.request.header.X-Amz-Target": "'AWSEvents.PutEvents'",
+        "integration.request.header.Content-Type": "'application/x-amz-json-1.1'",
+    }
+    body = integration["RequestTemplates"]["application/json"]
+    assert '"EventBusName":"guppi-gpt-feedback"' in body
+    assert '"Source":"guppigpt.feedback"' in body
+    # The two fields the request body cannot supply: the subject the authorizer verified
+    # and the time the request arrived.
+    assert "$context.authorizer.claims.sub" in body
+    assert "$context.requestTimeEpoch" in body
+    assert integration["IntegrationResponses"][0]["StatusCode"] == "202"
+    assert integration["IntegrationResponses"][1]["StatusCode"] == "400"
+
+
+def test_feedback_behavior_is_matched_before_the_api_wildcard(template):
+    (distribution,) = template.find_resources("AWS::CloudFront::Distribution").values()
+    config = distribution["Properties"]["DistributionConfig"]
+    # CloudFront compares the path against these patterns in the order they are listed, so
+    # a vote reaches the feedback API rather than the edge gateway only while this holds.
+    assert [b["PathPattern"] for b in config["CacheBehaviors"]] == ["/api/feedback", "/api/*"]
+    feedback_behavior = config["CacheBehaviors"][0]
+    assert feedback_behavior["CachePolicyId"] == "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
+    assert feedback_behavior["OriginRequestPolicyId"] == "b689b0a8-53d0-40ab-baf2-68738e2966ac"
+    (origin,) = [o for o in config["Origins"] if o["Id"] == feedback_behavior["TargetOriginId"]]
+    assert origin["OriginPath"] == "/prod"
+    assert "execute-api" in json.dumps(origin["DomainName"])
+    # The API authorizes every request itself, so this origin carries no secret header.
+    assert "OriginCustomHeaders" not in origin
+
+
+def test_feedback_bus_and_archive_keep_every_vote_without_dynatrace(template):
+    (bus,) = template.find_resources("AWS::Events::EventBus").values()
+    assert bus["Properties"]["Name"] == "guppi-gpt-feedback"
+    assert "Condition" not in bus
+    (archive,) = template.find_resources("AWS::Events::Archive").values()
+    assert "Condition" not in archive
+    assert archive["Properties"]["RetentionDays"] == 30
+    assert archive["Properties"]["EventPattern"] == {"source": ["guppigpt.feedback"]}
+
+
+def test_feedback_reaches_dynatrace_only_when_the_parameters_are_set(template):
+    # All three resources sit under HasDynatraceLogs, the condition that requires both
+    # DynatraceOtlpEndpoint and DynatraceApiToken, so CloudFormation creates none of them
+    # while either parameter is empty, which is the default.
+    (connection,) = template.find_resources("AWS::Events::Connection").values()
+    assert connection["Condition"] == "HasDynatraceLogs"
+    auth = connection["Properties"]["AuthParameters"]["ApiKeyAuthParameters"]
+    assert auth["ApiKeyName"] == "Authorization"
+    assert auth["ApiKeyValue"]["Fn::Join"][1] == [
+        "Api-Token ",
+        {"Ref": "DynatraceApiToken"},
+    ]
+
+    (destination,) = template.find_resources("AWS::Events::ApiDestination").values()
+    assert destination["Condition"] == "HasDynatraceLogs"
+    endpoint = destination["Properties"]["InvocationEndpoint"]
+    assert endpoint["Fn::Join"][1][-1] == "/api/v2/bizevents/ingest"
+
+    (rule,) = template.find_resources("AWS::Events::Rule").values()
+    assert rule["Condition"] == "HasDynatraceLogs"
+    assert rule["Properties"]["EventPattern"] == {"source": ["guppigpt.feedback"]}
+    (target,) = rule["Properties"]["Targets"]
+    assert target["RetryPolicy"] == {"MaximumRetryAttempts": 2}
+    (queue_id,) = template.find_resources("AWS::SQS::Queue").keys()
+    assert target["DeadLetterConfig"]["Arn"] == {"Fn::GetAtt": [queue_id, "Arn"]}
+    body = target["InputTransformer"]["InputTemplate"]
+    assert '"event.type":"guppigpt.reply-feedback"' in body
+    assert '"event.provider":"guppigpt"' in body
+    for field in ("vote", "run.id", "trace.id", "thread.id", "message.id", "request.id"):
+        assert f'"{field}":<' in body
+
+
+def test_feedback_outputs_name_the_api_and_the_bus(template):
+    outputs = template.to_json()["Outputs"]
+    assert json.dumps(outputs["FeedbackApiUrl"]["Value"]).endswith('"/feedback"]]}')
+    (bus_id,) = template.find_resources("AWS::Events::EventBus").keys()
+    assert outputs["FeedbackBusName"]["Value"] == {"Ref": bus_id}
