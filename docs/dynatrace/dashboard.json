@@ -29,8 +29,8 @@
     "4": {
       "type": "data",
       "title": "Retrieval rate",
-      "description": "The MCP client span named mcp tools/call docs___Retrieve appears once per retrieval; runs are the POST /invocations spans.",
-      "query": "fetch spans\n| filter service.name == \"guppi_gpt.DEFAULT\" and (span.name == \"POST /invocations\" or span.name == \"mcp tools/call docs___Retrieve\")\n| summarize runs = countIf(span.name == \"POST /invocations\"), retrievals = countIf(span.name == \"mcp tools/call docs___Retrieve\")\n| fields retrievalRatePct = retrievals * 100.0 / runs",
+      "description": "Share of runs (distinct trace ids with a POST /invocations span) whose trace also holds at least one mcp tools/call docs___Retrieve span. Counting spans rather than traces gave more than 100 percent, since one run can call the tool more than once.",
+      "query": "fetch spans\n| filter service.name == \"guppi_gpt.DEFAULT\" and (span.name == \"POST /invocations\" or span.name == \"mcp tools/call docs___Retrieve\")\n| summarize runs = countDistinctExact(if(span.name == \"POST /invocations\", trace.id)), withRetrieval = countDistinctExact(if(span.name == \"mcp tools/call docs___Retrieve\", trace.id))\n| fields retrievalRatePct = withRetrieval * 100.0 / runs",
       "visualization": "singleValue",
       "visualizationSettings": {}
     },
