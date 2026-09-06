@@ -221,9 +221,11 @@ Dynatrace's AWS integration imports its built-in service metrics by default. The
    confirms the platform's own OTLP settings do not coexist with this stack's, which the
    next section covers. Separately, confirm CloudWatch metrics and the vended logs
    arrive in Dynatrace, using the monitoring role and Firehose stream created in step 5.
-8. Import `docs/dynatrace/dashboard.json` as a starting point for a Dynatrace dashboard,
-   adjusting the wrapper and the two flagged queries (feedback ratio, WAF and loopback
-   counts) against what Grail actually returns for this tenant.
+8. The dashboard exists in the tenant as "GuppiGPT operations" (document id
+   48b747fb-31cf-496c-a05e-cc8dc09e83e1, created 6 Sep 2026 UTC from
+   `docs/dynatrace/dashboard.json`, which is now in the platform's exported shape:
+   `version`, `variables`, `tiles` keyed by id with `type: "data"`, `layouts`). Re-import
+   after edits through the Dashboards app upload or the document API.
 
 ## What was not possible to confirm
 
