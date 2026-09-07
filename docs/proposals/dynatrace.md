@@ -181,9 +181,28 @@ None of this exists yet; the parameters above stay empty until it does.
    follow-up, since a CloudFormation subscription filter cannot target a log group the
    service creates lazily rather than the stack.
 
-## CloudWatch namespaces the integration must import
+## The AWS connection as Dynatrace builds it now
 
-Dynatrace's AWS integration imports its built-in service metrics by default. The metrics this design alarms on live in `AWS/Bedrock-AgentCore` (Invocations, Latency, UserErrors, SystemErrors, Throttles, WafBlocks and the other WAF counters, all observed in the account on 5 Sep 2026) and `AWS/Bedrock` (InvocationThrottles), which are not in that default set. In the Clouds app, edit the AWS connection and add both namespaces as custom metric sources, keying on the gateway and runtime dimensions the metrics carry (Operation, Method, and the resource id). Until that is done, the dashboard's WAF and 4xx tiles show nothing while every span and RUM tile works.
+The role-based connection this proposal first described (a settings object holding a
+role ARN that Dynatrace assumes) turned out to be the older model: the role
+`GuppiGptDynatraceMonitoring` was never assumed and no metric arrived. Dynatrace's
+current integration is push-based. Its wizard (Settings, Cloud and virtualization, AWS,
+New connection) mints two platform tokens and hands over a CloudFormation deployment of
+Dynatrace's own activation template
+(`https://dynatrace-data-acquisition.s3.amazonaws.com/aws/deployment/cfn/latest/da-aws-activation.yaml`),
+which creates a CloudWatch metric stream, Firehose deliveries, and the Lambda functions
+that ship inventory and logs. On 7 Sep 2026 that stack was created in the account as
+`GuppiGPT-Dynatrace` (monitoring configuration id c916ab3f-9014-396d-97dc-4f8985437047,
+region us-east-1, log ingest on, event ingest off, the recommended metric set). It is
+Dynatrace's stack, deployed once by hand outside `GuppiGpt`, and it is the one place in
+the account where Lambda functions exist; the repository rule about Lambda applies to the
+request and content paths, which this stack does not touch. The role-based settings
+object and the CDK role remain but do nothing; removing them is a follow-up.
+
+Which CloudWatch namespaces the stream carries is configured on the connection after it
+is created (the wizard says the monitoring configuration can be modified once the
+connection exists). `AWS/Bedrock-AgentCore` and `AWS/Bedrock` are not in Dynatrace's
+recommended set and must be added there for the dashboard's WAF and 4xx tiles.
 
 ## The flip procedure, in order
 
