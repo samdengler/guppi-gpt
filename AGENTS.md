@@ -170,13 +170,10 @@ set, becomes the `DynatraceBeaconOrigin` parameter the same way `GUPPI_ALARM_EMA
 becomes `AlarmEmail`. The RUM script itself (`web/vendor/ruxitagentjs.js`, gitignored) is
 copied into the bundle at `/dt/ruxitagentjs.js` before the sync when present. Turning RUM
 on for visitors is still the `rum` flag in `web/features.json`, flipped the same way as
-`history` and `feedback`. Two more parameters, `DynatraceAwsAccountId` and
-`DynatraceExternalId` (the latter read from the same 1Password item's `external_id`
-field, or `GUPPI_DYNATRACE_EXTERNAL_ID`), gate a read-only IAM role Dynatrace's AWS
-integration assumes and, reusing the OTLP parameters above, a Firehose stream that
-forwards the vended logs to Dynatrace, both dark until Sam supplies the account id and
-external id from Dynatrace's AWS integration setup page. `docs/proposals/dynatrace.md`
-has the full flip procedure and what Sam has to create in Dynatrace first.
+`history` and `feedback`. Reusing the OTLP parameters above, a Firehose stream forwards
+the vended logs to Dynatrace, dark until Sam supplies real OTLP values.
+`docs/proposals/dynatrace.md` has the full flip procedure and what Sam has to create in
+Dynatrace first.
 
 Reply votes take their own path, off the chat runtime and off the trace
 (`docs/proposals/feedback.md`). The page posts one to `/api/feedback`, a CloudFront
