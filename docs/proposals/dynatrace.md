@@ -94,28 +94,14 @@ the item does not exist), the same style as the Google OAuth client.
 What this does not do: export traces to CloudWatch and Dynatrace at the same time. See
 "What was not possible to confirm" below.
 
-**The AWS integration role and log forwarding.** Two more CfnParameters,
-`DynatraceAwsAccountId` and `DynatraceExternalId` (`no_echo`, both default empty), and a
-`HasDynatraceAws` condition requiring both to be non-empty. Under that condition, an IAM
-role named `GuppiGptDynatraceMonitoring`, trusted by `arn:aws:iam::<DynatraceAwsAccountId>:root`
-with an `sts:ExternalId` condition, carrying Dynatrace's own read-only CloudWatch
-monitoring policy: `cloudwatch:GetMetricData`, `cloudwatch:GetMetricStatistics`,
-`cloudwatch:ListMetrics`, `sts:GetCallerIdentity`, `tag:GetResources`, `tag:GetTagKeys`,
-and about ninety Describe or List actions across the services Dynatrace's AWS monitoring
-integration polls, taken from the `MonitoringPolicy` statement in Dynatrace's own
-CloudFormation template
-(`github.com/dynatrace-oss/cloud-snippets/blob/main/aws/role-based-access/role_based_access_monitored_account_template.yml`),
-the template Dynatrace's own AWS integration setup page generates. `wafv2:List*` is
-added on top of that list, since WAF is a service this stack uses that is not one of
-the roughly ninety services in Dynatrace's own policy. The role's ARN is a stack
-output, `DynatraceMonitoringRoleArn`,
-present only under the condition. The two pages the original ask named for this policy
-(`docs.dynatrace.com/docs/ingest-from/amazon-web-services/aws-platform/set-up-aws-monitoring`
-and its `-role` variant) return 404 as of 4 September 2026, the same finding recorded
-above for a different Dynatrace page;
-`docs.dynatrace.com/docs/ingest-from/amazon-web-services/ingest-telemetry/aws-cloudwatch-metrics`
-confirms the external-id trust policy and the `ListMetrics` and `GetMetricData` calls
-without itself listing every action.
+**The AWS integration role, removed, and log forwarding.** This stack originally created
+an IAM role, `GuppiGptDynatraceMonitoring`, gated by two CfnParameters,
+`DynatraceAwsAccountId` and `DynatraceExternalId`, for Dynatrace's role-based AWS
+monitoring integration. IAM showed the role was never assumed, and Dynatrace's own
+integration turned out to be push-based rather than role-based; the role, its two
+parameters, its `HasDynatraceAws` condition, and its `DynatraceMonitoringRoleArn` output
+were removed from the stack on 7 Sep 2026. "The AWS connection as Dynatrace builds it
+now," below, covers what replaced it and what stays in the tenant.
 
 Log forwarding reuses `DynatraceOtlpEndpoint` and `DynatraceApiToken` rather than adding
 a third parameter that names the same tenant again. A `HasDynatraceLogs` condition
@@ -170,11 +156,12 @@ None of this exists yet; the parameters above stay empty until it does.
    script posts session data to.
 3. An API token with three scopes: `openTelemetryTrace.ingest` (for the OTLP trace
    export above), `logs.ingest`, and `metrics.ingest` (for the AWS integration below).
-4. The AWS integration, started from Dynatrace's own AWS integration setup page: note the
-   AWS account id and the external id it generates. These become the
-   `DynatraceAwsAccountId` and `DynatraceExternalId` parameters; the stack creates the
-   `GuppiGptDynatraceMonitoring` role itself (above), so there is no separate
-   CloudFormation template to deploy for this step.
+4. The AWS integration, connected through Dynatrace's own push-based wizard (Settings,
+   Cloud and virtualization, AWS, New connection), which deploys Dynatrace's own
+   CloudFormation activation stack outside `GuppiGpt`. See "The AWS connection as
+   Dynatrace builds it now," below, for the actual steps this took; the role-based
+   description this proposal originally gave for this step was removed from the stack on
+   7 Sep 2026.
 5. Log forwarding needs nothing further here: it turns on with the OTLP endpoint and API
    token from step 3 above (`DynatraceOtlpEndpoint`, `DynatraceApiToken`), through the
    Firehose stream the stack creates (above). Only the runtime's own log group is a
@@ -196,8 +183,13 @@ that ship inventory and logs. On 7 Sep 2026 that stack was created in the accoun
 region us-east-1, log ingest on, event ingest off, the recommended metric set). It is
 Dynatrace's stack, deployed once by hand outside `GuppiGpt`, and it is the one place in
 the account where Lambda functions exist; the repository rule about Lambda applies to the
-request and content paths, which this stack does not touch. The role-based settings
-object and the CDK role remain but do nothing; removing them is a follow-up.
+request and content paths, which this stack does not touch. The CDK role and its
+`DynatraceAwsAccountId` and `DynatraceExternalId` parameters were removed from the stack
+on 7 Sep 2026, since IAM showed `GuppiGptDynatraceMonitoring` had never been assumed (no
+`RoleLastUsed`) while the activation stack's own role, `DynatraceMonitoringRole-wfd05358-...`,
+is assumed every few minutes. The role-based settings object stays in the tenant: the
+push-based configuration references it as its credential entry, and the role ARN it
+still carries is unused.
 
 The first stack attempt failed at its last step: the settings token the wizard mints
 lacked `extensions:configurations:read`, which the template's report step calls with,
@@ -230,27 +222,27 @@ account.
 ## The flip procedure, in order
 
 1. Complete the five steps above in Dynatrace: tenant, RUM application (note its beacon
-   origin), API token (three scopes), the AWS integration setup page (note the AWS
-   account id and the external id), Firehose log forwarding (nothing further needed here).
+   origin), API token (three scopes), the AWS integration through Dynatrace's own
+   push-based wizard (see "The AWS connection as Dynatrace builds it now," below),
+   Firehose log forwarding (nothing further needed here).
 2. Save the RUM application's manually-injected JavaScript as
    `web/vendor/ruxitagentjs.js` (gitignored; not committed).
 3. Create the `GuppiGPT Dynatrace` item in the Personal 1Password vault, an API
    Credential item, `hostname` set to the OTLP base endpoint
    (`https://<tenant>.live.dynatrace.com/api/v2/otlp`, no trailing slash, no `/v1/traces`
-   suffix), `credential` set to the API token from step 1, and a custom `external_id`
-   field set to the external id from the AWS integration setup page.
+   suffix), and `credential` set to the API token from step 1. The item may still carry a
+   custom `external_id` field from before 7 Sep 2026; nothing reads it any more, since the
+   CDK role that used it was removed from the stack that day.
 4. Set `GUPPI_DYNATRACE_BEACON_ORIGIN` to the RUM application's beacon origin (for
-   example `https://bfxxxxxx.bf.dynatrace.com`) and `GUPPI_DYNATRACE_AWS_ACCOUNT_ID` to
-   the AWS account id from the AWS integration setup page, both in the shell that runs
+   example `https://bfxxxxxx.bf.dynatrace.com`) in the shell that runs
    `scripts/deploy.sh`.
-5. Run `scripts/deploy.sh`. This reads the OTLP endpoint, the API token, and the external
-   id from 1Password (`DynatraceOtlpEndpoint`, `DynatraceApiToken`,
-   `DynatraceExternalId`), passes `DynatraceBeaconOrigin` and `DynatraceAwsAccountId` from
-   the environment variables above, copies `web/vendor/ruxitagentjs.js` into
+5. Run `scripts/deploy.sh`. This reads the OTLP endpoint and the API token from 1Password
+   (`DynatraceOtlpEndpoint`, `DynatraceApiToken`), passes `DynatraceBeaconOrigin` from the
+   environment variable above, copies `web/vendor/ruxitagentjs.js` into
    `web/dist/dt/ruxitagentjs.js` before the sync, and writes `config.rum` into
    `config.json` from the stack's `RumScriptPath` and `RumBeaconOrigin` outputs. The page
-   still behaves exactly as before, since the `rum` flag is still off; the monitoring role
-   and the Firehose stream start working immediately, with nothing on the page to flip.
+   still behaves exactly as before, since the `rum` flag is still off; the Firehose stream
+   starts working immediately, with nothing on the page to flip.
 6. Edit `web/features.json`, set `"rum": true`, run `scripts/deploy.sh --site-only`
    (`docs/proposals/feature-flags.md`'s flip procedure) to publish the flag flip alone.
 7. Verify: load the page, confirm `window.dtrum` is defined in the browser console,
@@ -261,8 +253,9 @@ account.
    reach CloudWatch Transaction Search for that trace id, since step 5 also changed
    where the runtime exports traces (see below); if CloudWatch tracing stopped, that
    confirms the platform's own OTLP settings do not coexist with this stack's, which the
-   next section covers. Separately, confirm CloudWatch metrics and the vended logs
-   arrive in Dynatrace, using the monitoring role and Firehose stream created in step 5.
+   next section covers. Separately, confirm CloudWatch metrics arrive in Dynatrace
+   through the push-based AWS connection (outside this repo) and the vended logs arrive
+   through the Firehose stream created in step 5.
 8. The dashboard exists in the tenant as "GuppiGPT operations" (document id
    48b747fb-31cf-496c-a05e-cc8dc09e83e1, created 6 Sep 2026 UTC from
    `docs/dynatrace/dashboard.json`, which is now in the platform's exported shape:

@@ -794,61 +794,17 @@ def test_conversation_key_secret_has_no_template(template):
     assert "SecretStringTemplate" not in generator and "GenerateStringKey" not in generator
 
 
-def test_dynatrace_aws_parameters_and_condition(template):
-    template.has_parameter("DynatraceAwsAccountId", {"Default": ""})
-    template.has_parameter("DynatraceExternalId", {"NoEcho": True, "Default": ""})
-    conditions = template.to_json().get("Conditions", {})
-    assert "HasDynatraceAws" in conditions
-    expression = conditions["HasDynatraceAws"]
-    assert "Fn::And" in expression
-    assert len(expression["Fn::And"]) == 2
-
-
-def test_dynatrace_monitoring_role_is_conditional_and_trusts_with_an_external_id(template):
+def test_dynatrace_monitoring_role_is_gone(template):
+    # The role-based Dynatrace AWS integration was removed on 7 Sep 2026: Dynatrace's own
+    # push-based activation stack, deployed outside this repo, polls CloudWatch on its own.
     roles = template.find_resources("AWS::IAM::Role")
-    (role,) = [
-        r
-        for r in roles.values()
-        if r["Properties"].get("RoleName") == "GuppiGptDynatraceMonitoring"
-    ]
-    assert role["Condition"] == "HasDynatraceAws"
-    statement = role["Properties"]["AssumeRolePolicyDocument"]["Statement"][0]
-    assert statement["Principal"]["AWS"] == {
-        "Fn::Join": ["", ["arn:aws:iam::", {"Ref": "DynatraceAwsAccountId"}, ":root"]]
-    }
-    assert statement["Condition"]["StringEquals"]["sts:ExternalId"] == {
-        "Ref": "DynatraceExternalId"
-    }
-
-
-def test_dynatrace_monitoring_role_carries_the_read_only_metrics_actions(template):
-    roles = template.find_resources("AWS::IAM::Role")
-    (role,) = [
-        r
-        for r in roles.values()
-        if r["Properties"].get("RoleName") == "GuppiGptDynatraceMonitoring"
-    ]
-    (policy,) = role["Properties"]["Policies"]
-    (statement,) = policy["PolicyDocument"]["Statement"]
-    actions = set(statement["Action"])
-    assert {
-        "cloudwatch:GetMetricData",
-        "cloudwatch:GetMetricStatistics",
-        "cloudwatch:ListMetrics",
-        "sts:GetCallerIdentity",
-        "tag:GetResources",
-        "logs:DescribeLogGroups",
-        "cloudfront:ListDistributions",
-        "wafv2:List*",
-        "s3:ListAllMyBuckets",
-        "lambda:ListFunctions",
-    }.issubset(actions)
-    assert statement["Resource"] == "*"
-
-
-def test_dynatrace_monitoring_role_arn_output_is_conditional(template):
-    outputs = template.to_json()["Outputs"]
-    assert outputs["DynatraceMonitoringRoleArn"]["Condition"] == "HasDynatraceAws"
+    names = {r["Properties"].get("RoleName") for r in roles.values()}
+    assert "GuppiGptDynatraceMonitoring" not in names
+    rendered = template.to_json()
+    assert "DynatraceAwsAccountId" not in rendered.get("Parameters", {})
+    assert "DynatraceExternalId" not in rendered.get("Parameters", {})
+    assert "HasDynatraceAws" not in rendered.get("Conditions", {})
+    assert "DynatraceMonitoringRoleArn" not in rendered.get("Outputs", {})
 
 
 def test_dynatrace_logs_condition_reuses_the_otlp_parameters(template):
