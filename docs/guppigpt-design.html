@@ -627,6 +627,8 @@ data: {"type":"RUN_FINISHED","threadId":"...","runId":"..."}</code></pre>
 
 <p><strong>Dynatrace RUM (flag <code>rum</code>, on).</strong> The page inserts a script element pointing at the self-hosted RUM script in the site bucket, a same-origin path, so <code>script-src 'self'</code> is unchanged; the beacon origin is what the Content Security Policy has to admit, and it comes from a stack parameter. Once <code>window.dtrum</code> exists, an OpenFeature hook reports each flag evaluation as a session property, so a session shows which flags it saw. <code>dtrum.identifyUser</code> is available behind <code>config.rum.identifyUser</code> and is off. Details, including what has to exist in the tenant first: <code>docs/proposals/dynatrace.md</code>.</p>
 
+<p><strong>Privacy and terms.</strong> <code>privacy.html</code> and <code>terms.html</code> sit beside <code>index.html</code>, copied into the bundle the same way, so Google's OAuth consent screen has public URLs to link to.</p>
+
 <h2 id="agent">9. Agent design</h2>
 
 <p>One Python package (<code>app.py</code>, <code>agent.py</code>, <code>validation.py</code>, <code>keepalive.py</code>, <code>conversation_log.py</code>) in an arm64 container that the CDK stack registers on AgentCore Runtime with protocol <code>AGUI</code>. The runtime fronts the container, so the package contains a FastAPI app with <code>/invocations</code> and <code>/ping</code>, the Strands agent, and the AG-UI adapter. In order, per run:</p>
