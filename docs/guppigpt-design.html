@@ -220,9 +220,11 @@ h2:hover .anchor { opacity: 1; }
 
 <h2 id="problem">1. The problem</h2>
 
-<p>A person opens <code>chat.dengler.io</code>, signs in with Google, sees a greeting and a text box, types a question, and watches the answer appear word by word. When the question touches material in the knowledge base, the agent looks it up first and a short status line says so. They ask a follow-up and the answer accounts for what was said before. They close the tab and the conversation is gone. The next visit starts from a blank page, signed in.</p>
+<p>A person opens <code>chat.dengler.io</code>, signs in with Google, sees a greeting and a text box, types a question, and watches the answer appear word by word. When the question touches material in the knowledge base, the agent looks it up first and a short status line says so. They ask a follow-up and the answer accounts for what was said before. They close the tab and the thread leaves the page. The next visit opens on a blank page, already signed in.</p>
 
-<p>That is the whole product. The claude.ai interface carries a great deal more: conversation history, projects, attachments, artifacts, model selection. GuppiGPT keeps the conversational core, adds one retrieval tool, and drops the rest. The value of the exercise is a system small enough to hold in one head that still exercises the managed agent stack end to end: identity, runtime, gateway, knowledge base.</p>
+<p>Four things outlive the tab. The sign-in session persists: the refresh token sits in IndexedDB and rotates on every use, so a reload restores the session with a silent refresh instead of a redirect. Each conversation is written to a private S3 bucket and kept for 30 days, under a keyed hash of the account rather than the account itself, so a reply that came back wrong can be read back while it is being investigated. A vote on a reply is recorded as a business event on a path of its own. A Chats panel that keeps threads in the browser is built behind a feature flag and is off. The page reads none of this back: what it shows is what the current tab has produced.</p>
+
+<p>That is the whole product. The claude.ai interface carries a great deal more: conversation history, projects, attachments, artifacts, model selection. GuppiGPT keeps the conversational core, adds one retrieval tool, and drops the rest. The value of the exercise is a system small enough to hold in one head that still exercises the managed agent stack end to end: identity, runtime, gateway, knowledge base, and observability.</p>
 
 <p>The design has to answer five questions: what the page looks like and how it behaves, how a user is identified, how the browser talks to the agent, which AWS services sit between the browser and the model, and what protocol carries the stream.</p>
 
@@ -243,9 +245,36 @@ h2:hover .anchor { opacity: 1; }
 <li>When the user submits a non-empty message, the system shall append the message to the visible thread and start an agent run.</li>
 <li>While a run is in progress, the system shall render each text delta as it arrives, and shall disable the send control.</li>
 <li>When the user submits a message, the system shall include every prior message of the current page session in the run, so that replies carry context.</li>
-<li>While the <code>history</code> feature flag is off (the default), when the page is reloaded or closed the system shall discard the conversation, and no message shall be persisted on the server or in browser storage.</li>
-<li>While the <code>history</code> feature flag is on, the system shall keep threads in the browser's IndexedDB only, shall let the user open, delete, and clear them, shall clear them on sign out, and shall say so in the composer hint. No message shall be persisted on the server.</li>
+<li>While the <code>history</code> feature flag is off (the default), when the page is reloaded or closed the system shall discard the conversation, and no message shall be persisted in browser storage.</li>
+<li>While the <code>history</code> feature flag is on, the system shall keep threads in the browser's IndexedDB only, shall let the user open, delete, and clear them, shall clear them on sign out, and shall say so in the composer hint.</li>
 <li>When the user activates New chat, the system shall clear the thread and return to the empty state.</li>
+</ul>
+
+<h3>Conversation logging</h3>
+<ul>
+<li>When a run's stream ends, the agent shall write the thread's record, the messages as the page sent them plus the reply, the created and updated times, and one entry per run, to the conversation log bucket, keeping the previous version.</li>
+<li>The thread record shall identify the user by a keyed hash of the subject claim only, and shall carry neither the bearer token, nor the email address, nor the raw subject claim.</li>
+<li>If a thread record cannot be read or written, then the agent shall log the failure and shall leave the run's events and outcome unchanged.</li>
+<li>The system shall let the runtime read and write thread records by key, and shall let only the investigator role read them and the subject key.</li>
+<li>The system shall expire a thread record 30 days after its last write.</li>
+<li>While the <code>logging</code> feature flag is on, the page shall state in the composer hint and the empty state that conversations are logged for troubleshooting.</li>
+</ul>
+
+<h3>Feedback</h3>
+<ul>
+<li>While the <code>feedback</code> feature flag is on, when a reply has finished streaming, the system shall offer an up and a down vote beneath it.</li>
+<li>When the user chooses the vote already recorded, the system shall withdraw it, and the withdrawal shall be recorded in its own right.</li>
+<li>When a vote is cast or withdrawn, the system shall post it to the feedback API, which shall put one event on the feedback bus, which shall keep it for 30 days and forward it to Dynatrace as a business event.</li>
+<li>A vote shall carry the thread, run, trace, request, and message ids, and shall carry no message text.</li>
+<li>If the vote request fails, then the system shall leave the reply and the thread unchanged and shall not interrupt the conversation.</li>
+</ul>
+
+<h3>Traceability</h3>
+<ul>
+<li>When the user sends a message, the page shall mint a W3C <code>traceparent</code> for that run and shall send it with the request.</li>
+<li>The agent shall write one JSON record per run carrying the trace id, the runtime request id, the thread, run, and session ids, the token counts, the latencies, and the outcome, and no message text.</li>
+<li>The container shall emit spans for the run, the model call, and the retrieval under the trace id the page minted.</li>
+<li>The system shall stamp the run, trace, and request ids on the reply element, where support can read them without a network capture.</li>
 </ul>
 
 <h3>Retrieval</h3>
@@ -273,6 +302,10 @@ h2:hover .anchor { opacity: 1; }
 <ul>
 <li>The system shall serve the page and the agent endpoint from one domain, with no cross-origin request from the browser.</li>
 <li>The system shall be deployable from one infrastructure definition with one command.</li>
+<li>The system shall read feature flag defaults from a file committed to the repository, and a flag flip shall need a page publish rather than a stack deploy.</li>
+<li>When a <code>ff</code> query parameter names flags, the page shall apply them to that browser tab alone for the rest of the tab's life.</li>
+<li>No observability shall sit behind a feature flag, except the RUM script, whose injection starts a vendor library rather than reading state the page already holds.</li>
+<li>When spend, a web ACL metric, the nightly ingestion, a gateway or runtime error rate, runtime p90 latency, or model throttling crosses its threshold, the system shall notify the alarm topic.</li>
 </ul>
 
 <h2 id="page-design">3. Page design</h2>
@@ -291,7 +324,7 @@ h2:hover .anchor { opacity: 1; }
   </div>
   <div class="composer">
     <div class="input">Reply to GuppiGPT</div>
-    <div class="row"><div class="hint">Enter to send, Shift+Enter for a new line. Nothing is saved.</div><div class="send off">&#8593;</div></div>
+    <div class="row"><div class="hint">Enter to send, Shift+Enter for a new line. Conversations are logged for troubleshooting.</div><div class="send off">&#8593;</div></div>
   </div>
 </div>
 <figcaption>Figure 1. The page mid-reply after a knowledge base lookup. The status line records the tool call and the reply streams in as plain text.</figcaption>
@@ -303,7 +336,7 @@ h2:hover .anchor { opacity: 1; }
 
 <p><strong>Thread.</strong> User messages sit on the right in a filled bubble. Agent replies sit on the left with no bubble, a small label, and plain text with newlines preserved. When the agent calls the retrieval tool, a muted status line ("Searching the knowledge base") appears above the reply and settles to past tense when the tool returns. The thread scrolls to the bottom on every new delta unless the user has scrolled up, in which case a small "Jump to latest" pill appears.</p>
 
-<p><strong>Composer.</strong> A textarea that grows to a maximum of eight lines, a send button, and a one-line hint. With the <code>history</code> flag on, the hint's second sentence becomes "Chats are saved on this device only." and a Chats control joins the header. With the <code>feedback</code> flag on, two muted thumbs under each finished reply take an up or down vote. The hint states the keyboard behavior and that nothing is saved; the second sentence is the only privacy notice the app needs, and it stays visible at all times.</p>
+<p><strong>Composer.</strong> A textarea that grows to a maximum of eight lines, a send button, and a one-line hint. The hint states the keyboard behavior and then what becomes of the conversation, which is the only privacy notice the app needs and stays visible at all times. That second sentence follows two flags, and the wording for every combination lives in <code>web/src/copy.js</code>: with both off, "Nothing is saved."; with <code>logging</code> on, the deployed state, "Conversations are logged for troubleshooting."; with <code>history</code> on, "Chats are saved on this device."; with both on, one sentence carrying both clauses. The <code>history</code> flag also puts a Chats control in the header. The <code>feedback</code> flag, on, puts two muted thumbs under each finished reply to take an up or down vote.</p>
 
 <h3>States</h3>
 
@@ -315,7 +348,7 @@ h2:hover .anchor { opacity: 1; }
 </div>
 <div class="mock">
   <div class="bar"><div class="brand"><span></span>GuppiGPT</div><div class="right"><div class="avatar">SD</div></div></div>
-  <div class="thread"><div class="empty"><h4>What can I help with?</h4><p>Ask anything. This conversation is not saved.</p></div></div>
+  <div class="thread"><div class="empty"><h4>What can I help with?</h4><p>Ask anything. Conversations are logged for troubleshooting.</p></div></div>
   <div class="composer"><div class="input">Ask GuppiGPT</div>
     <div class="row"><div class="hint">Enter to send, Shift+Enter for a new line.</div><div class="send off">&#8593;</div></div></div>
 </div>
