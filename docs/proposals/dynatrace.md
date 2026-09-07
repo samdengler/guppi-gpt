@@ -217,7 +217,14 @@ the CloudFront web ACL's BlockedRequests. Polled metrics arrive under keys of th
 `cloud.aws.<service>.<Metric>.By.<Dimension>...`, for example
 `cloud.aws.cloudfront.Requests.By.DistributionId.Region`, with the polling source in the
 `dt.da.source` field as `aws-metric-poller`; no CloudWatch metric stream exists in the
-account.
+account. As of 22:30 UTC on 7 Sep 2026, ninety minutes after the rows and the WAFv2
+service were saved, no `bedrock`, `waf`, or `apigateway` key had appeared while the
+built-in CloudFront, Lambda, SQS, and ECR keys kept arriving every few minutes; the
+monitoring configuration's status endpoint answered OK, its deployment status COMPLETE,
+and the connection logs held only KMS inventory warnings. Either the poller refreshes its
+service list on a long cycle or the custom rows need something the panel does not say;
+if the keys are still missing a day later it is a question for Dynatrace support. The
+dashboard's two metric tiles keep their guessed keys until the real ones are known.
 
 ## The flip procedure, in order
 
