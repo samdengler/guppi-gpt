@@ -961,10 +961,12 @@ def test_feedback_integration_puts_one_event_on_the_bus_with_no_compute(template
     body = integration["RequestTemplates"]["application/json"]
     assert '"EventBusName":"guppi-gpt-feedback"' in body
     assert '"Source":"guppigpt.feedback"' in body
-    # The two fields the request body cannot supply: the subject the authorizer verified
-    # and the time the request arrived.
-    assert "$context.authorizer.claims.sub" in body
+    # The one field the request body cannot supply is the time the request arrived. The
+    # caller's Cognito sub claim stays out of the event: the template cannot hash it, and
+    # a vote joins its conversation through threadId rather than through the subject.
     assert "$context.requestTimeEpoch" in body
+    assert "claims.sub" not in body
+    assert "subject" not in body
     assert integration["IntegrationResponses"][0]["StatusCode"] == "202"
     assert integration["IntegrationResponses"][1]["StatusCode"] == "400"
 
@@ -1025,6 +1027,26 @@ def test_feedback_reaches_dynatrace_only_when_the_parameters_are_set(template):
     assert '"event.provider":"guppigpt"' in body
     for field in ("vote", "run.id", "trace.id", "thread.id", "message.id", "request.id"):
         assert f'"{field}":<' in body
+    assert "subject" not in body
+
+
+def test_feedback_dead_letter_queue_has_an_alarm_under_the_same_condition(template):
+    (queue_id,) = template.find_resources("AWS::SQS::Queue").keys()
+    alarms = template.find_resources("AWS::CloudWatch::Alarm")
+    (alarm,) = [
+        a
+        for a in alarms.values()
+        if a["Properties"].get("Namespace") == "AWS/SQS"
+        and a["Properties"].get("MetricName") == "ApproximateNumberOfMessagesVisible"
+    ]
+    assert alarm["Condition"] == "HasDynatraceLogs"
+    assert alarm["Properties"]["Dimensions"] == [
+        {"Name": "QueueName", "Value": {"Fn::GetAtt": [queue_id, "QueueName"]}}
+    ]
+    assert alarm["Properties"]["Threshold"] == 1
+    assert alarm["Properties"]["TreatMissingData"] == "notBreaching"
+    (action,) = alarm["Properties"]["AlarmActions"]
+    assert action == {"Ref": next(iter(template.find_resources("AWS::SNS::Topic")))}
 
 
 def test_feedback_outputs_name_the_api_and_the_bus(template):

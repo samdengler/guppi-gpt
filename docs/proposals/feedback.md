@@ -259,10 +259,10 @@ role that trusts `apigateway.amazonaws.com` and may put events on the one bus. T
 request parameters are the target header (`AWSEvents.PutEvents`) and the JSON 1.1 content
 type the EventBridge API expects. The body mapping template reads each field from the
 validated body, escapes it for JSON, and builds one entry whose `Detail` is a string, as
-PutEvents requires. Two fields do not come from the body: `subject`, the Cognito `sub`
-claim the authorizer verified (`$context.authorizer.claims.sub`), and `receivedAt`, the
-epoch millisecond API Gateway received the request (`$context.requestTimeEpoch`). A 200
-from PutEvents maps to a 202 with an empty body, and a 4xx to a 400.
+PutEvents requires. One field does not come from the body: `receivedAt`, the epoch
+millisecond API Gateway received the request (`$context.requestTimeEpoch`). The caller's
+Cognito `sub` claim travelled as `subject` until 7 Sep 2026 and is now left out (see the
+follow-ups). A 200 from PutEvents maps to a 202 with an empty body, and a 4xx to a 400.
 
 **The bus and the rule.** An `aws_events.EventBus` named `guppi-gpt-feedback`, with one
 rule matching `source: guppigpt.feedback`.
@@ -276,10 +276,13 @@ derived from `DynatraceOtlpEndpoint` the same way the Firehose logs endpoint is:
 the fixed `/api/v2/otlp` suffix, append the ingest path. The rule's input transformer
 builds the body: `event.type` is `guppigpt.reply-feedback`, `event.provider` is
 `guppigpt`, and the vote, `run.id`, `trace.id`, `thread.id`, `message.id`, `request.id`,
-`subject`, and `received_at` follow as flat fields, since Grail stores every top-level
-attribute of an ingested event as a top-level field and turns a nested object into a
-string. The target retries twice and sends what it cannot deliver to an SQS dead letter
-queue that holds it for 14 days.
+and `received_at` follow as flat fields, since Grail stores every top-level attribute of
+an ingested event as a top-level field and turns a nested object into a string. The
+target retries twice and sends what it cannot deliver to an SQS dead letter queue that
+holds it for 14 days. A CloudWatch alarm (`FeedbackDeadLetterAlarm`) on the queue's
+visible message count, at least one over five minutes, goes to the alarm topic, since
+EventBridge itself reports nothing when a target keeps failing; the alarm sits under the
+same `HasDynatraceLogs` condition as the queue.
 
 The ingest facts above come from "Ingest business events via API"
 (https://docs.dynatrace.com/docs/observe/business-analytics/ba-api-ingest, which redirects
@@ -349,14 +352,16 @@ onto the bus.
 
 ### Follow-ups
 
-- Hashing the subject to the pseudonym the agent already uses. The event carries the raw
-  Cognito `sub` today, because the mapping template has no HMAC and the agent's pseudonym
-  is a keyed hash of the same claim (`agent/src/guppi_agent/conversation_log.py`). Until
-  that is closed, a vote cannot be joined to a conversation record by subject, only by
-  run id and trace id, and the raw subject sits in Dynatrace. Closing it needs the hash
-  computed somewhere: an EventBridge input transformer cannot do it, so the candidates are
-  the page (which does not hold the key) or a processing step the no-Lambda rule rules
-  out. The simplest answer may be to stop sending the subject at all.
+- The subject, closed on 7 Sep 2026 by dropping it. The event carried the raw Cognito
+  `sub` at first, because the mapping template has no HMAC and the agent's pseudonym is a
+  keyed hash of the same claim (`agent/src/guppi_agent/conversation_log.py`). Computing
+  the hash would need the page (which does not hold the key) or a processing step, and a
+  raw subject in Dynatrace is what the pseudonym exists to avoid. The event now carries no
+  subject at all. A vote still reaches its conversation: `thread.id` on the event is the
+  key of the thread record in the conversation log bucket, and that record holds the
+  pseudonym, so the join by subject goes through the investigator role like every other
+  re-identification. Votes ingested before the change keep their `subject` field in
+  Dynatrace until the tenant's retention drops them.
 - An S3 archive through Firehose, if votes are ever wanted beyond the 30 days the bus
   archive keeps.
 - An `OPTIONS` mock method on the resource, if a preflight ever appears. It cannot today:

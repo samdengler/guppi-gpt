@@ -350,9 +350,12 @@ FEEDBACK_ID_MAX_LENGTH = 200
 # replaceAll puts it back. A missing optional field leaves its Velocity reference unset
 # (Velocity skips a #set whose right side is null), so each optional field is given an
 # empty string before it is escaped. PutEvents takes Detail as a string rather than an
-# object, which is what the escaped braces below build. subject and receivedAt do not come
-# from the body: the subject is the Cognito sub claim the authorizer verified, and
-# receivedAt is the epoch millisecond API Gateway received the request.
+# object, which is what the escaped braces below build. receivedAt does not come from the
+# body: it is the epoch millisecond API Gateway received the request. The caller's
+# Cognito sub claim is left out on purpose. The template has no HMAC, so the claim could
+# only travel raw, and a raw subject in Dynatrace is what the conversation log's
+# pseudonym exists to avoid; a vote joins its conversation through threadId, and the
+# thread record in the conversation log bucket holds the pseudonym.
 _FEEDBACK_TEMPLATE_SETUP = r"""
 #set($vote = $util.escapeJavaScript($input.path('$.vote')).replaceAll("\\'", "'"))
 #set($runId = $util.escapeJavaScript($input.path('$.runId')).replaceAll("\\'", "'"))
@@ -370,7 +373,6 @@ _FEEDBACK_TEMPLATE_SETUP = r"""
 _FEEDBACK_TEMPLATE_DETAIL = (
     r"{\"vote\":\"$vote\",\"runId\":\"$runId\",\"threadId\":\"$threadId\","
     r"\"traceId\":\"$traceId\",\"requestId\":\"$requestId\",\"messageId\":\"$messageId\","
-    r"\"subject\":\"$context.authorizer.claims.sub\","
     r"\"receivedAt\":$context.requestTimeEpoch}"
 )
 FEEDBACK_REQUEST_TEMPLATE = (
@@ -1309,7 +1311,6 @@ class GuppiGptStack(cdk.Stack):
                             "thread.id": events.EventField.from_path("$.detail.threadId"),
                             "message.id": events.EventField.from_path("$.detail.messageId"),
                             "request.id": events.EventField.from_path("$.detail.requestId"),
-                            "subject": events.EventField.from_path("$.detail.subject"),
                             "received_at": events.EventField.from_path("$.detail.receivedAt"),
                         }
                     ),
@@ -1318,11 +1319,28 @@ class GuppiGptStack(cdk.Stack):
                 )
             ],
         )
+        # A vote in the dead letter queue is a vote Dynatrace never saw. EventBridge
+        # reports nothing when a target keeps failing, so the queue depth is the signal:
+        # any message at all, and the alarm goes to the same topic as the rest.
+        feedback_dlq_alarm = cloudwatch.Alarm(
+            self,
+            "FeedbackDeadLetterAlarm",
+            alarm_description="A reply vote landed in the feedback dead letter queue",
+            metric=feedback_dlq.metric_approximate_number_of_messages_visible(
+                period=Duration.minutes(5), statistic="Maximum"
+            ),
+            threshold=1,
+            evaluation_periods=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
+        )
+        feedback_dlq_alarm.add_alarm_action(cloudwatch_actions.SnsAction(alarm_topic))
         for construct in (
             feedback_connection,
             feedback_destination,
             feedback_dlq,
             feedback_rule,
+            feedback_dlq_alarm,
         ):
             _apply_condition(construct, has_dynatrace_logs)
 
