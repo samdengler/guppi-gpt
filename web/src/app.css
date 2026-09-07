@@ -56,7 +56,7 @@ body {
   padding: 1rem 0;
 }
 
-.brand { font-size: 1.05rem; font-weight: 600; }
+.brand { font-size: 1.05rem; font-weight: 600; color: inherit; text-decoration: none; }
 
 .header-actions { display: flex; align-items: center; gap: .75rem; }
 
@@ -210,5 +210,20 @@ body {
 .send-btn:disabled { opacity: .4; cursor: default; }
 
 .hint { color: var(--muted); font-size: .78rem; margin: .5rem 0 0; text-align: center; }
+
+.signin-links, .legal-links { color: var(--muted); font-size: .8rem; margin: .75rem 0 0; }
+.signin-links a, .legal-links a { color: var(--muted); }
+.signin-links a:hover, .legal-links a:hover { color: var(--fg); }
+
+.legal {
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: 0 0 2rem;
+  line-height: 1.6;
+}
+.legal h1 { font-size: 1.6rem; margin: 0 0 .5rem; }
+.legal h2 { font-size: 1.05rem; margin: 1.75rem 0 .4rem; }
+.legal p { margin: 0 0 .9rem; }
+.legal-dates { color: var(--muted); font-size: .85rem; }
 
 [hidden] { display: none !important; }
