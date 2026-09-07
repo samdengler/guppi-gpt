@@ -200,108 +200,6 @@ RATE_LIMIT_CONCURRENT_CONNECTIONS = 2
 VENDED_LOG_PREFIX = "/aws/vendedlogs/bedrock-agentcore"
 VENDED_LOG_RETENTION = logs.RetentionDays.ONE_MONTH
 
-# Dynatrace AWS monitoring role (docs/proposals/dynatrace.md), shipped dark under
-# HasDynatraceAws below. The action list is Dynatrace's own read-only CloudWatch metrics
-# monitoring policy, taken verbatim from the MonitoringPolicy statement in
-# https://github.com/dynatrace-oss/cloud-snippets/blob/main/aws/role-based-access/
-# role_based_access_monitored_account_template.yml (the CloudFormation template
-# Dynatrace's own AWS integration setup page generates), cross-checked against
-# https://docs.dynatrace.com/docs/ingest-from/amazon-web-services/ingest-telemetry/
-# aws-cloudwatch-metrics, which confirms the external-id trust policy and the
-# cloudwatch:ListMetrics and cloudwatch:GetMetricData calls but does not itself list every
-# action. The two set-up pages named in the original ask
-# (aws-platform/set-up-aws-monitoring[-role]) return 404 as of 4 September 2026, the same
-# finding docs/proposals/dynatrace.md already recorded for a different Dynatrace page.
-# wafv2:List* is added on top of Dynatrace's list: WAF is a service this stack uses that
-# is not one of the roughly ninety services in Dynatrace's own list.
-DYNATRACE_MONITORING_POLICY_ACTIONS = [
-    "acm-pca:ListCertificateAuthorities",
-    "apigateway:GET",
-    "apprunner:ListServices",
-    "appstream:DescribeFleets",
-    "appsync:ListGraphqlApis",
-    "athena:ListWorkGroups",
-    "autoscaling:DescribeAutoScalingGroups",
-    "cloudformation:ListStackResources",
-    "cloudfront:ListDistributions",
-    "cloudhsm:DescribeClusters",
-    "cloudsearch:DescribeDomains",
-    "cloudwatch:GetMetricData",
-    "cloudwatch:GetMetricStatistics",
-    "cloudwatch:ListMetrics",
-    "codebuild:ListProjects",
-    "datasync:ListTasks",
-    "dax:DescribeClusters",
-    "directconnect:DescribeConnections",
-    "dms:DescribeReplicationInstances",
-    "dynamodb:ListTables",
-    "dynamodb:ListTagsOfResource",
-    "ec2:DescribeAvailabilityZones",
-    "ec2:DescribeInstances",
-    "ec2:DescribeNatGateways",
-    "ec2:DescribeSpotFleetRequests",
-    "ec2:DescribeTransitGateways",
-    "ec2:DescribeVolumes",
-    "ec2:DescribeVpnConnections",
-    "ecs:ListClusters",
-    "eks:ListClusters",
-    "elasticache:DescribeCacheClusters",
-    "elasticbeanstalk:DescribeEnvironmentResources",
-    "elasticbeanstalk:DescribeEnvironments",
-    "elasticfilesystem:DescribeFileSystems",
-    "elasticloadbalancing:DescribeInstanceHealth",
-    "elasticloadbalancing:DescribeListeners",
-    "elasticloadbalancing:DescribeLoadBalancers",
-    "elasticloadbalancing:DescribeRules",
-    "elasticloadbalancing:DescribeTags",
-    "elasticloadbalancing:DescribeTargetHealth",
-    "elasticmapreduce:ListClusters",
-    "elastictranscoder:ListPipelines",
-    "es:ListDomainNames",
-    "events:ListEventBuses",
-    "firehose:ListDeliveryStreams",
-    "fsx:DescribeFileSystems",
-    "gamelift:ListFleets",
-    "glue:GetJobs",
-    "inspector:ListAssessmentTemplates",
-    "kafka:ListClusters",
-    "kinesis:ListStreams",
-    "kinesisanalytics:ListApplications",
-    "kinesisvideo:ListStreams",
-    "lambda:ListFunctions",
-    "lambda:ListTags",
-    "lex:GetBots",
-    "logs:DescribeLogGroups",
-    "mediaconnect:ListFlows",
-    "mediaconvert:DescribeEndpoints",
-    "mediapackage-vod:ListPackagingConfigurations",
-    "mediapackage:ListChannels",
-    "mediatailor:ListPlaybackConfigurations",
-    "opsworks:DescribeStacks",
-    "qldb:ListLedgers",
-    "rds:DescribeDBClusters",
-    "rds:DescribeDBInstances",
-    "rds:DescribeEvents",
-    "rds:ListTagsForResource",
-    "redshift:DescribeClusters",
-    "robomaker:ListSimulationJobs",
-    "route53:ListHostedZones",
-    "route53resolver:ListResolverEndpoints",
-    "s3:ListAllMyBuckets",
-    "sagemaker:ListEndpoints",
-    "sns:ListTopics",
-    "sqs:ListQueues",
-    "storagegateway:ListGateways",
-    "sts:GetCallerIdentity",
-    "swf:ListDomains",
-    "tag:GetResources",
-    "tag:GetTagKeys",
-    "transfer:ListServers",
-    "workmail:ListOrganizations",
-    "workspaces:DescribeWorkspaces",
-    "wafv2:List*",
-]
-
 # Dynatrace log ingest path for a Firehose "Dynatrace" destination, appended to the
 # tenant's base URL (docs.dynatrace.com/docs/ingest-from/amazon-web-services/
 # integrate-with-aws/aws-logs-ingest/lma-stream-logs-with-firehose): "use the full URL
@@ -565,41 +463,6 @@ class GuppiGptStack(cdk.Stack):
         dynatrace_base_url = cdk.Fn.select(
             0, cdk.Fn.split(DYNATRACE_OTLP_SUFFIX, dynatrace_otlp_endpoint.value_as_string)
         )
-        dynatrace_aws_account_id = cdk.CfnParameter(
-            self,
-            "DynatraceAwsAccountId",
-            type="String",
-            default="",
-            description=(
-                "AWS account id Dynatrace uses to assume the GuppiGptDynatraceMonitoring "
-                "role, from Dynatrace's AWS integration setup page; left blank to create "
-                "no role"
-            ),
-        )
-        dynatrace_external_id = cdk.CfnParameter(
-            self,
-            "DynatraceExternalId",
-            type="String",
-            no_echo=True,
-            default="",
-            description=(
-                "External id from the same Dynatrace AWS integration setup page, required "
-                "together with DynatraceAwsAccountId"
-            ),
-        )
-        has_dynatrace_aws = cdk.CfnCondition(
-            self,
-            "HasDynatraceAws",
-            expression=cdk.Fn.condition_and(
-                cdk.Fn.condition_not(
-                    cdk.Fn.condition_equals(dynatrace_aws_account_id.value_as_string, "")
-                ),
-                cdk.Fn.condition_not(
-                    cdk.Fn.condition_equals(dynatrace_external_id.value_as_string, "")
-                ),
-            ),
-        )
-
         zone = route53.HostedZone.from_lookup(self, "Zone", domain_name=ZONE_NAME)
 
         # ---- Transaction Search ----------------------------------------------------------
@@ -2117,33 +1980,12 @@ class GuppiGptStack(cdk.Stack):
         )
 
         # ---- Dynatrace AWS integration ----------------------------------------------------
-        # The monitoring role and the log forwarding stream are both shipped dark: every
-        # parameter above defaults empty, so both conditions below render to nothing until
-        # Sam has a Dynatrace tenant (docs/proposals/dynatrace.md).
-        dynatrace_monitoring_role = iam.Role(
-            self,
-            "DynatraceMonitoringRole",
-            role_name="GuppiGptDynatraceMonitoring",
-            assumed_by=iam.ArnPrincipal(
-                f"arn:aws:iam::{dynatrace_aws_account_id.value_as_string}:root"
-            ),
-            external_ids=[dynatrace_external_id.value_as_string],
-            description=(
-                "Read-only role Dynatrace's AWS monitoring integration assumes to poll "
-                "CloudWatch metrics for this account"
-            ),
-            inline_policies={
-                "DynatraceMonitoringPolicy": iam.PolicyDocument(
-                    statements=[
-                        iam.PolicyStatement(
-                            actions=DYNATRACE_MONITORING_POLICY_ACTIONS, resources=["*"]
-                        )
-                    ]
-                )
-            },
-        )
-        _apply_condition(dynatrace_monitoring_role, has_dynatrace_aws)
-
+        # The log forwarding stream is shipped dark: every parameter above defaults empty,
+        # so the condition below renders to nothing until Sam has a Dynatrace tenant
+        # (docs/proposals/dynatrace.md). Dynatrace's own push-based AWS activation stack,
+        # deployed outside this repo on 7 Sep 2026, polls CloudWatch on its own; the
+        # role-based monitoring role this stack once created for that purpose was removed
+        # the same day.
         # Log forwarding: a Firehose delivery stream with the "Dynatrace" HTTP endpoint
         # destination (docs.dynatrace.com/docs/ingest-from/amazon-web-services/
         # integrate-with-aws/aws-logs-ingest/lma-stream-logs-with-firehose), subscribed to
@@ -2295,12 +2137,6 @@ class GuppiGptStack(cdk.Stack):
         cdk.CfnOutput(self, "FeedbackBusName", value=feedback_bus.event_bus_name)
         cdk.CfnOutput(self, "RumScriptPath", value=RUM_SCRIPT_PATH)
         cdk.CfnOutput(self, "RumBeaconOrigin", value=dynatrace_beacon_origin.value_as_string)
-        cdk.CfnOutput(
-            self,
-            "DynatraceMonitoringRoleArn",
-            value=dynatrace_monitoring_role.role_arn,
-            condition=has_dynatrace_aws,
-        )
 
     def _runtime_role(self) -> iam.Role:
         """Execution role for the runtime, following the AgentCore documented policy."""
