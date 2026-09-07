@@ -209,10 +209,23 @@ run once by then, so the connection stayed Pending until the monitoring configur
 updated by hand (a PUT on
 `/platform/extensions/v2/extensions/com.dynatrace.extension.da-aws/monitoring-configurations/<id>`
 from a signed-in tab, setting `value.aws.automatedDeploymentStatus` to COMPLETE), after
-which it showed Healthy. The same object holds the custom namespaces: entries of the
-schema type `dynatrace.datasource.aws:namespace` (`namespace`, `autoDiscoveryEnabled`,
-`metrics`). `AWS/Bedrock-AgentCore` and `AWS/Bedrock` were added there with auto
-discovery on 7 Sep 2026, which is what feeds the dashboard's WAF and 4xx tiles.
+which it showed Healthy. The same object holds the extra namespaces under
+`value.aws.namespaces`, entries of the schema type `dynatrace.datasource.aws:namespace`
+(`namespace`, `autoDiscoveryEnabled`, `metrics`). Namespace entries with auto discovery
+and no metric list were the first attempt on 7 Sep 2026 and delivered nothing after an
+hour of healthy polling; the connection's Manage panel showed why. Its "Ingest any AWS
+metrics" switch was off, and the panel expects one row per metric (namespace, metric
+name, dimension names, statistics from Sum, Minimum, Maximum, and SampleCount, unit).
+The connection now carries explicit rows, each with `type` `CUSTOM_AWS`:
+`AWS/Bedrock-AgentCore` WafBlocks, UserErrors, SystemErrors, Throttles, Invocations, and
+Latency on the dimensions Resource, Operation, Protocol, and `AWS/Bedrock` Invocations,
+InputTokenCount, OutputTokenCount, and InvocationLatency on ModelId. The built-in
+`AWS WAFv2` service was also switched on (feature set `WAFV2_essential`), which covers
+the CloudFront web ACL's BlockedRequests. Polled metrics arrive under keys of the form
+`cloud.aws.<service>.<Metric>.By.<Dimension>...`, for example
+`cloud.aws.cloudfront.Requests.By.DistributionId.Region`, with the polling source in the
+`dt.da.source` field as `aws-metric-poller`; no CloudWatch metric stream exists in the
+account.
 
 ## The flip procedure, in order
 
