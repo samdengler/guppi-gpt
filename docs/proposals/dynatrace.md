@@ -199,10 +199,20 @@ the account where Lambda functions exist; the repository rule about Lambda appli
 request and content paths, which this stack does not touch. The role-based settings
 object and the CDK role remain but do nothing; removing them is a follow-up.
 
-Which CloudWatch namespaces the stream carries is configured on the connection after it
-is created (the wizard says the monitoring configuration can be modified once the
-connection exists). `AWS/Bedrock-AgentCore` and `AWS/Bedrock` are not in Dynatrace's
-recommended set and must be added there for the dashboard's WAF and 4xx tiles.
+The first stack attempt failed at its last step: the settings token the wizard mints
+lacked `extensions:configurations:read`, which the template's report step calls with,
+because the wizard's service-user group carries only the Data-Acquisition AWS
+Integration policy and that policy omits the scope in this release. The fix was to add
+the Admin User policy to that group at the environment scope in Account Management, run
+the wizard again, and create the stack with the new tokens. The report step had already
+run once by then, so the connection stayed Pending until the monitoring configuration was
+updated by hand (a PUT on
+`/platform/extensions/v2/extensions/com.dynatrace.extension.da-aws/monitoring-configurations/<id>`
+from a signed-in tab, setting `value.aws.automatedDeploymentStatus` to COMPLETE), after
+which it showed Healthy. The same object holds the custom namespaces: entries of the
+schema type `dynatrace.datasource.aws:namespace` (`namespace`, `autoDiscoveryEnabled`,
+`metrics`). `AWS/Bedrock-AgentCore` and `AWS/Bedrock` were added there with auto
+discovery on 7 Sep 2026, which is what feeds the dashboard's WAF and 4xx tiles.
 
 ## The flip procedure, in order
 
