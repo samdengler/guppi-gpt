@@ -133,10 +133,11 @@ h2:hover .anchor { opacity: 1; }
   <a href="#agent">9. Agent design</a>
   <a href="#content">10. Knowledge base content and sync</a>
   <a href="#security">11. Security and cost limits</a>
-  <a href="#decisions">12. Decisions and alternatives</a>
-  <a href="#open-questions">13. Stream timing and open items</a>
-  <a href="#risks">14. Risks</a>
-  <a href="#next-steps">15. Next steps</a>
+  <a href="#observability">12. Traces, logs, business events, and RUM</a>
+  <a href="#decisions">13. Decisions and alternatives</a>
+  <a href="#open-questions">14. Stream timing and open items</a>
+  <a href="#risks">15. Risks</a>
+  <a href="#next-steps">16. Next steps</a>
   <a href="#glossary" class="tail">Glossary</a>
   <a href="#references" class="tail">References</a>
 </nav>
@@ -194,7 +195,7 @@ h2:hover .anchor { opacity: 1; }
 </header>
 <main>
 
-<div class="callout"><p><strong>Status.</strong> Everything in this document is deployed in <code>us-east-1</code> and was verified in the browser on 3 September 2026, except the items listed in section 15. The implementation lives in the <code>guppi-gpt</code> repository. There is no Lambda function anywhere in the request path or in the content sync path. The alternatives that were considered and set aside on the way to this design are in the companion decision log; this document describes only the design as it stands.</p></div>
+<div class="callout"><p><strong>Status.</strong> Everything in this document is deployed in <code>us-east-1</code> and was last reconciled against the account on 7 September 2026, except the items listed in section 16. The implementation lives in the <code>guppi-gpt</code> repository. There is no Lambda function in the request path or in the content sync path, and none in the <code>GuppiGpt</code> stack at all; the only ones in the account belong to Dynatrace's activation stack (section 12). The alternatives that were considered and set aside on the way to this design are in the companion decision log; this document describes only the design as it stands.</p></div>
 
 <div class="toc-top">
   <p class="toc-title">Contents</p>
@@ -210,10 +211,11 @@ h2:hover .anchor { opacity: 1; }
     <li><span class="num">9.</span><a href="#agent">Agent design</a></li>
     <li><span class="num">10.</span><a href="#content">Knowledge base content and sync</a></li>
     <li><span class="num">11.</span><a href="#security">Security and cost limits</a></li>
-    <li><span class="num">12.</span><a href="#decisions">Decisions and alternatives</a></li>
-    <li><span class="num">13.</span><a href="#open-questions">Stream timing and open items</a></li>
-    <li><span class="num">14.</span><a href="#risks">Risks</a></li>
-    <li><span class="num">15.</span><a href="#next-steps">Next steps</a></li>
+    <li><span class="num">12.</span><a href="#observability">Traces, logs, business events, and RUM</a></li>
+    <li><span class="num">13.</span><a href="#decisions">Decisions and alternatives</a></li>
+    <li><span class="num">14.</span><a href="#open-questions">Stream timing and open items</a></li>
+    <li><span class="num">15.</span><a href="#risks">Risks</a></li>
+    <li><span class="num">16.</span><a href="#next-steps">Next steps</a></li>
   </ol>
   <p class="back"><a href="#glossary">Glossary</a> <a href="#references">References</a></p>
 </div>
@@ -695,16 +697,104 @@ data: {"type":"RUN_FINISHED","threadId":"...","runId":"..."}</code></pre>
 <tr><td>JWT validation at the tools gateway</td><td>Only the same users can search the knowledge base, even from a compromised agent</td><td>Tools gateway JWT authorizer on the same pool</td></tr>
 <tr><td>Least-privilege roles</td><td>What each service can reach</td><td>Runtime role: invoke one inference profile. Tools gateway role: <code>bedrock:GetKnowledgeBase</code> and <code>bedrock:Retrieve</code> on the one knowledge base, plus <code>bedrock:AgenticRetrieveStream</code>, which the service does not scope to a resource. Edge gateway role: <code>InvokeAgentRuntime</code> on the one runtime, unused while the target passes the token through.</td></tr>
 <tr><td>WAF</td><td>Requests that did not come through CloudFront, known exploit patterns, and requests per 5 minutes from one viewer address, all before any token is checked</td><td>Regional web ACL on the edge gateway<a class="ref" href="#r16">[16]</a>; rate rule keyed on <code>X-Forwarded-For</code></td></tr>
-<tr><td>Feedback API authorization</td><td>Who can put a vote on the feedback bus, and how fast</td><td>The same Cognito user pool, through an API Gateway authorizer on the one <code>POST /feedback</code> method, plus a request validator that refuses any body the model does not describe. Rate is API Gateway's account-wide default throttle, 10,000 requests a second, which no page can approach; a usage plan is the follow-up if a real limit is ever wanted (<code>docs/proposals/feedback.md</code>).</td></tr>
+<tr><td>Feedback API authorization</td><td>Who can put a vote on the feedback bus, and how fast</td><td>The same Cognito user pool, through an API Gateway authorizer on the one <code>POST /api/feedback</code> method, plus a request validator that refuses any body the model does not describe. Rate is API Gateway's account-wide default throttle, 10,000 requests a second, which no page can approach; a usage plan is the follow-up if a real limit is ever wanted (<code>docs/proposals/feedback.md</code>).</td></tr>
+<tr><td>Conversation log access</td><td>Who can read stored conversations</td><td>The bucket policy denies reads to every principal except the runtime role and the investigator role, the KMS key policy is the second gate, and the runtime holds no delete and no listing outside the <code>threads/</code> prefix. Re-identifying a record needs the subject key in Secrets Manager and read access to the user pool, which only the investigator role holds together; every assumption of it and every object it reads is in CloudTrail. Records expire 30 days after their last write.</td></tr>
 <tr><td>Input caps and <code>max_tokens</code></td><td>Cost of any single run</td><td>Agent validation</td></tr>
 <tr><td>Runtime session limits</td><td>Concurrent sessions and their lifetime</td><td>Sessions idle out at 15 minutes and end at 8 hours; a service quota bounds concurrency</td></tr>
 </table>
 
-<p>A billing alarm at twice the expected monthly figure closes the loop. Content Security Policy is <code>default-src 'self'</code> plus <code>connect-src</code> for <code>auth.dengler.io</code>, with no inline script. The page sets no cookies of its own. The refresh token kept in IndexedDB is readable only by same-origin script, which the Content Security Policy restricts to the bundled app, and rotation limits a stolen token to one use.</p>
+<p>A billing alarm at twice the expected monthly figure closes the loop. Content Security Policy is <code>default-src 'self'</code> plus <code>connect-src</code> for <code>auth.dengler.io</code>, with no inline script. The page sets no cookies of its own. The refresh token kept in IndexedDB is readable only by same-origin script, which the Content Security Policy restricts to the bundled app, and rotation limits a stolen token to one use. The conversation log bucket is now the most sensitive store in the system: it holds what people asked and what they were told, under a pseudonym, and the two roles named above are the whole of its read surface.</p>
 
-<p>The CloudFront origin for the edge gateway carries no origin access control. A caller who discovers the gateway hostname is stopped by the WAF's CloudFront-only header rule once that rule is in BLOCK mode<a class="ref" href="#r18">[18]</a>; while it is still in COUNT, the gateway's JWT authorizer and the per-user rate limits are what stand in the way, and they remain as a second layer afterwards. What CloudFront adds on this path is the shared domain, which keeps the browser's request same-origin.</p>
+<p>The CloudFront origin for the edge gateway carries no origin access control. A caller who discovers the gateway hostname is stopped by the WAF's CloudFront-only header rule, which has blocked since 4 Sep 2026<a class="ref" href="#r18">[18]</a>; a direct call to the gateway hostname now answers 403 from the web ACL. The gateway's JWT authorizer and the per-user rate limits are the second layer behind it. What CloudFront adds on this path is the shared domain, which keeps the browser's request same-origin.</p>
 
-<h2 id="decisions">12. Decisions and alternatives</h2>
+<h2 id="observability">12. Traces, logs, business events, and RUM</h2>
+
+<p>Four kinds of telemetry leave this system and three of them end in the same Dynatrace tenant, <code>wfd05358</code>. Spans leave the container over OTLP. Log records leave the vended log groups through Firehose. Votes leave the EventBridge bus as business events. RUM sessions come from the page itself. What stays in CloudWatch is the metrics, the alarms on them, and the account's transaction search configuration, which the container's spans no longer reach. Every path carries at least one of the identifiers section 5 follows, which is what makes one turn findable across all of them.</p>
+
+<h3>Traces from the page to Dynatrace</h3>
+
+<p>The page mints a W3C <code>traceparent</code> for every send and every Retry, with a trace id that opens with the epoch seconds so it is also a well-formed X-Ray trace id. Two allowlists have to name the header, the edge gateway target's allowed request headers and the runtime's request header configuration, and a header either one omits is dropped in silence, which is how the <code>Authorization</code> header was lost on the first deploy.</p>
+
+<p>The container holds no tracing code. It starts under <code>opentelemetry-instrument</code> with the AWS distro, the runtime supplies the exporter settings, and the stack adds only the excluded URL pattern that keeps the health check out of the spans. One turn produces about nineteen spans: the server span for <code>POST /invocations</code>, the Strands agent and model spans, the MCP session and tool call spans, the Secrets Manager and S3 calls of the thread record write, and the Bedrock call with its request id.</p>
+
+<p>Setting the Dynatrace endpoint redirects that export rather than adding to it. Observed on 5 Sep 2026: with <code>OTEL_EXPORTER_OTLP_TRACES_ENDPOINT</code> and <code>_HEADERS</code> on the runtime, all nineteen spans of a turn appeared in Dynatrace and none reached CloudWatch Transaction Search. The OpenTelemetry environment scheme carries one endpoint and one header set per signal type, so the container's explicit values win over the ones the platform injects for X-Ray, and no environment variable names two OTLP destinations. Dual export needs a second span exporter and a second batch span processor registered in the agent's own code, which is a code change rather than a parameter, and it is deferred (section 16). Transaction search stays on and stays owned by the stack: it is the account's span destination for anything else, and while it was set to X-Ray the container's exporter was refused with 400 on every batch.</p>
+
+<p>Gateway spans are a separate matter. A gateway's <code>TRACES</code> log type needs an X-Ray delivery destination, which CloudWatch Logs refuses (section 15), so neither gateway delivers spans today. What ties a gateway to a turn is the trace id in its log records, not a span of its own.</p>
+
+<h3>The three vended log groups, and the one the service owns</h3>
+
+<p>The <code>APPLICATION_LOGS</code> of the edge gateway, the tools gateway, and the runtime are delivered to three log groups under <code>/aws/vendedlogs/bedrock-agentcore/</code> with 30 day retention. A subscription filter on each sends every record to a Firehose delivery stream whose HTTP destination is Dynatrace's Firehose log ingest path<a class="ref" href="#r30">[30]</a>, with the API token as the destination's access key, GZIP encoding, buffering at 1 MiB or 60 seconds, and a small bucket of its own holding seven days of what could not be delivered. Gateway records carry <code>request_id</code>, <code>trace_id</code>, and <code>span_id</code> with the request or response body nested under <code>body</code>; runtime records carry <code>request_id</code>, <code>session_id</code>, <code>trace_id</code>, <code>span_id</code>, and the payloads.</p>
+
+<p>The agent's own per-run JSON record is in none of those three. It goes to stdout and lands in the <code>runtime-logs</code> stream of the log group the service creates for the runtime, <code>/aws/bedrock-agentcore/runtimes/guppi_gpt-*</code>. A CloudFormation subscription filter needs a log group the stack owns, and the service creates that one lazily, so the record reaches Dynatrace only when that group is subscribed by hand. It is the join between the run id the page carries and the trace id everything else carries, and the five dashboard tiles that read it depend on that manual step.</p>
+
+<h3>Votes as business events</h3>
+
+<p>A vote never touches the chat runtime. The page posts it to <code>POST /api/feedback</code>, the REST API validates the body and puts one event on the <code>guppi-gpt-feedback</code> bus with the <code>sub</code> claim the authorizer verified and the arrival time added by the mapping template, and one rule transforms it into a Dynatrace business event on the tenant's ingest endpoint<a class="ref" href="#r29">[29]</a>. The query is one line:</p>
+
+<pre><code>fetch bizevents
+| filter event.type == "guppigpt.reply-feedback"
+| summarize count(), by: {vote}</code></pre>
+
+<p>Each record carries <code>trace.id</code> and <code>run.id</code>, the same values the reply element and the agent's record carry, so a down vote leads straight to the turn behind it. The 30 day archive on the bus is created whether or not the tenant details are set, so votes cast while Dynatrace was unconfigured can be replayed onto the bus. The event carries the raw Cognito <code>sub</code>: hashing it to the pseudonym the agent uses has nowhere to run without compute in the path, so a vote joins a conversation record by run id or trace id and not by user, and either hashing or dropping the subject is open (section 16).</p>
+
+<h3>RUM in the browser</h3>
+
+<p>The RUM script is self-hosted. The deploy copies <code>web/vendor/ruxitagentjs.js</code> into the bundle at <code>/dt/ruxitagentjs.js</code>, and the page inserts a script element pointing there when the <code>rum</code> flag is on, so <code>script-src 'self'</code> needs no change; the beacon origin is the one thing the Content Security Policy has to admit, under <code>connect-src</code>, and it arrives as a stack parameter. Once <code>window.dtrum</code> exists an OpenFeature hook reports each flag evaluation as a session property, one string per flag name, since <code>sendSessionProperties</code> has no boolean type. <code>dtrum.identifyUser</code> is wired to a hashed subject and is off by default.</p>
+
+<p>The tenant's RUM experience is the reason a vote is not a RUM action. Observed on 5 Sep 2026: the agent accepted every <code>enterAction</code>, <code>addActionProperties</code>, and <code>leaveAction</code> call and returned an action id, the beacons reached the beacon origin with 200, and nothing was stored. Grail's <code>user.events</code> held page views, resources, and automatically detected clicks, with no event carrying the action name or its properties, and RUM Classic's session query returned no user actions at all for the same hour. The classic JavaScript API's custom actions and API-reported properties have no ingestion path on this tenant, which is what moved the vote onto a path of its own.</p>
+
+<h3>The Dynatrace AWS connection</h3>
+
+<p>The connection is push-based and Dynatrace deploys it. Its wizard (Settings, Cloud and virtualization, AWS, New connection) mints two platform tokens and hands over a CloudFormation deployment of Dynatrace's own activation template, which creates a CloudWatch metric stream, Firehose deliveries, and the Lambda functions that ship inventory and logs. That stack was created on 7 Sep 2026 as <code>GuppiGPT-Dynatrace</code> in <code>us-east-1</code>, with log ingest on, event ingest off, and the recommended metric set. It is the approved exception to the preference against Lambda: the stack is Dynatrace's, deployed once by hand outside <code>GuppiGpt</code>, and it sits on neither the request path nor the content sync path.</p>
+
+<p>The role-based model came first and never worked. It is a settings object holding the ARN of a read-only role Dynatrace assumes, <code>GuppiGptDynatraceMonitoring</code>, which was never assumed and delivered no metric. Both the settings object and the CDK role still exist and do nothing; removing them is open (section 16).</p>
+
+<p>The first attempt at the activation stack failed at its last step. The settings token the wizard mints lacked <code>extensions:configurations:read</code>, because the wizard's service-user group carries only the Data-Acquisition AWS Integration policy and that policy omits the scope in this release. The fix was to add the Admin User policy to that group at the environment scope in Account Management and run the wizard again with new tokens. The report step had already run once by then, so the connection stayed Pending until the monitoring configuration's <code>automatedDeploymentStatus</code> was set to COMPLETE by hand, after which it showed Healthy.</p>
+
+<p>Metrics arrive namespace by namespace, and the two this system needs are not in the recommended set. <code>AWS/Bedrock-AgentCore</code> and <code>AWS/Bedrock</code> were added to the same monitoring configuration as custom namespaces with auto discovery on 7 Sep 2026. Without them the gateway, runtime, and model metrics never reach the tenant and the dashboard tiles that read them stay empty.</p>
+
+<h3>The GuppiGPT operations dashboard</h3>
+
+<p>The dashboard exists in the tenant as "GuppiGPT operations", created from <code>docs/dynatrace/dashboard.json</code>, which is kept in the platform's exported shape so an edit can be re-imported. Eight tiles, and what each one reads:</p>
+
+<table>
+<tr><th>Tile</th><th>Reads</th></tr>
+<tr><td>Runs per hour</td><td>The agent's per-run record in the runtime log group, counted by <code>run</code></td></tr>
+<tr><td>First delta latency, p50 and p90</td><td><code>first_delta_ms</code> on the same record</td></tr>
+<tr><td>Run outcomes</td><td><code>outcome</code> on the same record, split by value</td></tr>
+<tr><td>Retrieval rate</td><td>Distinct traces whose run made a tool call, not the count of tool call spans, so a run that retrieves twice counts once</td></tr>
+<tr><td>Token usage</td><td><code>input_tokens</code> and <code>output_tokens</code> on the same record</td></tr>
+<tr><td>Up and down votes</td><td><code>fetch bizevents</code> for <code>guppigpt.reply-feedback</code></td></tr>
+<tr><td>WAF counts</td><td>The edge gateway's WAF metrics in <code>AWS/Bedrock-AgentCore</code>, through the AWS connection</td></tr>
+<tr><td>Loopback 403s</td><td>Every 4xx on the edge gateway, as the closest available proxy: nothing separates the front door's loopback rejection from any other 4xx</td></tr>
+</table>
+
+<p>The first five depend on the runtime's own log group reaching Dynatrace, which is the manual subscription described above; the last two depend on the two custom namespaces.</p>
+
+<h3>Alarms in CloudWatch, and what is still done by hand</h3>
+
+<p>Alarms did not move. Estimated monthly charges, the three WAF metrics, the nightly ingestion's failed invocations, <code>SystemErrors</code> on both gateways and the runtime, the edge gateway's 4xx rate at 10 percent of invocations, runtime p90 latency at 30,000 ms, and model throttles all evaluate in CloudWatch on a five minute period and notify one SNS topic. Their thresholds were chosen before any real traffic and are meant to be retuned (section 16).</p>
+
+<p>The topic delivers to nobody yet. The email subscription for the address passed as <code>AlarmEmail</code> has been in <code>PendingConfirmation</code> since 3 Sep 2026: SNS sent two confirmation requests and neither reached Gmail, spam folder included. Until one is confirmed no alarm reaches a person. Four things besides that stay manual: billing alerts have to be switched on in the account's billing preferences before <code>EstimatedCharges</code> exists as a metric, Dynatrace's activation stack is deployed from its wizard, the two custom namespaces are added in its monitoring configuration, and the runtime's own log group is subscribed to the Firehose stream by hand if the agent's record is wanted in the tenant.</p>
+
+<h3>One identifier, and the turn it finds</h3>
+
+<p>A support question arrives as an approximate time and a complaint. The identifiers are on the reply element, and each one opens a different store:</p>
+
+<table>
+<tr><th>Start from</th><th>What it opens</th></tr>
+<tr><td><code>data-run-id</code></td><td>The agent's record for that run in the runtime log group, which names the trace, thread, and session ids, the token counts, the latencies, and the outcome</td></tr>
+<tr><td><code>data-trace-id</code></td><td>The turn's spans in Dynatrace, and the same value in both gateways' vended logs, so the retrieval the run made is one filter away</td></tr>
+<tr><td><code>data-request-id</code></td><td>The gateway's own record for the request, by <code>request_id</code></td></tr>
+<tr><td><code>data-feedback</code></td><td>Whether a vote was cast on this reply in this page load; the vote itself is in <code>bizevents</code> under the same run and trace ids</td></tr>
+<tr><td>Thread id</td><td><code>threads/&lt;thread&gt;.json</code> in the conversation log bucket, whose object versions are the turn by turn history; the investigator role is what reads it</td></tr>
+<tr><td>Session id</td><td>Every run of one page load, in the runtime's records and in the container's spans as <code>session.id</code></td></tr>
+<tr><td>Subject</td><td>The keyed hash on the thread record and on the run's log line. A vote carries the raw <code>sub</code> instead, so a vote is joined to a conversation by run or trace id rather than by user</td></tr>
+</table>
+
+<p>The trace id is the one that crosses every hop, and the agent's record is what joins it to the run id the page shows. A person is reached only at the end of that chain, by an investigator holding the subject key and reading the user pool.</p>
+
+<h2 id="decisions">13. Decisions and alternatives</h2>
 
 <table>
 <tr><th>Decision</th><th>Chosen</th><th>Alternative considered</th><th>Reason</th><th>Reversibility</th></tr>
@@ -714,7 +804,7 @@ data: {"type":"RUN_FINISHED","threadId":"...","runId":"..."}</code></pre>
 <tr><td>Knowledge base access</td><td>Tools gateway managed KB target, user JWT passed through (section 4.2)</td><td>Direct <code>bedrock:Retrieve</code> from the agent's execution role; a Lambda tool target wrapping Retrieve</td><td>The managed target needs no code and gives the gateway a second policy enforcement point with the user's identity. Direct calls would be simpler but drop that point; a Lambda target would be code for nothing the managed target lacks</td><td>Easy: the agent's tool list changes</td></tr>
 <tr><td>Runtime-to-gateway credential</td><td>The user's JWT</td><td>SigV4 with the runtime execution role via <code>mcp-proxy-for-aws</code></td><td>Passing the user's token keeps the request attributable at the gateway and needs no extra library. SigV4 is the documented default and remains the fallback if token lifetime or audience claims cause trouble</td><td>Easy</td></tr>
 <tr><td>Wire format</td><td>AG-UI over SSE</td><td>Private NDJSON; AI SDK UI message stream; OpenAI-style chunks</td><td>Section 7</td><td>Moderate: the page's subscriber and the agent's adapter both change</td></tr>
-<tr><td>Browser to gateway path</td><td>Through CloudFront on the app's domain</td><td>Browser calls the gateway or runtime endpoint directly with CORS</td><td>Direct calls are documented<a class="ref" href="#r13">[13]</a> and work, but need a CORS policy and a second hostname in the CSP. Same-origin through CloudFront removes both, with the origin timeout behavior described in section 13</td><td>Easy</td></tr>
+<tr><td>Browser to gateway path</td><td>Through CloudFront on the app's domain</td><td>Browser calls the gateway or runtime endpoint directly with CORS</td><td>Direct calls are documented<a class="ref" href="#r13">[13]</a> and work, but need a CORS policy and a second hostname in the CSP. Same-origin through CloudFront removes both, with the origin timeout behavior described in section 14</td><td>Easy</td></tr>
 <tr><td>Session state</td><td>None; the browser resends the thread each run</td><td>AgentCore Memory keyed by the runtime session id</td><td>Statelessness is the product requirement. Memory would be the first thing to add if history ever returns</td><td>Easy</td></tr>
 <tr><td>Model</td><td>Claude Haiku</td><td>Claude Sonnet</td><td>Lowest latency to first token and per-turn cost for a page any Google account can use; the agent has one tool and short replies</td><td>Easy: one inference profile id</td></tr>
 <tr><td>Retrieval tool</td><td><code>Retrieve</code></td><td><code>AgenticRetrieveStream</code></td><td>Section 9: shortest silent gap on the stream, one model writing prose</td><td>Easy: the tool allow-list on the agent</td></tr>
@@ -734,7 +824,7 @@ data: {"type":"RUN_FINISHED","threadId":"...","runId":"..."}</code></pre>
 
 <p>The strongest case for keeping a Lambda in the path is control of the wire format: a proxy could present a stable private contract to the page while the runtime's protocol evolves. That argument would carry if the page were a product with many clients. For one page and one agent, adopting AG-UI directly means the contract is public and versioned by someone else, which is the better position.</p>
 
-<h2 id="open-questions">13. Stream timing and open items</h2>
+<h2 id="open-questions">14. Stream timing and open items</h2>
 
 <p>The one place where the design rests on a timing property rather than a feature is the CloudFront origin in front of the edge gateway. Per the CloudFront origin settings reference<a class="ref" href="#r20">[20]</a>, the origin response timeout bounds two intervals: the wait for the first byte after the request is forwarded, and the wait between one packet of the response and the next. It does not bound total response length. A stream that keeps producing events can run for minutes; a stream that goes silent for longer than the timeout is cut. Two things in the design follow from that. The runtime emits <code>RUN_STARTED</code> before any model call, so the first byte arrives within milliseconds. And the agent emits a <code>ping</code> custom event every 15 seconds while the stream is otherwise silent, so no gap approaches the limit. With both in place the timeout is set to 60 seconds and no quota increase is needed.</p>
 
@@ -745,11 +835,11 @@ data: {"type":"RUN_FINISHED","threadId":"...","runId":"..."}</code></pre>
 <li>Whether AgentCore Gateway will stamp its identity on a token passthrough request, or AgentCore Runtime will accept a gateway-signed request that carries the user token. Either would let the runtime binding in section 11 come back.</li>
 </ol>
 
-<h2 id="risks">14. Risks</h2>
+<h2 id="risks">15. Risks</h2>
 
 <table>
 <tr><th>Risk</th><th>Effect</th><th>Mitigation</th></tr>
-<tr><td>Slow first token exceeds the CloudFront origin timeout</td><td>504 to the browser with no reply</td><td>The runtime emits <code>RUN_STARTED</code> before calling the model, a first byte within milliseconds; the <code>ping</code> event covers silent stretches (section 13)</td></tr>
+<tr><td>Slow first token exceeds the CloudFront origin timeout</td><td>504 to the browser with no reply</td><td>The runtime emits <code>RUN_STARTED</code> before calling the model, a first byte within milliseconds; the <code>ping</code> event covers silent stretches (section 14)</td></tr>
 <tr><td>Gateway interceptors added later break streaming</td><td>Buffered replies, no tokens until the end</td><td>Interceptors are buffered-mode only today<a class="ref" href="#r14">[14]</a>; keep them off the edge gateway until streaming mode ships</td></tr>
 <tr><td>Runtime cold start on a new session</td><td>Several seconds before the first turn of a tab</td><td>One session per page load, so only the first turn pays; show the status line during it</td></tr>
 <tr><td>Token lifetime shorter than a long stream</td><td>The gateway rejects a retrieval late in a run</td><td>Refresh before send when under five minutes remain; the run itself is bounded to about two minutes</td></tr>
@@ -760,7 +850,7 @@ data: {"type":"RUN_FINISHED","threadId":"...","runId":"..."}</code></pre>
 <tr><td>Knowledge base returns passages the user should not see</td><td>Data exposure</td><td>Out of scope for one user pool with one audience; if the knowledge base ever holds mixed audiences, the gateway authorizer's claim checks are the place to add it</td></tr>
 </table>
 
-<h2 id="next-steps">15. Next steps</h2>
+<h2 id="next-steps">16. Next steps</h2>
 
 <p>The stack, the agent, the page, the knowledge base, and the sync are deployed. What remains:</p>
 
@@ -816,6 +906,8 @@ data: {"type":"RUN_FINISHED","threadId":"...","runId":"..."}</code></pre>
 <li id="r26"><a href="https://docs.aws.amazon.com/bedrock/latest/userguide/kb-data-source-sync-ingest.html">Sync data with a knowledge base</a>, Amazon Bedrock User Guide</li>
 <li id="r27"><a href="https://serverlessland.com/patterns/eventbridge-bedrock-s3-aoss">Automatic sync of a Bedrock knowledge base using EventBridge Scheduler</a>, Serverless Land</li>
 <li id="r28"><a href="https://www.rfc-editor.org/rfc/rfc5737">RFC 5737: IPv4 address blocks reserved for documentation</a>, IETF</li>
+<li id="r29"><a href="https://docs.dynatrace.com/docs/observe/business-analytics/ba-api-ingest">Ingest business events via API</a>, Dynatrace Documentation</li>
+<li id="r30"><a href="https://docs.dynatrace.com/docs/ingest-from/amazon-web-services/integrate-with-aws/aws-logs-ingest/lma-stream-logs-with-firehose">Stream logs to Dynatrace with Amazon Data Firehose</a>, Dynatrace Documentation</li>
 </ol>
 
 </main>
