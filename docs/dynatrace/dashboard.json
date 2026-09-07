@@ -52,17 +52,17 @@
     },
     "7": {
       "type": "data",
-      "title": "WAF counts",
-      "description": "CloudWatch metric WafBlocks in AWS/Bedrock-AgentCore, which exists in the account since the rules moved to BLOCK on 4 Sep 2026; the Dynatrace key follows its cloud.aws.<namespace>.<metric> convention and the AWS integration must import the Bedrock-AgentCore namespace (a custom namespace in the integration's metric selection).",
-      "query": "timeseries blocks = sum(cloud.aws.bedrock_agentcore.waf_blocks), by: {aws.resource.id}",
+      "title": "WAF allowed and blocked",
+      "description": "The edge gateway's web ACL (a REGIONAL ACL associated with the AgentCore gateway) through the AWS connection's built-in WAFv2 service; keys are cloud.aws.wafv2.<Metric>.By.Region.Rule.WebACL with Rule ALL for the whole ACL and one series per rule. BlockedRequests exists only once something has been blocked, so the blocked line is absent until then (verified 7 Sep 2026).",
+      "query": "timeseries allowed = sum(cloud.aws.wafv2.AllowedRequests.By.Region.Rule.WebACL), blocked = sum(cloud.aws.wafv2.BlockedRequests.By.Region.Rule.WebACL), by: {Rule}",
       "visualization": "lineChart",
       "visualizationSettings": {}
     },
     "8": {
       "type": "data",
       "title": "Gateway 4xx",
-      "description": "CloudWatch metric UserErrors on the edge gateway; the loopback URL rejection happens at the gateway's load balancer and is not separately counted, so this tile shows all 4xx.",
-      "query": "timeseries userErrors = sum(cloud.aws.bedrock_agentcore.user_errors), by: {aws.resource.id}",
+      "description": "CloudWatch metric UserErrors from AWS/Bedrock-AgentCore, polled through the AWS connection's custom metric rows on the dimensions Resource, Operation, Protocol; the Dynatrace key is cloud.aws.bedrock_agentcore.UserErrors.By.Operation.Protocol.Resource (verified 7 Sep 2026). The loopback URL rejection happens at the gateway's load balancer and is not separately counted, so this tile shows all 4xx, split by gateway.",
+      "query": "timeseries userErrors = sum(cloud.aws.bedrock_agentcore.UserErrors.By.Operation.Protocol.Resource), by: {Resource}",
       "visualization": "lineChart",
       "visualizationSettings": {}
     }
