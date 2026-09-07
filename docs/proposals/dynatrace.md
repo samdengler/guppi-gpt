@@ -213,7 +213,7 @@ The connection now carries explicit rows, each with `type` `CUSTOM_AWS`:
 Latency on the dimensions Resource, Operation, Protocol, and `AWS/Bedrock` Invocations,
 InputTokenCount, OutputTokenCount, and InvocationLatency on ModelId. The built-in
 `AWS WAFv2` service was also switched on (feature set `WAFV2_essential`), which covers
-the CloudFront web ACL's BlockedRequests. Polled metrics arrive under keys of the form
+the edge gateway's web ACL (a REGIONAL ACL associated with the AgentCore gateway; CloudFront has no web ACL of its own), whose AllowedRequests and BlockedRequests carry Region, Rule, and WebACL dimensions. Polled metrics arrive under keys of the form
 `cloud.aws.<service>.<Metric>.By.<Dimension>...`, for example
 `cloud.aws.cloudfront.Requests.By.DistributionId.Region`, with the polling source in the
 `dt.da.source` field as `aws-metric-poller`; no CloudWatch metric stream exists in the
