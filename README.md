@@ -56,8 +56,9 @@ Flipping a feature flag: edit `web/features.json`, then run `scripts/deploy.sh
 
 ## Status
 
-Deployed and verified in the browser on 3 Sep 2026. Remaining work is listed in the
-design document, section 15. Operational notes:
+Deployed and verified in the browser on 3 Sep 2026, reconciled against the account on
+7 Sep 2026. Remaining work is listed in the design document, section 16. Operational
+notes:
 
 * `WAF_BLOCK` in `infra/guppi_gpt_infra/stack.py` has been `True` since 4 Sep 2026, after a
   day in COUNT produced no counts on any rule. Set it back to `False` to return to
@@ -71,7 +72,12 @@ design document, section 15. Operational notes:
 * The alarm topic's email subscription for the address passed as `AlarmEmail` is stuck in
   PendingConfirmation: SNS sent two confirmation requests on 3 Sep 2026 and neither reached
   Gmail, spam included. Until one is confirmed no alarm delivers anywhere. Confirm from the
-  SNS console (Subscriptions, Request confirmation) or subscribe a different address.
+  SNS console (Subscriptions, Request confirmation), subscribe an address at another
+  provider, or subscribe a phone number.
+* Every conversation is written to the conversation log bucket as one versioned object per
+  thread, under a keyed hash of the account, and expires 30 days after its last write. The
+  investigator role is the only principal outside the runtime that can read it; the
+  re-identification procedure is in `docs/proposals/conversation-logging.md`.
 
 ## Sign-in session
 
@@ -86,13 +92,17 @@ account chooser.
 Preference for anything on the backend: AWS native services, serverless where possible
 (scale to zero, pay per use, automatic scaling).
 
-1. Dynatrace RUM on the page plus the Dynatrace AWS integration. Live since 5 Sep 2026 on
-   environment wfd05358: RUM application GuppiGPT (self-hosted script, `rum` flag on), the
-   monitoring role assumed by Dynatrace, Firehose log forwarding from the vended log
-   groups, and OTLP trace export from the runtime. Whether CloudWatch still receives
-   spans alongside Dynatrace is the open check (`docs/proposals/dynatrace.md`).
-2. A Dynatrace dashboard for operational metrics. Draft in `docs/dynatrace/dashboard.json`;
-   import and adjust its two flagged queries.
+1. Dynatrace RUM on the page plus the Dynatrace AWS connection. Live since 5 Sep 2026 on
+   environment wfd05358: RUM application GuppiGPT (self-hosted script, `rum` flag on),
+   Firehose log forwarding from the vended log groups, and OTLP trace export from the
+   runtime. The connection is the push-based one, deployed 7 Sep 2026 from Dynatrace's own
+   activation stack `GuppiGPT-Dynatrace`, with `AWS/Bedrock-AgentCore` and `AWS/Bedrock`
+   added as custom namespaces; the role-based model never worked. Setting the Dynatrace
+   endpoint redirects trace export, so CloudWatch Transaction Search receives no spans
+   (`docs/proposals/dynatrace.md`, design section 12).
+2. A Dynatrace dashboard for operational metrics. The dashboard GuppiGPT operations exists
+   in the tenant, created from `docs/dynatrace/dashboard.json`; edits are re-imported from
+   that file.
 3. Correlation ids and traceability. Done: `docs/proposals/traceability.md`.
 4. Up/down feedback on each reply. Live since 5 Sep 2026 (`feedback` flag on): the page
    posts the vote to `/api/feedback`, a REST API with a Cognito authorizer integrates
@@ -102,9 +112,8 @@ Preference for anything on the backend: AWS native services, serverless where po
    `docs/proposals/feedback.md`.
 5. Chat history local to the browser. Built dark behind the `history` flag as Chats:
    `docs/proposals/local-history.md`.
-6. Conversation logging to S3, anonymous with privileged re-identification. Runtime
-   switch on since 5 Sep 2026 with 30 day retention (a proof of concept); the page
-   `logging` flag follows once the first thread object is seen. Decisions in
+6. Conversation logging to S3, pseudonymous with privileged re-identification. Both
+   switches on since 5 Sep 2026, 30 day retention. Decisions in
    `docs/proposals/conversation-logging.md`.
 7. Operational alarms, vended log delivery, and the per-user rate limit: done, thresholds
    in `docs/proposals/operations.md`.

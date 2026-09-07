@@ -2,9 +2,12 @@
 
 ## Project Overview
 
-GuppiGPT is a minimal claude.ai style chat: one page, stateless plain text conversation,
-no history, no attachments, Google sign-in, and answers grounded in a Bedrock Knowledge
-Base. The design document (`docs/guppigpt-design.html`) and the decision log
+GuppiGPT is a minimal claude.ai style chat: one page, plain text conversation, no
+attachments, Google sign-in, and answers grounded in a Bedrock Knowledge Base. The agent
+holds nothing between runs and the page starts empty, but three things are kept: the
+sign-in session in IndexedDB, one pseudonymous record per thread in S3 for 30 days, and a
+vote on a reply as a business event. Chat history in the browser is built behind the
+`history` flag and off. The design document (`docs/guppigpt-design.html`) and the decision log
 (`docs/guppigpt-decision-log.html`) are the source of truth for architecture; this
 repository implements them. `docs/guppigpt-architecture.html` holds the diagrams. When code and design disagree,
 fix one of them in the same change.
