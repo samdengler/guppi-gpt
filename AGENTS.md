@@ -67,7 +67,11 @@ scripts/
 
 ## Rules
 
-- No Lambda functions anywhere in the request path or the content sync path.
+- No Lambda functions in the request path or the content sync path by default. Lambda is
+  a preference, not a ban: when a function is the right tool, propose it and get Sam's
+  approval before building it. Approved so far: the Lambda functions inside Dynatrace's
+  own AWS activation stack (`GuppiGPT-Dynatrace`, 7 Sep 2026), which sits outside
+  `GuppiGpt`.
 - Secrets never enter files, `cdk.context.json`, or `-c` context values. Values the stack
   cannot produce (the Google OAuth client) are CloudFormation parameters with `no_echo`
   supplied by `scripts/deploy.sh` from 1Password; values it can produce (the
