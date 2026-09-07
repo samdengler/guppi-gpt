@@ -78,6 +78,11 @@ notes:
   thread, under a keyed hash of the account, and expires 30 days after its last write. The
   investigator role is the only principal outside the runtime that can read it; the
   re-identification procedure is in `docs/proposals/conversation-logging.md`.
+* The site also serves `/privacy.html` and `/terms.html`, added 7 Sep 2026, because Google's
+  OAuth consent screen requires public privacy and terms URLs before it can be published.
+  Both are plain static pages in `web/src/`, copied into `web/dist/` by the same build that
+  bundles the page. Content changes to either page go out with `scripts/deploy.sh
+  --site-only`, the same as any other page-only change.
 
 ## Sign-in session
 
