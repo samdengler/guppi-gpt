@@ -725,7 +725,7 @@ data: {"type":"RUN_FINISHED","threadId":"...","runId":"..."}</code></pre>
 
 <p>The <code>APPLICATION_LOGS</code> of the edge gateway, the tools gateway, and the runtime are delivered to three log groups under <code>/aws/vendedlogs/bedrock-agentcore/</code> with 30 day retention. A subscription filter on each sends every record to a Firehose delivery stream whose HTTP destination is Dynatrace's Firehose log ingest path<a class="ref" href="#r30">[30]</a>, with the API token as the destination's access key, GZIP encoding, buffering at 1 MiB or 60 seconds, and a small bucket of its own holding seven days of what could not be delivered. Gateway records carry <code>request_id</code>, <code>trace_id</code>, and <code>span_id</code> with the request or response body nested under <code>body</code>; runtime records carry <code>request_id</code>, <code>session_id</code>, <code>trace_id</code>, <code>span_id</code>, and the payloads.</p>
 
-<p>The agent's own per-run JSON record is in none of those three. It goes to stdout and lands in the <code>runtime-logs</code> stream of the log group the service creates for the runtime, <code>/aws/bedrock-agentcore/runtimes/guppi_gpt-*</code>. A CloudFormation subscription filter needs a log group the stack owns, and the service creates that one lazily, so the record reaches Dynatrace only when that group is subscribed by hand. It is the join between the run id the page carries and the trace id everything else carries, and the five dashboard tiles that read it depend on that manual step.</p>
+<p>The agent's own per-run JSON record is in none of those three. It goes to stdout and lands in the <code>runtime-logs</code> stream of the log group the service creates for the runtime, <code>/aws/bedrock-agentcore/runtimes/guppi_gpt-*</code>. A CloudFormation subscription filter needs a log group the stack owns, and the service creates that one lazily, so the record reaches Dynatrace only when that group is subscribed by hand. It is the join between the run id the page carries and the trace id everything else carries; the dashboard reads spans and business events rather than this record, so the manual step matters only for queries on the record itself.</p>
 
 <h3>Votes as business events</h3>
 
@@ -751,7 +751,7 @@ data: {"type":"RUN_FINISHED","threadId":"...","runId":"..."}</code></pre>
 
 <p>The first attempt at the activation stack failed at its last step. The settings token the wizard mints lacked <code>extensions:configurations:read</code>, because the wizard's service-user group carries only the Data-Acquisition AWS Integration policy and that policy omits the scope in this release. The fix was to add the Admin User policy to that group at the environment scope in Account Management and run the wizard again with new tokens. The report step had already run once by then, so the connection stayed Pending until the monitoring configuration's <code>automatedDeploymentStatus</code> was set to COMPLETE by hand, after which it showed Healthy.</p>
 
-<p>Metrics arrive namespace by namespace, and the two this system needs are not in the recommended set. <code>AWS/Bedrock-AgentCore</code> and <code>AWS/Bedrock</code> were added to the same monitoring configuration as custom namespaces with auto discovery on 7 Sep 2026. Without them the gateway, runtime, and model metrics never reach the tenant and the dashboard tiles that read them stay empty.</p>
+<p>Metrics arrive service by service, and the two namespaces this system needs are not among the built-in services. The connection ingests <code>AWS/Bedrock-AgentCore</code> and <code>AWS/Bedrock</code> through its "Ingest any AWS metrics" setting, which takes one row per metric: name, dimension names, statistics, and unit. Namespace entries with auto discovery and no metric list, the first attempt on 7 Sep 2026, delivered nothing. The rows cover WafBlocks, UserErrors, SystemErrors, Throttles, Invocations, and Latency on the dimensions Resource, Operation, and Protocol, and Invocations, InputTokenCount, OutputTokenCount, and InvocationLatency on ModelId; the built-in WAFv2 service is switched on for the CloudFront web ACL. Polled metrics arrive under keys of the form <code>cloud.aws.&lt;service&gt;.&lt;Metric&gt;.By.&lt;Dimension&gt;</code>. Without those rows the gateway, runtime, and model metrics never reach the tenant and the dashboard tiles that read them stay empty.</p>
 
 <h3>The GuppiGPT operations dashboard</h3>
 
@@ -759,17 +759,17 @@ data: {"type":"RUN_FINISHED","threadId":"...","runId":"..."}</code></pre>
 
 <table>
 <tr><th>Tile</th><th>Reads</th></tr>
-<tr><td>Runs per hour</td><td>The agent's per-run record in the runtime log group, counted by <code>run</code></td></tr>
-<tr><td>First delta latency, p50 and p90</td><td><code>first_delta_ms</code> on the same record</td></tr>
-<tr><td>Run outcomes</td><td><code>outcome</code> on the same record, split by value</td></tr>
+<tr><td>Runs per hour</td><td>The server span named <code>POST /invocations</code> from service <code>guppi_gpt.DEFAULT</code>, one per run, counted by hour</td></tr>
+<tr><td>Run duration, p50 and p90</td><td>The duration of the same server span, which is the whole run; latency to the first delta lives only on the agent's log record and is not on the dashboard</td></tr>
+<tr><td>Run outcomes</td><td>The failure flag on the same server span; a <code>RUN_ERROR</code> event emitted on a 200 stream is not a failure here, and the <code>outcome</code> field on the agent's log record is the finer source</td></tr>
 <tr><td>Retrieval rate</td><td>Distinct traces whose run made a tool call, not the count of tool call spans, so a run that retrieves twice counts once</td></tr>
-<tr><td>Token usage</td><td><code>input_tokens</code> and <code>output_tokens</code> on the same record</td></tr>
+<tr><td>Token usage</td><td>The GenAI usage attributes on the Strands model span, whose name begins with <code>chat</code></td></tr>
 <tr><td>Up and down votes</td><td><code>fetch bizevents</code> for <code>guppigpt.reply-feedback</code></td></tr>
 <tr><td>WAF counts</td><td>The edge gateway's WAF metrics in <code>AWS/Bedrock-AgentCore</code>, through the AWS connection</td></tr>
 <tr><td>Loopback 403s</td><td>Every 4xx on the edge gateway, as the closest available proxy: nothing separates the front door's loopback rejection from any other 4xx</td></tr>
 </table>
 
-<p>The first five depend on the runtime's own log group reaching Dynatrace, which is the manual subscription described above; the last two depend on the two custom namespaces.</p>
+<p>The first five read spans, so they fill as soon as the container exports; the sixth reads the business events; the last two depend on the metric rows on the AWS connection described above.</p>
 
 <h3>Alarms in CloudWatch, and what is still done by hand</h3>
 
