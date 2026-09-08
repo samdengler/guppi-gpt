@@ -5,6 +5,7 @@ import {
   buildSessionRecord,
   classifyRefreshFailure,
   decideOnLoad,
+  newestRefreshToken,
 } from "../src/session.js";
 
 // ---- buildSessionRecord: the shape of the saved record ----
@@ -140,4 +141,19 @@ test("decideOnLoad treats a missing refresh result for a stored session as a net
   // Defensive: if the caller forgets to pass a result for a session that exists, do not
   // silently sign the person out of a session that might still be good.
   assert.equal(decideOnLoad({ refreshToken: "rt" }, undefined), "keep-and-show-sign-in");
+});
+
+// ---- newestRefreshToken: which token a tab refreshes with ----
+
+test("newestRefreshToken prefers the stored token, which another tab may have rotated", () => {
+  assert.equal(newestRefreshToken("old-in-memory", { refreshToken: "rotated-by-other-tab" }), "rotated-by-other-tab");
+});
+
+test("newestRefreshToken falls back to the in-memory token when nothing is stored", () => {
+  assert.equal(newestRefreshToken("in-memory", null), "in-memory");
+  assert.equal(newestRefreshToken("in-memory", { refreshToken: "" }), "in-memory");
+});
+
+test("newestRefreshToken is null when neither exists", () => {
+  assert.equal(newestRefreshToken(undefined, null), null);
 });

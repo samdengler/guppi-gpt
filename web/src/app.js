@@ -5,7 +5,7 @@ import * as chatHistory from "./history.js";
 import { renderFeedbackControls, initFeedbackSink, FEEDBACK_EVENT } from "./feedback.js";
 import { hintText, emptyStateText } from "./copy.js";
 import { initRum, identifyRumUser } from "./rum.js";
-import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideOnLoad } from "./session.js";
+import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideOnLoad, newestRefreshToken } from "./session.js";
 
 (async () => {
   const $ = (id) => document.getElementById(id);
@@ -281,6 +281,11 @@ import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideO
   async function refreshTokenIfNeeded() {
     const fiveMinutes = 5 * 60 * 1000;
     if (Date.now() < tokenExpiresAt - fiveMinutes) return;
+    // Cognito rotates the refresh token on every use, and another tab of the same browser
+    // may have used it since this tab last did (each tab keeps its own copy in memory). The
+    // stored record always holds the newest one, so it wins over this tab's copy; a stale
+    // copy would be refused with invalid_grant and the send after it would fail.
+    tokens.refresh_token = newestRefreshToken(tokens.refresh_token, await loadSession());
     if (!tokens.refresh_token) return;
     const body = new URLSearchParams({
       grant_type: "refresh_token",

@@ -66,6 +66,15 @@ export async function loadSession() {
   }
 }
 
+// Pure: the refresh token a tab should use next. The stored record is written by whichever
+// tab refreshed most recently, so when it holds a token it is at least as new as this tab's
+// own copy and is preferred; the in-memory token is the fallback when nothing is stored (a
+// session that was never persisted, or storage that is unavailable).
+export function newestRefreshToken(inMemoryToken, storedSession) {
+  const stored = storedSession && storedSession.refreshToken;
+  return stored || inMemoryToken || null;
+}
+
 // Removes the stored session, if any.
 export async function clearSession() {
   try {
