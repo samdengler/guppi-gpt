@@ -874,6 +874,7 @@ data: {"type":"RUN_FINISHED","threadId":"...","runId":"..."}</code></pre>
 <li>Register a second span exporter in the agent if spans are wanted in CloudWatch Transaction Search as well as Dynatrace. It is a code change, not a parameter (section 12).</li>
 <li>Decide what happens to traces when the Dynatrace trial ends. Clearing the two Dynatrace parameters returns span export to CloudWatch Transaction Search with no code change; the logs, votes, and RUM paths simply stop.</li>
 <li>Retune the alarm thresholds and the per-user rate limit against real traffic, and confirm the <code>Resource</code> dimension the three runtime alarms assume.</li>
+<li>Low priority: admit users from an allow-list. Google federation creates a pool user on first sign-in whatever the self sign-up setting says, and the JWT authorizers check issuer, audience, and client id only, so the gate has to be a Cognito pre sign-up trigger: one small Lambda function that reads a StringList of emails from an SSM parameter and raises for anyone else, outside the request path. The page needs a branch for the error Cognito returns to the callback URL, accounts already in the pool stay admitted until deleted, and removing someone later is a disable plus global sign-out on the pool. The function needs Sam's approval under the Lambda rule in AGENTS.md before it is built.</li>
 </ol>
 
 <h2 id="glossary">Glossary</h2>

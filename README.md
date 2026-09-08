@@ -124,3 +124,8 @@ Preference for anything on the backend: AWS native services, serverless where po
    `docs/proposals/conversation-logging.md`.
 7. Operational alarms, vended log delivery, and the per-user rate limit: done, thresholds
    in `docs/proposals/operations.md`.
+8. Low priority: an allow-list for sign-in. Any Google account is admitted today. The
+   only place Cognito can refuse a federated first sign-in is a pre sign-up trigger, so
+   this is one small Lambda function reading an email list from an SSM parameter, plus a
+   callback error branch on the page. Shape and caveats in design section 16; needs
+   approval under the Lambda rule before building.
