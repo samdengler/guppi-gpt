@@ -269,6 +269,148 @@ dashboard's two metric tiles keep their guessed keys until the real ones are kno
    `version`, `variables`, `tiles` keyed by id with `type: "data"`, `layouts`). Re-import
    after edits through the Dashboards app upload or the document API.
 
+## Moving to a new tenant: a runbook Claude follows in Chrome
+
+Written on 8 Sep 2026 for the day the trial tenant (wfd05358, 15 days from 5 Sep 2026)
+expires and Sam starts another. Everything tenant specific enters through three doors
+(the 1Password item `GuppiGPT Dynatrace`, the `GUPPI_DYNATRACE_BEACON_ORIGIN` variable,
+and the gitignored file `web/vendor/ruxitagentjs.js`); the code, the stack, and the
+dashboard file are tenant free. The steps below are written for Claude working in a
+Chrome tab that is signed in to the new tenant, with the AWS CLI and 1Password CLI in the
+shell. Steps marked **Sam** need something only Sam can do; Claude stops and asks at each
+one. Secrets never pass through the transcript: a token travels from the tenant page to
+the clipboard (`navigator.clipboard.writeText` from the signed-in tab, after a click into
+the page and a one time "allow") and from the clipboard into 1Password or a shell variable
+with `pbpaste`, never through a tool result. Old data does not move: traces, logs, votes,
+and RUM sessions in the old tenant end with it, while the S3 thread records and the
+CloudWatch logs are untouched.
+
+### Before the old tenant expires
+
+1. **Sam:** create the new trial and sign in to it in Chrome. Tell Claude the tenant id
+   (the `xxx` in `https://xxx.apps.dynatrace.com`).
+2. Claude: confirm the tab is signed in by fetching
+   `/platform/classic/environment-api/v2/settings/schemas` from it (200 with a schema
+   list). The `/platform/storage/query/v1/query:execute` endpoint works from that tab
+   only right after a Settings or Notebooks app page has loaded; reload one of those when
+   a query answers 403.
+
+### Tear down the old tenant's footprint in AWS
+
+3. Claude: delete Dynatrace's activation stack from the account, since it embeds the old
+   tenant's tokens: `aws cloudformation delete-stack --stack-name GuppiGPT-Dynatrace`,
+   then wait for `DELETE_COMPLETE`. The log ingest piece is a StackSet instance
+   (`StackSet-DynatraceLogIngest-<old tenant>-...`); if it survives the parent, delete the
+   StackSet's instances and then the StackSet (`aws cloudformation list-stack-sets`,
+   `delete-stack-instances`, `delete-stack-set`). The `GuppiGpt` stack is not touched.
+4. Claude: leave the `GuppiGPT Dynatrace` 1Password item in place for now; its values are
+   replaced in step 9. Nothing in `GuppiGpt` breaks while the old endpoint is dead: the
+   Firehose stream and the feedback API destination park what they cannot deliver, and
+   the runtime's exporter drops spans.
+
+### Create what the tenant needs, from the signed-in tab
+
+5. Claude, RUM application: create a web application configured for manual injection
+   through the RUM configuration API, `POST
+   /platform/classic/environment-api/config/v1/applications/web` with a body naming it
+   `GuppiGPT`, `type` `AUTO_INJECTED` replaced by manual insertion (the request body
+   the earlier tenant used is not recorded; read the schema from
+   `/platform/classic/environment-api/config/v1/applications/web` GET on any existing
+   application first, or create it in Settings, Web and mobile monitoring, Applications,
+   and switch it to manual insertion). Record the application id
+   (`APPLICATION-...`). Then read the beacon origin and the inline script: `GET
+   /platform/classic/environment-api/v1/rum/jsInlineScript/<application id>` returns the
+   JavaScript; write it to the clipboard from the tab and save it in the shell with
+   `pbpaste > web/vendor/ruxitagentjs.js`. The beacon origin is the
+   `https://<random>.bf.dynatrace.com` host inside that script (search it for
+   `bf.dynatrace.com`); it is not a secret and may be read into the transcript.
+6. Claude, RUM session properties: declare one session property per flag name in
+   `web/features.json` (`history`, `feedback`, `logging`, `rum`) on the application, as
+   settings objects of schema `builtin:rum.web.capture-properties` scoped to the
+   application id, so `dtrum.sendSessionProperties` calls are stored rather than
+   dropped. Read the schema's current shape from
+   `/platform/classic/environment-api/v2/settings/schemas/builtin:rum.web.capture-properties`
+   before posting.
+7. Claude, ingest token: `POST /platform/classic/environment-api/v2/apiTokens` from the
+   tab with `name` `guppigpt-ingest` and scopes `openTelemetryTrace.ingest`,
+   `logs.ingest`, `metrics.ingest`, `bizevents.ingest`. The response holds the token
+   once; copy `token` to the clipboard from the same script and never return it.
+8. Claude, dashboard: from a tab that has the Dashboards app open, `POST
+   /platform/document/v1/documents` with FormData fields `name` (`GuppiGPT operations`),
+   `type` (`dashboard`), and `content` (the text of `docs/dynatrace/dashboard.json` as a
+   JSON blob). Record the new document id in this file, replacing
+   48b747fb-31cf-496c-a05e-cc8dc09e83e1 wherever it appears. Later edits are a `PATCH`
+   on `/platform/document/v1/documents/<id>?optimistic-locking-version=<version from
+   the metadata endpoint>` with the same FormData shape.
+
+### Hand the values to the stack
+
+9. **Sam** (or Claude, when the 1Password CLI is unlocked and `op item edit` is
+   permitted): set the `GuppiGPT Dynatrace` item's `hostname` to
+   `https://<tenant>.live.dynatrace.com/api/v2/otlp` (no trailing slash) and its
+   `credential` to the clipboard contents from step 7, for example
+   `pbpaste | op item edit "GuppiGPT Dynatrace" credential=-`. Claude never sees the
+   value either way.
+10. **Sam:** run the full deploy with the beacon origin from step 5 in the environment:
+    `GUPPI_DYNATRACE_BEACON_ORIGIN=https://<random>.bf.dynatrace.com scripts/deploy.sh
+    --require-approval never` from the `!` prompt. The classifier blocks Claude from
+    running it. Claude follows `.deploy/latest.log`. This redeploys the runtime with the
+    new OTLP endpoint, repoints the Firehose stream and the feedback API destination,
+    puts the new beacon origin in the CSP, and publishes the new RUM script. The `rum`
+    flag is already on, so no site only deploy follows.
+
+### Connect AWS to the new tenant
+
+11. Claude, then **Sam** if the wizard's service user lacks rights: in the new tenant open
+    Settings, Collect and capture, Cloud and virtualization, AWS, New connection. The
+    wizard mints two platform tokens and hands over Dynatrace's CloudFormation activation
+    template. Before running it, give the wizard's service-user group the Admin User
+    policy at the environment scope in Account Management (myaccount.dynatrace.com,
+    Identity and access management, Groups); on 7 Sep 2026 the report step failed with
+    403 `extensions:configurations:read` without it. Account Management is outside the
+    tenant tab and may need Sam.
+12. Claude: name the connection `GuppiGPT`, region us-east-1, log ingest on, event
+    ingest off, the recommended metric set. On the deployment step, copy each token with
+    the wizard's copy buttons into shell variables with `pbpaste`, then create the stack
+    from the CLI with the template
+    `https://dynatrace-data-acquisition.s3.amazonaws.com/aws/deployment/cfn/latest/da-aws-activation.yaml`,
+    stack name `GuppiGPT-Dynatrace`, capabilities `CAPABILITY_NAMED_IAM` and
+    `CAPABILITY_AUTO_EXPAND`, and the parameters the wizard's deep link carries (tenant
+    URL, the two tokens, the monitoring configuration id, log ingest flags, regions).
+    The template rejects `pExternalId` even though the deep link carries it. Lambda
+    functions in this stack are Dynatrace's own and were approved by Sam on 7 Sep 2026;
+    the approval covers the same stack on a new tenant.
+13. Claude: wait for `CREATE_COMPLETE`, then check the connection's status in the tenant.
+    If it stays Pending after the report step ran, `PUT` the monitoring configuration
+    (`/platform/extensions/v2/extensions/com.dynatrace.extension.da-aws/monitoring-configurations/<id>`,
+    body `{value: <the GET value with aws.automatedDeploymentStatus set to COMPLETE>}`).
+14. Claude: add the metric rows. Either on the connection's Manage panel (switch on
+    "Ingest any AWS metrics", one row per metric) or by the same `PUT`, setting
+    `value.aws.namespaces` to the two entries recorded under "The AWS connection as
+    Dynatrace builds it now" (type `CUSTOM_AWS`, statistics limited to Sum, Minimum,
+    Maximum, SampleCount) and adding `WAFV2_essential` to `value.featureSets`.
+    Namespace entries with auto discovery alone deliver nothing.
+15. Claude: send one chat turn at chat.dengler.io (the namespaces are event driven and
+    the poller has nothing to fetch until a request happens), wait ten minutes, and run
+    `fetch metric.series | filter startsWith(metric.key, "cloud.aws") | summarize keys =
+    collectDistinct(metric.key)`; expect `cloud.aws.bedrock_agentcore.*` and
+    `cloud.aws.wafv2.*` keys.
+
+### Verify, then record
+
+16. Claude, in order: `fetch spans | filter service.name == "guppi_gpt.DEFAULT" | limit
+    3` (traces); `fetch logs | filter contains(log.source, "guppi-gpt-edge") | limit 3`
+    (Firehose logs, after a turn); a vote on the reply and then `fetch bizevents |
+    filter event.type == "guppigpt.reply-feedback"` (business events); `window.dtrum`
+    defined on the page and a session in the RUM application (RUM); the dashboard
+    rendering all eight tiles. If spans do not arrive, the token scope or the hostname
+    in 1Password is wrong; if logs do not, the Firehose stream's destination is, which
+    the deploy derives from the same hostname.
+17. Claude: update this file (tenant id, application id, beacon origin, document id,
+    dates), the design document's section 12 where it names the tenant, and the
+    memory notes; commit and push. Delete the old tenant's token from nowhere: it
+    expires with the tenant.
+
 ## What was not possible to confirm
 
 **Observed on 5 Sep 2026.** With the Dynatrace parameters set, the container's environment won: the turn's 19 spans (invocation, agent loop, model call, MCP retrieval, Secrets Manager and S3 calls) appeared in Dynatrace and none reached CloudWatch Transaction Search. The export is redirected, as the paragraph below predicted; dual export needs the second exporter in code.
