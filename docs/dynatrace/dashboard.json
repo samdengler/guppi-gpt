@@ -76,9 +76,9 @@
     },
     "7": {
       "type": "data",
-      "title": "WAF allowed and blocked",
-      "description": "The edge gateway's web ACL (a REGIONAL ACL associated with the AgentCore gateway) through the AWS connection's built-in WAFv2 service; keys are cloud.aws.wafv2.<Metric>.By.Region.Rule.WebACL with Rule ALL for the whole ACL and one series per rule. BlockedRequests exists only once something has been blocked, so the blocked line is absent until then (verified 7 Sep 2026).",
-      "query": "timeseries allowed = sum(cloud.aws.wafv2.AllowedRequests.By.Region.Rule.WebACL), blocked = sum(cloud.aws.wafv2.BlockedRequests.By.Region.Rule.WebACL), by: {Rule}",
+      "title": "WAF allowed requests",
+      "description": "The edge gateway's web ACL (a REGIONAL ACL associated with the AgentCore gateway) through the AWS connection's built-in WAFv2 service; keys are cloud.aws.wafv2.<Metric>.By.Region.Rule.WebACL with Rule ALL for the whole ACL and one series per rule. BlockedRequests is left off on purpose: a timeseries command answers no records when any named key has never existed, and that key appears only after the first block (verified 7 Sep 2026). Add it back once a block has happened.",
+      "query": "timeseries allowed = sum(cloud.aws.wafv2.AllowedRequests.By.Region.Rule.WebACL), by: {Rule}",
       "visualization": "lineChart",
       "visualizationSettings": {}
     },
