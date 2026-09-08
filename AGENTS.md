@@ -53,11 +53,17 @@ web/
   src/features.js         # OpenFeature static provider; initFeatures() and isEnabled()
   src/copy.js             # the hint and empty-state wording for each combination of the history and logging flags
   src/flags-core.js       # pure override parsing and default/override overlay, tested without a DOM
+  src/flags.js            # the /flags.html settings page: rows per flag, browser-wide override controls, reset
+  src/flags.html          # that page, reachable by URL only (no link from the chat page)
+  src/privacy.html        # privacy policy, served at /privacy.html for the Google consent screen
+  src/terms.html          # terms of service, served at /terms.html
   src/rum.js              # Dynatrace RUM: script injection, OpenFeature hook, behind the rum flag
   features.json           # committed feature flag defaults, merged into config.json at deploy time
   vendor/ruxitagentjs.js  # the Dynatrace RUM script itself; gitignored, not committed
   test/features.test.mjs  # node:test coverage for flags-core.js, run by `npm test`
   test/feedback.test.mjs  # node:test coverage for feedback.js's DOM-free functions
+  test/flags.test.mjs     # node:test coverage for the flags page helpers in flags-core.js
+  test/legal.test.mjs     # the privacy and terms pages: date, cross links, no inline style or script
   test/copy.test.js       # node:test coverage for copy.js's wording per flag combination
   test/rum.test.mjs       # node:test coverage for rum.js's pure property-building functions
   test/session.test.mjs   # node:test coverage of session.js's pure decision and shaping functions
