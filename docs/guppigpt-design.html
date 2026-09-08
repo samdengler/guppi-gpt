@@ -396,7 +396,9 @@ h2:hover .anchor { opacity: 1; }
 <figure class="figure">
 <style>
 /* AWS icon nodes for figures 3 and 5 */
-.figure:has(.aws-fig) { overflow-x: auto; }
+.figure:has(.aws-fig) { overflow: hidden; }
+/* the diagram keeps its natural width; the script scales it down to fit the figure */
+[data-diagram].aws-fig { width: max-content; margin: 0 auto; transform-origin: top left; }
 .dg-grid.aws-grid { gap: 58px 64px; padding: 12px 30px; }
 .figure [data-diagram].aws-fig { padding-bottom: 26px; }
 .dg-node.aws { background: #fff; border-color: #c9d1da; width: 142px; padding: 10px 8px 9px;
@@ -979,6 +981,8 @@ data: {"type":"RUN_FINISHED","threadId":"...","runId":"..."}</code></pre>
     try { edges = JSON.parse(edgeScript.textContent); }
     catch (e) { warn('bad edge JSON: ' + e.message); return; }
 
+    // measure at natural size; fitDiagram re-applies any scale after drawing
+    container.style.transform = ''; container.style.marginBottom = '';
     const cRect = container.getBoundingClientRect();
     const R = {}; // measured rects, container-relative
     for (const id in nodes) {
@@ -1245,6 +1249,23 @@ data: {"type":"RUN_FINISHED","threadId":"...","runId":"..."}</code></pre>
       const fb = t.getBBox();
       placedLabels.push({ x: fb.x, y: fb.y, w: fb.width, h: fb.height });
     });
+    fitDiagram(container);
+  }
+
+  // Scale a diagram that is wider than its figure down to fit, so nothing is clipped.
+  // transform does not affect layout, so the negative bottom margin reclaims the space
+  // the unscaled box would otherwise leave below the diagram.
+  function fitDiagram(container) {
+    if (!container.classList.contains('aws-fig')) return;
+    const parent = container.parentElement;
+    if (!parent) return;
+    const ps = getComputedStyle(parent);
+    const avail = parent.clientWidth - parseFloat(ps.paddingLeft) - parseFloat(ps.paddingRight);
+    const natural = container.offsetWidth;
+    if (natural <= avail + 0.5) return;
+    const k = avail / natural;
+    container.style.transform = 'scale(' + k + ')';
+    container.style.marginBottom = -(container.offsetHeight * (1 - k)) + 'px';
   }
 
   /* ---------------- sequence diagrams ---------------- */
