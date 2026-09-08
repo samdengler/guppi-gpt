@@ -238,6 +238,7 @@ h2:hover .anchor { opacity: 1; }
 <ul>
 <li>When an unauthenticated user opens the page, the system shall show a sign-in screen with a single Google option and no other content.</li>
 <li>The system shall keep the refresh token in IndexedDB, restore the session on load with a silent refresh, rotate the refresh token on each use, and clear it on sign out; the access and id tokens shall stay in page memory.</li>
+<li>When a tab refreshes its access token, the system shall use the refresh token most recently stored by any tab of the same browser rather than the copy that tab holds in memory, since rotation invalidates the older copy.</li>
 <li>When the token expires during a page session, the system shall obtain a new one without showing the sign-in screen, provided the identity provider session is still valid.</li>
 <li>The system shall reject any agent request that does not carry a valid token issued for this application.</li>
 </ul>
