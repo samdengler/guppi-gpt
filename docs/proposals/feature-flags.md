@@ -97,29 +97,64 @@ The override parsing and the default and override merge are pure functions in
 `web/src/flags-core.js`, apart from the SDK import, so they run under `node:test`
 without a browser or a bundler (`web/test/features.test.mjs`).
 
-## Per-tab overrides
+## Browser-wide overrides
 
-A `ff` query parameter overrides the defaults for the current browser tab, read once
+A `ff` query parameter overrides the defaults for every tab of the browser, read once
 on load:
 
 | Value | Effect |
 | --- | --- |
 | `?ff=history,feedback` | Turns both flags on |
 | `?ff=-history` | Turns `history` off |
-| `?ff=` | Clears the tab's override set back to `web/features.json`'s defaults |
+| `?ff=` | Clears the browser's override set back to `web/features.json`'s defaults |
 
-A `ff` value, present or empty, replaces the tab's whole override set; a name it does
+A `ff` value, present or empty, replaces the whole stored override set; a name it does
 not mention keeps its `config.features` default. Leaving `ff` off the URL entirely
-leaves whatever the tab already stored untouched.
+leaves whatever is already stored untouched.
 
-The override set is written to `sessionStorage` under one key and the `ff` parameter is
-then stripped from the URL with `history.replaceState`, the same way `finishSignIn`
-already removes `code` after the OAuth exchange. Sign-in is a full navigation to
-Cognito and back (`startSignIn` in `app.js`), which drops any query string the page
-does not preserve itself; storing the override before that redirect, in a form that
-survives it, is why `sessionStorage` and not the URL is the flag layer's memory. A
-visitor who opens `?ff=history` before signing in still sees history on after the
-redirect returns with only `?code=...` on the URL.
+The override set is written to `localStorage` under one key, `guppigpt_ff_overrides`,
+and the `ff` parameter is then stripped from the URL with `history.replaceState`, the
+same way `finishSignIn` already removes `code` after the OAuth exchange. `localStorage`
+was chosen for two reasons. First, Sam wants one override setting that follows the
+person, not the tab: opening a link with `?ff=history` should turn history on
+everywhere, not just in the tab that opened it. Second, `localStorage` still survives
+the sign-in redirect the way the earlier `sessionStorage` choice was chosen for:
+sign-in is a full navigation to Cognito and back (`startSignIn` in `app.js`), which
+drops any query string the page does not preserve itself, so the override still has to
+be stored before that redirect in a form that survives it. A visitor who opens
+`?ff=history` before signing in still sees history on after the redirect returns with
+only `?code=...` on the URL, and now every other open tab sees it too, once each
+reloads.
+
+The provider stays static: flags are computed once, at `initFeatures` time, from
+whatever the override set held at that moment. A change written by another tab (a `ff`
+link opened there, or a choice made on the flags page below) does not reach an
+already-loaded tab; that tab picks it up the next time it reloads, the same way it
+picks up a new committed default. `web/src/features.js` listens for the `storage` event
+the browser fires in other tabs when the key changes, but only to note the moment for a
+session working from the browser console; it does not re-resolve anything on the page.
+
+## The flags page
+
+`web/src/flags.html`, bundled as `web/src/flags.js` into `dist/flags.js`, is a settings
+page at `/flags.html`. It is reachable only by typing or bookmarking that URL: nothing
+on the chat page or anywhere else links to it. It has no sign-in requirement, since it
+reads `config.json`, a public file the chat page already fetches unauthenticated, and
+otherwise only reads and writes `localStorage` in the visitor's own browser.
+
+The page lists one row per flag name in `config.features`: the name, the committed
+default, this browser's override (none, on, or off), and the value the flag currently
+resolves to. A three-way control per row (a `fieldset` of radio inputs, keyboard
+operable) writes the override through `setOverride` in `web/src/flags-core.js`, the same
+pure helper the page's tests exercise directly. A "Reset all" control clears the stored
+key outright. `logging` and `rum` are grouped under their own heading, which says
+observability depends on them and they are not meant to be turned off; the control still
+allows it, since a tester may need to see the page with one of them off.
+
+The page does not change what a default is. A row's "committed default" column always
+reads from `config.features`, which only changes by editing `web/features.json` and
+running `scripts/deploy.sh --site-only`; the flags page only ever writes the override
+column.
 
 ## Attaching Dynatrace later
 
@@ -142,8 +177,9 @@ the minified `dist/app.js` (roughly 235 KB before, 261 KB after).
 
 ## What is not done
 
-- No remote flag service or targeting: both flags are read once from a static file, the
-  same for every visitor, with the query-parameter override for one tab at a time.
+- No remote flag service or targeting: flags are read once from a static file, the same
+  for every visitor, with the query-parameter or flags-page override for one browser at
+  a time.
 - AWS AppConfig: set aside above, because its data plane needs SigV4 credentials the
   browser does not have without adding Cognito Identity Pool federation.
 - The Dynatrace hook itself: the interface it would use is described above; nothing is
