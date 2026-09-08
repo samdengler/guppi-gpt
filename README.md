@@ -51,7 +51,9 @@ scripts/ingest.sh            # start one ingestion job and wait for it
 ```
 
 Flipping a feature flag: edit `web/features.json`, then run `scripts/deploy.sh
---site-only`. No `cdk deploy`. Details in
+--site-only`. No `cdk deploy`. A visitor's own override, from `?ff=` or from the
+settings page at `/flags.html` (reachable only by URL, linked from nowhere), applies to
+every tab of their browser. Details in
 [`docs/proposals/feature-flags.md`](docs/proposals/feature-flags.md).
 
 ## Status

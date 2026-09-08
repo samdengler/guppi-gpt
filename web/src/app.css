@@ -226,4 +226,32 @@ body {
 .legal p { margin: 0 0 .9rem; }
 .legal-dates { color: var(--muted); font-size: .85rem; }
 
+.flags {
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: 0 0 2rem;
+}
+.flags-note { color: var(--muted); font-size: .85rem; margin: 0 0 1.5rem; }
+
+.flags-list { display: flex; flex-direction: column; gap: .75rem; margin: 0 0 1.5rem; }
+
+.flag-row {
+  border: 1px solid var(--border); border-radius: .6rem;
+  padding: .75rem 1rem; background: var(--surface);
+}
+.flag-row-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 1rem; margin: 0 0 .5rem;
+}
+.flag-name { font-weight: 600; }
+.flag-effective { color: var(--muted); font-size: .82rem; }
+
+.flag-control { border: none; margin: 0; padding: 0; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.flag-control legend { width: 100%; color: var(--muted); font-size: .78rem; margin: 0 0 .35rem; padding: 0; }
+.flag-control label { display: inline-flex; align-items: center; gap: .3rem; font-size: .88rem; cursor: pointer; }
+
+.flags-operational { border-top: 1px solid var(--border); padding-top: 1rem; margin: 0 0 1.5rem; }
+.flags-operational h2 { font-size: 1rem; margin: 0 0 .35rem; }
+.flags-operational-note { color: var(--muted); font-size: .82rem; margin: 0 0 1rem; }
+
 [hidden] { display: none !important; }

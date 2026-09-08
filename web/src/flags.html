@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GuppiGPT flags</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="page">
+
+  <header class="app-header">
+    <span class="brand">GuppiGPT flags</span>
+  </header>
+
+  <main class="flags">
+    <p class="flags-note">Overrides apply to every tab of this browser; reload open chat tabs to pick them up.</p>
+
+    <div id="flags-list" class="flags-list"></div>
+
+    <section class="flags-operational">
+      <h2>Operational flags</h2>
+      <p class="flags-operational-note">Observability depends on these flags; they are not meant to be turned off. A tester can still turn one off here.</p>
+      <div id="flags-operational-list" class="flags-list"></div>
+    </section>
+
+    <button id="reset-all-btn" type="button" class="text-btn">Reset all</button>
+  </main>
+
+</div>
+<script src="flags.js"></script>
+</body>
+</html>
