@@ -79,7 +79,7 @@ notes:
   investigator role is the only principal outside the runtime that can read it; the
   re-identification procedure is in `docs/proposals/conversation-logging.md`.
 * The site also serves `/privacy.html` and `/terms.html`, added 7 Sep 2026, because Google's
-  OAuth consent screen requires public privacy and terms URLs before it can be published.
+  OAuth consent screen required public privacy and terms URLs before it could be published; with them in place it went to production on 7 Sep 2026, so any Google account can sign in.
   Both are plain static pages in `web/src/`, copied into `web/dist/` by the same build that
   bundles the page. Content changes to either page go out with `scripts/deploy.sh
   --site-only`, the same as any other page-only change.
