@@ -109,7 +109,7 @@ Preference for anything on the backend: AWS native services, serverless where po
    in the tenant, created from `docs/dynatrace/dashboard.json`; edits are re-imported from
    that file.
 3. Correlation ids and traceability. Done: `docs/proposals/traceability.md`.
-4. Up/down feedback on each reply. Live since 5 Sep 2026 (`feedback` flag on): the page
+4. Up/down feedback on each reply. Built and verified 5 Sep 2026; the `feedback` flag went off again on 8 Sep 2026 at Sam's request, so the thumbs are hidden unless a tab turns them on with `?ff=feedback`. The pipeline behind them stays deployed: the page
    posts the vote to `/api/feedback`, a REST API with a Cognito authorizer integrates
    directly with EventBridge, and an API destination turns it into a Dynatrace business
    event (`fetch bizevents | filter event.type == "guppigpt.reply-feedback"`). RUM custom
