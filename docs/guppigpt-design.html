@@ -866,13 +866,11 @@ data: {"type":"RUN_FINISHED","threadId":"...","runId":"..."}</code></pre>
 <p>The stack, the agent, the page, the knowledge base, the sync, the conversation log, the feedback pipeline, and the telemetry are deployed. What remains:</p>
 
 <ol>
-<li>Get an alarm to a person. The email subscription for the address passed as <code>AlarmEmail</code> has been pending since 3 Sep 2026 and neither confirmation request reached Gmail; an SMS subscription or an address at another provider are the two ways out.</li>
+<li>Get an alarm to a person. Two email addresses on two providers (Gmail, then Purelymail on 7 Sep 2026) never showed the SNS confirmation, and SMS is closed off until the account owns a registered origination number, which takes days of carrier review. The next attempt is an EventBridge rule on CloudWatch alarm state changes with an API destination posting to a chat webhook, the pattern the feedback pipeline already uses.</li>
 <li>Measure the edge gateway's idle handling on a long silent stream and record the result in section 14.</li>
 <li>Turn the <code>history</code> flag on when Chats is wanted for visitors. It is built, tested, and off.</li>
-<li>Remove the role-based Dynatrace settings object and the <code>GuppiGptDynatraceMonitoring</code> role in the stack. The push-based connection replaced both and neither does anything (section 12).</li>
-<li>Hash or drop the raw Cognito <code>sub</code> on the feedback event, so a vote carries no more identity than a thread record does.</li>
-<li>Alarm on the feedback rule's failed invocations, so a vote that never reaches Dynatrace is noticed rather than sitting in the dead letter queue.</li>
 <li>Register a second span exporter in the agent if spans are wanted in CloudWatch Transaction Search as well as Dynatrace. It is a code change, not a parameter (section 12).</li>
+<li>Decide what happens to traces when the Dynatrace trial ends. Clearing the two Dynatrace parameters returns span export to CloudWatch Transaction Search with no code change; the logs, votes, and RUM paths simply stop.</li>
 <li>Retune the alarm thresholds and the per-user rate limit against real traffic, and confirm the <code>Resource</code> dimension the three runtime alarms assume.</li>
 </ol>
 
