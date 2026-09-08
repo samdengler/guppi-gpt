@@ -1,10 +1,32 @@
 # GuppiGPT
 
-A one page, stateless, plain text chat behind Google sign-in. The page is served from
-CloudFront, the stream runs through an AgentCore Gateway to a Strands agent on AgentCore
-Runtime, and the agent reads a Bedrock Knowledge Base through a second gateway.
+A one page, plain text chat behind Google sign-in. The page is served from CloudFront,
+the stream runs through an AgentCore Gateway to a Strands agent on AgentCore Runtime, and
+the agent reads a Bedrock Knowledge Base through a second gateway.
 
 ![GuppiGPT runtime architecture](docs/guppigpt-architecture-runtime.png)
+
+The stack is Amazon Bedrock end to end. AgentCore Runtime hosts the agent container, two
+AgentCore Gateways front it (one holds the runtime as its target and checks the caller's
+JWT, the other exposes the knowledge base as an MCP tool), Bedrock Knowledge Bases holds
+the documentation the agent searches, and a Claude model answers through a cross-region
+inference profile. The agent is written with Strands and speaks AG-UI: the page opens one
+HTTP request per turn and reads a server-sent event stream of text deltas, tool events, and
+run boundaries through `@ag-ui/client`, so the same wire format a future rich client would
+use is already what the plain page consumes. Sign-in is Google through a Cognito user pool
+with PKCE in the browser, and the user's token travels every hop up to the tools gateway.
+There is no Lambda function in the request path; the only ones in the account belong to
+Dynatrace's own AWS integration stack.
+
+State stays small and mostly in the browser. The sign-in session persists across reloads
+through a rotated refresh token in IndexedDB, chat history is a browser-local feature behind
+a flag, and the page's feature flags are a committed JSON file with browser-wide overrides
+from a URL-only settings page. On the server, each conversation is written to a private S3
+bucket for thirty days under a keyed pseudonym rather than the account id, readable only
+through a dedicated investigator role. Observability is never behind a flag: the container
+exports OpenTelemetry spans, the gateways and runtime ship vended logs, a vote on a reply
+becomes an EventBridge event, and all of it lands in a Dynatrace tenant alongside RUM from
+the page, with CloudWatch alarms and AWS WAF in front of the gateway as the guards.
 
 ## Documentation
 
