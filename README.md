@@ -6,27 +6,55 @@ the agent reads a Bedrock Knowledge Base through a second gateway.
 
 ![GuppiGPT runtime architecture](docs/guppigpt-architecture-runtime.png)
 
-The stack is Amazon Bedrock end to end. AgentCore Runtime hosts the agent container, two
-AgentCore Gateways front it (one holds the runtime as its target and checks the caller's
-JWT, the other exposes the knowledge base as an MCP tool), Bedrock Knowledge Bases holds
-the documentation the agent searches, and a Claude model answers through a cross-region
-inference profile. The agent is written with Strands and speaks AG-UI: the page opens one
-HTTP request per turn and reads a server-sent event stream of text deltas, tool events, and
-run boundaries through `@ag-ui/client`, so the same wire format a future rich client would
-use is already what the plain page consumes. Sign-in is Google through a Cognito user pool
-with PKCE in the browser, and the user's token travels every hop up to the tools gateway.
-There is no Lambda function in the request path; the only ones in the account belong to
-Dynatrace's own AWS integration stack.
+The stack is [Amazon Bedrock](https://aws.amazon.com/bedrock/) end to end, with the page
+and its state kept deliberately small. In brief:
 
-State stays small and mostly in the browser. The sign-in session persists across reloads
-through a rotated refresh token in IndexedDB, chat history is a browser-local feature behind
-a flag, and the page's feature flags are a committed JSON file with browser-wide overrides
-from a URL-only settings page. On the server, each conversation is written to a private S3
-bucket for thirty days under a keyed pseudonym rather than the account id, readable only
-through a dedicated investigator role. Observability is never behind a flag: the container
-exports OpenTelemetry spans, the gateways and runtime ship vended logs, a vote on a reply
-becomes an EventBridge event, and all of it lands in a Dynatrace tenant alongside RUM from
-the page, with CloudWatch alarms and AWS WAF in front of the gateway as the guards.
+**Agent and model**
+
+* [AgentCore Runtime](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agents-tools-runtime.html)
+  hosts the agent container, written with [Strands Agents](https://strandsagents.com/).
+* Two [AgentCore Gateways](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway.html):
+  the edge gateway holds the runtime as its target and checks the caller's JWT; the tools
+  gateway exposes the knowledge base as an [MCP](https://modelcontextprotocol.io/) tool.
+* [Bedrock Knowledge Bases](https://aws.amazon.com/bedrock/knowledge-bases/) holds the
+  documentation the agent searches, synced nightly from S3.
+* A Claude model answers through a
+  [cross-region inference profile](https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html).
+* The wire format is [AG-UI](https://docs.ag-ui.com/): one HTTP request per turn, a
+  server-sent event stream of text deltas, tool events, and run boundaries back, read by
+  [`@ag-ui/client`](https://www.npmjs.com/package/@ag-ui/client). See the design's
+  [wire format section](docs/guppigpt-design.html#wire-format).
+* No Lambda function in the request path; the only ones in the account belong to
+  Dynatrace's own AWS integration stack.
+
+**Sign-in and state**
+
+* Google sign-in through an [Amazon Cognito](https://aws.amazon.com/cognito/) user pool,
+  with [PKCE](https://datatracker.ietf.org/doc/html/rfc7636) in the browser. The user's
+  token travels every hop up to the tools gateway.
+* The session persists across reloads through a rotated refresh token in IndexedDB
+  (design section [request flow](docs/guppigpt-design.html#request-flow)).
+* Chat history is browser-local and behind a flag
+  ([proposal](docs/proposals/local-history.md)).
+* Feature flags are an [OpenFeature](https://openfeature.dev/) provider over a committed
+  JSON file, [`web/features.json`](web/features.json), with browser-wide overrides from a
+  URL-only settings page at `/flags.html` ([proposal](docs/proposals/feature-flags.md)).
+* Each conversation is written to a private S3 bucket for thirty days under a keyed
+  pseudonym rather than the account id, readable only through a dedicated investigator
+  role ([proposal](docs/proposals/conversation-logging.md)).
+
+**Observability and guards**
+
+* Never behind a flag. The container exports [OpenTelemetry](https://opentelemetry.io/)
+  spans, the gateways and runtime ship vended logs, and a thumbs up or down on a reply
+  becomes an [EventBridge](https://aws.amazon.com/eventbridge/) event through a REST API.
+* All of it lands in a [Dynatrace](https://www.dynatrace.com/) tenant alongside RUM from
+  the page, with one dashboard ([`docs/dynatrace/dashboard.json`](docs/dynatrace/dashboard.json)).
+  The trace path, the log path, and the correlation story are in the design's
+  [observability section](docs/guppigpt-design.html#observability).
+* CloudWatch alarms on the gateways, the runtime, the model, billing, and the feedback
+  queue ([proposal](docs/proposals/operations.md)), and [AWS WAF](https://aws.amazon.com/waf/)
+  in front of the edge gateway.
 
 ## Documentation
 
