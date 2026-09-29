@@ -3,5 +3,29 @@
   "label": "MCP App Lab",
   "assistant": "Guppi",
   "agent": "platform",
-  "capabilities": ["mcp-apps"]
+  "capabilities": [
+    "mcp-apps"
+  ],
+  "suggestions": [
+    {
+      "label": "Show a card",
+      "prompt": "Show me a card titled Hello with the body It works"
+    },
+    {
+      "label": "Show a card, then update it",
+      "prompt": "Show me a card titled Draft with the body First version, then change its body to Second version"
+    },
+    {
+      "label": "Ask for my preferences",
+      "prompt": "Ask me for my preferences"
+    },
+    {
+      "label": "Show a chart (not rendered yet)",
+      "prompt": "Show me a bar chart of the values 3, 1, 4"
+    },
+    {
+      "label": "Ask the docs",
+      "prompt": "In one sentence, what is the AG-UI protocol?"
+    }
+  ]
 }

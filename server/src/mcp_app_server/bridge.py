@@ -49,10 +49,20 @@ function mcpApp(appInfo, handlers) {
 
   function resize() {
     var box = document.documentElement.getBoundingClientRect();
+    // Before the sandboxed frame has been laid out the viewport is 0 by 0 and the
+    // measurement is meaningless; the observer below reports again once it has a size.
+    if (box.width <= 0 || box.height <= 0) return;
     post({
       method: "ui/notifications/size-changed",
       params: { width: Math.ceil(box.width), height: Math.ceil(box.height) }
     });
+  }
+
+  // The frame's viewport arrives after the first messages in some browsers (Chrome lays
+  // the sandboxed frame out on its next frame, not synchronously), so the page reports
+  // its size whenever its box changes, not only when its content does.
+  if (typeof ResizeObserver === "function") {
+    new ResizeObserver(function () { resize(); }).observe(document.documentElement);
   }
 
   window.addEventListener("message", function (event) {
