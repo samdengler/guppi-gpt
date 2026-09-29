@@ -49,3 +49,41 @@ entry names the step, the choice, and why. The smaller, reversible option wins b
   revision 2025-06-18 in `initialize`.
 - The bearer token goes in with `--token -` from stdin, so it never appears on a command
   line, in `ps`, or in shell history.
+
+### Step 4: stack
+
+- Target name `mcp-app`, so the tools are `mcp-app___show_card`, instead of the brief's
+  `mcpapp`. Two facts decide it. The CloudFormation schema for
+  `AWS::BedrockAgentCore::GatewayTarget` gives `Name` the pattern
+  `^([0-9a-zA-Z][-]?){1,100}$`: letters, digits and single hyphens, no underscores, so
+  `mcp_app` is not a valid name. And the platform agent (guppi-gpt `agent.py`,
+  `select_tools`) offers a project page's tools only when they start with
+  `mcp_app___` or `mcp-app___` for the project `mcp-app`; `mcpapp___show_card` would
+  never reach the agent, and the phase's done condition (the agent lists the project's
+  tools beside `docs___Retrieve`) could not hold. guppi-gpt's phase 1 report flagged the
+  same mismatch. Renaming the target is one constant (`TARGET_NAME`) and a redeploy.
+- `McpTargetConfigurationProperty` in `aws-cdk-lib` 2.271.0 has `mcp_server`,
+  `lambda_`, `open_api_schema`, `smithy_model`, `api_gateway` and `connector`; none takes
+  a Runtime ARN (only the HTTP target's `agentcore_runtime` does, and that is not an MCP
+  target). The target uses `mcp_server` with `endpoint` set to the Runtime's MCP
+  invocation URL,
+  `https://bedrock-agentcore.<region>.amazonaws.com/runtimes/<URL-encoded ARN>/invocations?qualifier=DEFAULT`,
+  with the ARN rebuilt from the runtime id so `:` and `/` can be written as `%3A` and
+  `%2F` in the template.
+- `listing_mode` `DYNAMIC`. The API documentation says a DEFAULT target's MCP resources
+  are cached at the control plane and a DYNAMIC target's are fetched when tools are
+  listed. With `JWT_PASSTHROUGH` a control plane sync has no user token to present to
+  the Runtime's JWT authorizer. No `mcp_tool_schema`: the API documentation says it is
+  supported only with an OAuth authorization code credential provider.
+- `allowed_workload_configuration` is left off. guppi-gpt's AGENTS.md and decision log
+  record that binding a JWT runtime to a gateway demands a transaction token, which the
+  gateway supplies only when it signs with its own role, and that combination was
+  rejected; token passthrough, which this target needs, forwards the user JWT without
+  one.
+- The `InvokeAgentRuntime` grant is an `AWS::IAM::Policy` owned by this stack and attached
+  to the tools gateway role imported by its SSM ARN. With `JWT_PASSTHROUGH` to an HTTPS
+  endpoint the gateway presents the user's token and not its role, so the grant is likely
+  unused; it is kept because the brief and the platform contract ask for it, and it lets
+  a later switch to `GATEWAY_IAM_ROLE` work without a policy change.
+- The runtime role follows guppi-gpt's documented execution role minus the workload token
+  and Bedrock model permissions, which an MCP server with no outbound calls does not use.

@@ -1,18 +1,109 @@
 import aws_cdk as cdk
-from aws_cdk.assertions import Template
-from guppi_mcp_app_infra.stack import GuppiMcpAppStack
+import pytest
+from aws_cdk.assertions import Match, Template
+from guppi_mcp_app_infra.stack import (
+    PARAM_JWT_DISCOVERY_URL,
+    PARAM_TOOLS_GATEWAY_ID,
+    PARAM_TOOLS_GATEWAY_ROLE_ARN,
+    PARAM_USER_POOL_CLIENT_ID,
+    GuppiMcpAppStack,
+)
 
 ACCOUNT = "123456789012"
 REGION = "us-east-1"
 
 
 def synth() -> Template:
-    app = cdk.App()
+    app = cdk.App(context={"image_uri": f"{ACCOUNT}.dkr.ecr.{REGION}.amazonaws.com/mcp-app:test"})
     stack = GuppiMcpAppStack(
         app, "GuppiMcpApp", env=cdk.Environment(account=ACCOUNT, region=REGION)
     )
     return Template.from_stack(stack)
 
 
-def test_stack_synthesizes():
-    synth()
+@pytest.fixture(scope="module")
+def template() -> Template:
+    return synth()
+
+
+def ssm_parameter(template: Template, name: str) -> str:
+    """The logical id of the CloudFormation parameter that resolves SSM parameter `name`."""
+    found = [
+        logical_id
+        for logical_id, parameter in template.to_json()["Parameters"].items()
+        if parameter.get("Type") == "AWS::SSM::Parameter::Value<String>"
+        and parameter.get("Default") == name
+    ]
+    assert len(found) == 1, f"one parameter reads {name}"
+    return found[0]
+
+
+def only(template: Template, resource_type: str) -> dict:
+    resources = template.find_resources(resource_type)
+    assert len(resources) == 1
+    return next(iter(resources.values()))["Properties"]
+
+
+def test_target_is_on_the_platform_tools_gateway(template):
+    target = only(template, "AWS::BedrockAgentCore::GatewayTarget")
+    assert target["GatewayIdentifier"] == {"Ref": ssm_parameter(template, PARAM_TOOLS_GATEWAY_ID)}
+
+
+def test_target_is_named_after_the_project_and_passes_the_token(template):
+    target = only(template, "AWS::BedrockAgentCore::GatewayTarget")
+    assert target["Name"] == "mcp-app"
+    assert target["CredentialProviderConfigurations"] == [
+        {"CredentialProviderType": "JWT_PASSTHROUGH"}
+    ]
+    mcp_server = target["TargetConfiguration"]["Mcp"]["McpServer"]
+    assert mcp_server["ListingMode"] == "DYNAMIC"
+
+
+def test_target_endpoint_is_the_runtime_mcp_invocation_url(template):
+    target = only(template, "AWS::BedrockAgentCore::GatewayTarget")
+    endpoint = target["TargetConfiguration"]["Mcp"]["McpServer"]["Endpoint"]
+    parts = endpoint["Fn::Join"][1]
+    flat = "".join(p if isinstance(p, str) else "{}" for p in parts)
+    assert flat.startswith("https://bedrock-agentcore.us-east-1.")
+    assert "/runtimes/arn%3A{}%3Abedrock-agentcore%3Aus-east-1%3A123456789012%3Aruntime%2F{}" in (
+        flat
+    )
+    assert flat.endswith("/invocations?qualifier=DEFAULT")
+    (runtime_logical_id,) = template.find_resources("AWS::BedrockAgentCore::Runtime")
+    assert {"Fn::GetAtt": [runtime_logical_id, "AgentRuntimeId"]} in parts
+
+
+def test_runtime_speaks_mcp_behind_the_platform_jwt(template):
+    runtime = only(template, "AWS::BedrockAgentCore::Runtime")
+    assert runtime["ProtocolConfiguration"] == "MCP"
+    assert runtime["RequestHeaderConfiguration"] == {"RequestHeaderAllowlist": ["Authorization"]}
+    jwt = runtime["AuthorizerConfiguration"]["CustomJWTAuthorizer"]
+    assert jwt["DiscoveryUrl"] == {"Ref": ssm_parameter(template, PARAM_JWT_DISCOVERY_URL)}
+    assert jwt["AllowedClients"] == [{"Ref": ssm_parameter(template, PARAM_USER_POOL_CLIENT_ID)}]
+    assert "AllowedWorkloadConfiguration" not in jwt
+
+
+def test_tools_gateway_role_may_invoke_the_runtime(template):
+    role_param = ssm_parameter(template, PARAM_TOOLS_GATEWAY_ROLE_ARN)
+    policies = template.find_resources(
+        "AWS::IAM::Policy",
+        {
+            "Properties": {
+                "PolicyDocument": {
+                    "Statement": Match.array_with(
+                        [Match.object_like({"Action": "bedrock-agentcore:InvokeAgentRuntime"})]
+                    )
+                }
+            }
+        },
+    )
+    assert len(policies) == 1
+    policy = next(iter(policies.values()))["Properties"]
+    (role,) = policy["Roles"]
+    assert role_param in str(role), "the policy attaches to the role named by the SSM ARN"
+
+
+def test_outputs(template):
+    outputs = template.to_json()["Outputs"]
+    assert "RuntimeArn" in outputs
+    assert outputs["TargetName"]["Value"] == "mcp-app"
