@@ -1,0 +1,5 @@
+:root { color-scheme: light dark; }
+body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+.card { margin: 8px; padding: 16px 20px; border: 1px solid #8884; border-radius: 12px; }
+.card h1 { margin: 0 0 8px; font-size: 18px; font-weight: 600; }
+.card p { margin: 0; white-space: pre-wrap; }

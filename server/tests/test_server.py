@@ -4,6 +4,7 @@ runs the initialize handshake and JSON-RPC framing, as the tools gateway does.""
 import json
 import logging
 import re
+from pathlib import Path
 
 from mcp import Client
 from mcp_app_server.card import (
@@ -15,6 +16,7 @@ from mcp_app_server.card import (
 )
 from mcp_app_server.chart import CHART_URI
 from mcp_app_server.server import mcp
+from mcp_app_server.static_page import STATIC_PAGE_URI, STATIC_PAGE_URL
 
 
 def connect() -> Client:
@@ -44,7 +46,13 @@ async def tools_by_name(client: Client) -> dict:
 async def test_tools_list_names_show_card_with_its_ui_resource():
     async with connect() as client:
         tools = await tools_by_name(client)
-        assert set(tools) == {"show_card", "show_chart", "card_clicked", "update_card"}
+        assert set(tools) == {
+            "show_card",
+            "show_chart",
+            "card_clicked",
+            "update_card",
+            "show_static_page",
+        }
         tool = tools["show_card"]
         assert set(tool.input_schema["properties"]) == {"title", "body"}
         assert set(tool.input_schema["required"]) == {"title", "body"}
@@ -70,7 +78,7 @@ async def test_show_card_returns_text_embedded_resource_and_meta():
 async def test_resources_list_and_read_serve_the_card():
     async with connect() as client:
         resources = {str(r.uri): r for r in (await client.list_resources()).resources}
-        assert set(resources) == {CARD_URI, CHART_URI}
+        assert set(resources) == {CARD_URI, CHART_URI, STATIC_PAGE_URI}
         assert resources[CARD_URI].mime_type == APP_MIME_TYPE
 
         contents = (await client.read_resource(CARD_URI)).contents
@@ -191,3 +199,33 @@ async def test_update_card_returns_the_same_resource_for_the_same_card():
             "body": "Second",
         }
         assert "Updated by a later tool result" in embedded.resource.text
+
+
+async def test_show_static_page_embeds_a_uri_list():
+    async with connect() as client:
+        tool = (await tools_by_name(client))["show_static_page"]
+        assert tool.meta == {"ui": {"resourceUri": STATIC_PAGE_URI}}
+
+        result = await client.call_tool("show_static_page", {})
+        assert not result.is_error
+        text, embedded = result.content
+        assert text.type == "text"
+        assert str(embedded.resource.uri) == STATIC_PAGE_URI
+        assert embedded.resource.mime_type == "text/uri-list"
+        assert embedded.resource.text == f"{STATIC_PAGE_URL}\r\n"
+        assert result.structured_content == {"url": STATIC_PAGE_URL}
+
+        contents = (await client.read_resource(STATIC_PAGE_URI)).contents
+        assert contents[0].mime_type == "text/uri-list"
+        assert contents[0].text.split() == [STATIC_PAGE_URL]
+
+
+def test_static_page_is_published_beside_the_manifest():
+    root = Path(__file__).resolve().parents[2] / "web"
+    assert STATIC_PAGE_URL.endswith("/projects/mcp-app/app/index.html")
+    page = (root / "app" / "index.html").read_text()
+    # The site CSP (script-src 'self', style-src 'self') forbids inline script and style.
+    assert '<script src="app.js"></script>' in page
+    assert "<style" not in page and "style=" not in page
+    assert "<script>" not in page
+    assert "ui/initialize" in (root / "app" / "app.js").read_text()

@@ -13,6 +13,7 @@ commit `82221c0`). Screenshots are in `.deploy/` (gitignored, on Sam's Mac).
 | E2, host reads `ui://` by `resources/read` (`show_chart`) | B: the result carries only `_meta.ui.resourceUri = ui://mcp-app/chart` and `structuredContent`; the host must fetch the page through the tools gateway | Same as E1 once rendered; the page is fetched once per resource, not rebuilt per call | blocked | `resources/read ui://mcp-app/chart` answers through the gateway (probe); the page has no MCP client (`guppi.mcp` is `null`) and the agent relays only embedded resources, so no frame appears; `.deploy/phase-4-E2.png`, `.deploy/phase4-E2-routes.txt` | A `guppi.mcp` client in the page (initialize, `resources/read`) that the MCP Apps host calls when a tool call's definition names a `ui://` resource, plus a way for the browser to reach the tools gateway: the `/mcp/*` behavior, or the gateway's host in the page CSP's `connect-src` |
 | E3, app calls a tool (`card_clicked`) | The card's button sends `tools/call` `{name: "card_clicked", arguments: {card_id}}` to the host over the bridge; the host would relay it to the server | Ask its own server for work or fresh data without a model turn | partly | The request reaches the host and the host's refusal (`-32601`) is rendered in the card; `mcp-app___card_clicked` answers through the gateway (probe) and writes its audit line; `.deploy/phase-4-E3.png` | A relay in the host: `tools/call` through `guppi.mcp` to the tools gateway (the E2 client and route), adding the `mcp-app___` prefix and allowing only tools whose `_meta.ui.visibility` includes `app`; and the platform agent leaving `visibility: ["app"]` tools out of the model's list |
 | E4, a later tool updates the same app (`update_card`) | A, twice: `update_card(card_id, body)` returns the same `ui://mcp-app/card` resource and card id as the earlier `show_card` | Change what an app already on screen shows, from a later turn | partly | The update renders, in a second frame under the second reply; the first card keeps its old body. The host mounts one frame per tool call id, and the extension defines no rule for sending a later tool's result to an existing view; `.deploy/phase-4-E4.png` | For in-place updates, a host rule of its own: route a result to the mounted frame whose resource uri and `structuredContent.card_id` match, as a second `ui/notifications/tool-result` (the card already re-renders on it). Or, within the spec, E3's relay, so the card fetches its own fresh state |
+| E5, an app served as a static page (`show_static_page`) | The result embeds `ui://mcp-app/static-page` as `text/uri-list` naming `https://chat.dengler.io/projects/mcp-app/app/index.html`, which this repository publishes beside its manifest | Run a whole existing web app with its own files, instead of one inline document | blocked | No frame: the agent relays only `text/html;profile=mcp-app` resources. Four more layers would refuse it: the host accepts only that mime type, the proxy writes only `srcdoc`, the sandbox CSP is `default-src 'none'` (no `frame-src`), and `/projects/*` is served with `X-Frame-Options: DENY` and `frame-ancestors 'none'`. The extension lists `text/uri-list` as deferred from its first version; `.deploy/phase-4-E5.png` | The agent and host accepting `text/uri-list`, a proxy message carrying a URL, `frame-src` for the app's origin in the sandbox CSP, and framing allowed on the app's responses. Before doing it for anyone's pages, apps on a separate origin from the chat page |
 
 ## E1, embedded resource in the tool result
 
@@ -167,3 +168,44 @@ that frame as another `ui/notifications/tool-result` and mount nothing. The card
 change for that. Or stay inside the spec: the card asks its server for its current
 state through E3's relay, which needs the server to keep state (the Runtime is stateless
 today) and something to tell the card to ask.
+
+## E5, an app served as a static page
+
+What was built. `web/app/index.html` with `app.css` and `app.js`, published by
+`scripts/deploy.sh` to `projects/mcp-app/app/` beside the manifest. The site CSP applies to
+everything under `/projects/`, so the page has no inline script or style; `app.js` speaks
+the same handshake as the inline pages and says whether a host answered. Opened on its own
+it says "Opened on its own: no MCP Apps host around this page". `show_static_page()`
+returns a text block, an embedded resource `ui://mcp-app/static-page` with mime type
+`text/uri-list` and the page's URL as its text (one CRLF-terminated line, RFC 2483), the
+same resource in `resources/list` and `resources/read`, `structuredContent: {url}` and
+`_meta.ui.resourceUri`.
+
+What the extension says. Spec revision 2026-01-26 defines only
+`text/html;profile=mcp-app` content and lists "`externalUrl`: Embed external web
+applications (e.g., `text/uri-list`)" under content types deferred from the first
+version; the rationale names model visibility, screenshots and review as the reasons.
+The draft keeps it deferred. So there is no extension message for a proxy to load a URL.
+
+What happens here, layer by layer.
+
+1. The platform agent's `app_resource()` takes only resources of type
+   `text/html;profile=mcp-app`, so it emits no `mcp-app/resource` event and the reply is
+   text only. This is where it stops.
+2. The host's `resourceFromEvent` would drop the event for the same reason.
+3. The proxy (`web/src/sandbox/relay.js`) takes `params.html` from
+   `ui/notifications/sandbox-resource-ready` and writes it to `srcdoc`; it has no URL form.
+4. The sandbox CSP is `default-src 'none'; script-src 'self' 'unsafe-inline'; ...` with no
+   `frame-src`, so a nested frame at any URL is refused.
+5. The page's own responses carry `X-Frame-Options: DENY` and `frame-ancestors 'none'`
+   (the site's response headers policy covers `/projects/*`), so no document may frame it,
+   the chat page included.
+
+What it would take. A proxy message with a URL (outside the extension, or a later
+revision of it), the agent and host passing `text/uri-list` resources through, `frame-src`
+for the app's origin in the sandbox CSP, and the app's responses allowing the sandbox as
+an ancestor. Serving apps from the chat page's own origin is the wrong place for that: a
+framed page without `sandbox` would share the chat page's origin and its IndexedDB
+session. Apps loaded by URL belong on a separate origin, the same one the sandbox proxy is
+already owed (phase 3 report). The inline-HTML path (E1) needs none of this, which is why
+the extension starts there.

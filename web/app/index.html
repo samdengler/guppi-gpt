@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCP App Lab static page</title>
+<!-- Experiment E5 (docs/experiments.md): an MCP App served as a static page from the
+     site bucket, named by a text/uri-list resource. The site's CSP applies here, so the
+     style and script are files beside this one, not inline. -->
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<article class="card">
+  <h1>MCP App Lab static page</h1>
+  <p id="page-state">Loading.</p>
+  <p id="page-result"></p>
+</article>
+<script src="app.js"></script>
+</body>
+</html>
