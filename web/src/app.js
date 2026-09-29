@@ -6,6 +6,7 @@ import { renderFeedbackControls, initFeedbackSink, FEEDBACK_EVENT } from "./feed
 import { hintText, emptyStateText } from "./copy.js";
 import { initRum, identifyRumUser } from "./rum.js";
 import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideOnLoad, newestRefreshToken } from "./session.js";
+import { resolveProject as projectFromPath, manifestUrl, checkManifest, mergeFeatures, brandFor, agentUrlFor } from "./project.js";
 
 (async () => {
   const $ = (id) => document.getElementById(id);
@@ -23,6 +24,8 @@ import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideO
   const accountEmail = $("account-email");
   const signOutLink = $("sign-out-link");
 
+  const brandEl = $("brand");
+  const signinTitle = $("signin-title");
   const signinScreen = $("signin-screen");
   const googleBtn = $("google-signin-btn");
 
@@ -38,7 +41,44 @@ import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideO
   const emptyCopy = $("empty-copy");
   const composerHint = $("composer-hint");
 
-  const config = await (await fetch("config.json", { cache: "no-store" })).json();
+  // ---- Project: /p/<name>/ selects a project by its manifest; / is the default ----
+
+  function resolveProject() {
+    return projectFromPath(location.pathname);
+  }
+
+  // A missing or unusable manifest falls back to the default project with one warning,
+  // so a project that has not published yet still gets a working page.
+  async function loadManifest(name) {
+    if (!name) return null;
+    try {
+      const response = await fetch(manifestUrl(name), { cache: "no-store" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const manifest = checkManifest(await response.json(), name);
+      if (!manifest) throw new Error("not a usable manifest for this project");
+      return manifest;
+    } catch (error) {
+      console.warn(`guppigpt: no manifest for project "${name}" (${error.message}); using the default project`);
+      return null;
+    }
+  }
+
+  function applyBrand() {
+    document.title = brand.label;
+    brandEl.textContent = brand.label;
+    signinTitle.textContent = brand.label;
+  }
+
+  const project = resolveProject();
+  const [manifest, baseConfig] = await Promise.all([
+    loadManifest(project),
+    // Absolute, so a project page under /p/<name>/ reads the same file.
+    fetch("/config.json", { cache: "no-store" }).then((response) => response.json()),
+  ]);
+  const config = mergeFeatures(baseConfig, manifest);
+  const brand = brandFor(manifest);
+  const agentUrl = agentUrlFor(manifest);
+  applyBrand();
   const flags = await initFeatures(config);
   document.body.dataset.features = enabledFlagNames(flags).join(" ");
   // Registers the OpenFeature hook (when the rum flag and config.rum.scriptPath are
@@ -386,7 +426,7 @@ import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideO
     const canSend = (status === "idle-empty" || status === "idle") && input.value.trim().length > 0;
     sendBtn.disabled = !canSend;
     emptyState.hidden = messages.length > 0 || status === "running" || status === "error";
-    input.placeholder = messages.length > 0 ? "Reply to GuppiGPT" : "Ask GuppiGPT";
+    input.placeholder = messages.length > 0 ? `Reply to ${brand.assistant}` : `Ask ${brand.assistant}`;
   }
 
   function clearThreadState() {
@@ -424,7 +464,7 @@ import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideO
 
     const label = document.createElement("p");
     label.className = "reply-label";
-    label.textContent = "GuppiGPT";
+    label.textContent = brand.assistant;
     reply.appendChild(label);
 
     const statusLine = document.createElement("p");
@@ -655,7 +695,7 @@ import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideO
     // kept on the client object between turns. The custom fetch turns a non-2xx answer
     // into a failure, which the client would otherwise read as an empty stream.
     const agent = new HttpAgent({
-      url: "/api/invocations",
+      url: agentUrl,
       threadId,
       // Strip any bookkeeping field (feedback included) that does not belong on the
       // wire; the agent's validation only expects id, role, and content per message.

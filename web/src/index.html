@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GuppiGPT</title>
-<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="/app.css">
 </head>
 <body>
 <div class="page">
 
   <header class="app-header">
-    <span class="brand">GuppiGPT</span>
+    <span id="brand" class="brand">GuppiGPT</span>
     <div class="header-actions">
       <div class="history" hidden id="history-wrap">
         <button id="history-btn" type="button" class="text-btn" aria-haspopup="true" aria-expanded="false">Chats</button>
@@ -29,7 +29,7 @@
         <div id="account-menu" class="account-menu" hidden>
           <p id="account-email" class="account-email"></p>
           <a id="sign-out-link" href="#" class="sign-out-link">Sign out</a>
-          <p class="legal-links"><a href="privacy.html">Privacy</a> &middot; <a href="terms.html">Terms</a></p>
+          <p class="legal-links"><a href="/privacy.html">Privacy</a> &middot; <a href="/terms.html">Terms</a></p>
         </div>
       </div>
     </div>
@@ -37,10 +37,10 @@
 
   <section id="signin-screen" class="signin-screen" hidden>
     <div class="signin-card">
-      <h1 class="signin-title">GuppiGPT</h1>
+      <h1 id="signin-title" class="signin-title">GuppiGPT</h1>
       <p class="signin-copy">Sign in to start a conversation.</p>
       <button id="google-signin-btn" type="button" class="primary-btn">Continue with Google</button>
-      <p class="legal-links"><a href="privacy.html">Privacy</a> &middot; <a href="terms.html">Terms</a></p>
+      <p class="legal-links"><a href="/privacy.html">Privacy</a> &middot; <a href="/terms.html">Terms</a></p>
     </div>
   </section>
 
@@ -64,6 +64,6 @@
   </section>
 
 </div>
-<script src="app.js"></script>
+<script src="/app.js"></script>
 </body>
 </html>
