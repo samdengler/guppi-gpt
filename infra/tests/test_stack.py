@@ -13,8 +13,13 @@ ACCOUNT = "123456789012"
 REGION = "us-east-1"
 
 
-def synth() -> Template:
-    app = cdk.App(context={"image_uri": f"{ACCOUNT}.dkr.ecr.{REGION}.amazonaws.com/mcp-app:test"})
+def synth(**extra_context) -> Template:
+    app = cdk.App(
+        context={
+            "image_uri": f"{ACCOUNT}.dkr.ecr.{REGION}.amazonaws.com/mcp-app:test",
+            **extra_context,
+        }
+    )
     stack = GuppiMcpAppStack(
         app, "GuppiMcpApp", env=cdk.Environment(account=ACCOUNT, region=REGION)
     )
@@ -49,11 +54,16 @@ def test_target_is_on_the_platform_tools_gateway(template):
     assert target["GatewayIdentifier"] == {"Ref": ssm_parameter(template, PARAM_TOOLS_GATEWAY_ID)}
 
 
-def test_target_is_named_after_the_project_and_passes_the_token(template):
+def test_target_is_named_after_the_project_and_signs_with_the_gateway_role(template):
     target = only(template, "AWS::BedrockAgentCore::GatewayTarget")
     assert target["Name"] == "mcp-app"
     assert target["CredentialProviderConfigurations"] == [
-        {"CredentialProviderType": "JWT_PASSTHROUGH"}
+        {
+            "CredentialProviderType": "GATEWAY_IAM_ROLE",
+            "CredentialProvider": {
+                "IamCredentialProvider": {"Service": "bedrock-agentcore", "Region": REGION}
+            },
+        }
     ]
     mcp_server = target["TargetConfiguration"]["Mcp"]["McpServer"]
     assert mcp_server["ListingMode"] == "DYNAMIC"
@@ -73,14 +83,25 @@ def test_target_endpoint_is_the_runtime_mcp_invocation_url(template):
     assert {"Fn::GetAtt": [runtime_logical_id, "AgentRuntimeId"]} in parts
 
 
-def test_runtime_speaks_mcp_behind_the_platform_jwt(template):
+def test_runtime_speaks_mcp_and_takes_sigv4(template):
     runtime = only(template, "AWS::BedrockAgentCore::Runtime")
     assert runtime["ProtocolConfiguration"] == "MCP"
     assert runtime["RequestHeaderConfiguration"] == {"RequestHeaderAllowlist": ["Authorization"]}
+    assert "AuthorizerConfiguration" not in runtime
+
+
+def test_jwt_passthrough_variant_puts_the_platform_jwt_on_the_runtime():
+    template = synth(target_credentials="JWT_PASSTHROUGH")
+    runtime = only(template, "AWS::BedrockAgentCore::Runtime")
+    assert runtime["ProtocolConfiguration"] == "MCP"
     jwt = runtime["AuthorizerConfiguration"]["CustomJWTAuthorizer"]
     assert jwt["DiscoveryUrl"] == {"Ref": ssm_parameter(template, PARAM_JWT_DISCOVERY_URL)}
     assert jwt["AllowedClients"] == [{"Ref": ssm_parameter(template, PARAM_USER_POOL_CLIENT_ID)}]
     assert "AllowedWorkloadConfiguration" not in jwt
+    target = only(template, "AWS::BedrockAgentCore::GatewayTarget")
+    assert target["CredentialProviderConfigurations"] == [
+        {"CredentialProviderType": "JWT_PASSTHROUGH"}
+    ]
 
 
 def test_tools_gateway_role_may_invoke_the_runtime(template):

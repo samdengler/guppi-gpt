@@ -2,10 +2,10 @@
 
 It reads the platform's `/guppi/platform/*` parameters (guppi-gpt's
 `docs/proposals/platform.md`) and adds three things: the MCP server as an AgentCore
-Runtime with protocol MCP and the platform's JWT authorizer, a target on the platform's
-tools gateway that addresses the Runtime's MCP endpoint with the user's token passed
-through, and a grant that lets the tools gateway's role invoke the Runtime. Nothing in the
-platform stack is edited; the grant is a policy owned by this stack.
+Runtime with protocol MCP, a target on the platform's tools gateway that addresses the
+Runtime's MCP endpoint, and a grant that lets the tools gateway's role invoke the Runtime.
+The gateway checks the user's JWT and signs its call to the Runtime with that role.
+Nothing in the platform stack is edited; the grant is a policy owned by this stack.
 """
 
 from pathlib import Path
@@ -41,12 +41,27 @@ class GuppiMcpAppStack(cdk.Stack):
         tools_gateway_role_arn = ssm.StringParameter.value_for_string_parameter(
             self, PARAM_TOOLS_GATEWAY_ROLE_ARN
         )
-        user_pool_client_id = ssm.StringParameter.value_for_string_parameter(
-            self, PARAM_USER_POOL_CLIENT_ID
-        )
-        jwt_discovery_url = ssm.StringParameter.value_for_string_parameter(
-            self, PARAM_JWT_DISCOVERY_URL
-        )
+        # The tools gateway refuses JWT_PASSTHROUGH on an MCP server target ("MCP server
+        # target does not support JWT_PASSTHROUGH credential provider type", first deploy,
+        # 29 Sep 2026), so by default the gateway signs each request with its own role and
+        # the Runtime takes SigV4 instead of a JWT. `-c target_credentials=JWT_PASSTHROUGH`
+        # restores the passthrough design (JWT authorizer on the Runtime) for the day the
+        # service accepts it (docs/decision-log.md, step 6).
+        target_credentials = self.node.try_get_context("target_credentials") or "GATEWAY_IAM_ROLE"
+        jwt_authorizer = None
+        if target_credentials == "JWT_PASSTHROUGH":
+            jwt_authorizer = agentcore.CfnRuntime.AuthorizerConfigurationProperty(
+                custom_jwt_authorizer=agentcore.CfnRuntime.CustomJWTAuthorizerConfigurationProperty(
+                    discovery_url=ssm.StringParameter.value_for_string_parameter(
+                        self, PARAM_JWT_DISCOVERY_URL
+                    ),
+                    allowed_clients=[
+                        ssm.StringParameter.value_for_string_parameter(
+                            self, PARAM_USER_POOL_CLIENT_ID
+                        )
+                    ],
+                )
+            )
 
         # ---- Server image ----------------------------------------------------------------
         runtime_role = self._runtime_role()
@@ -75,9 +90,11 @@ class GuppiMcpAppStack(cdk.Stack):
             )
 
         # ---- Runtime ---------------------------------------------------------------------
-        # The platform's tools gateway ARN is not bound in allowed_workload_configuration:
-        # guppi-gpt's decision log records that the binding does not work with token
-        # passthrough on its AG-UI runtime (docs/decision-log.md, step 4).
+        # With no authorizer configuration the Runtime accepts only SigV4 from principals
+        # allowed InvokeAgentRuntime, which is the tools gateway role below. With the JWT
+        # authorizer, the platform's tools gateway ARN is not bound in
+        # allowed_workload_configuration: guppi-gpt's decision log records that the binding
+        # does not work with token passthrough (docs/decision-log.md, step 4).
         runtime = agentcore.CfnRuntime(
             self,
             "Runtime",
@@ -96,12 +113,7 @@ class GuppiMcpAppStack(cdk.Stack):
             request_header_configuration=agentcore.CfnRuntime.RequestHeaderConfigurationProperty(
                 request_header_allowlist=["Authorization"]
             ),
-            authorizer_configuration=agentcore.CfnRuntime.AuthorizerConfigurationProperty(
-                custom_jwt_authorizer=agentcore.CfnRuntime.CustomJWTAuthorizerConfigurationProperty(
-                    discovery_url=jwt_discovery_url,
-                    allowed_clients=[user_pool_client_id],
-                )
-            ),
+            authorizer_configuration=jwt_authorizer,
             environment_variables={"LOG_LEVEL": "INFO"},
         )
         # The Runtime checks at creation that its role can pull the image; without this
@@ -132,14 +144,14 @@ class GuppiMcpAppStack(cdk.Stack):
         # McpTargetConfiguration has no Runtime ARN property (only an agent runtime HTTP
         # target does); mcp_server takes an HTTPS endpoint, and a Runtime's MCP endpoint is
         # its invocation URL with the ARN URL-encoded. DYNAMIC listing asks the server for
-        # its tools at list time, with the caller's token, instead of a control plane sync
-        # that would have no token to pass through.
+        # its tools at list time instead of a control plane sync, which with passthrough
+        # would have no token to present.
         target = agentcore.CfnGatewayTarget(
             self,
             "McpTarget",
             gateway_identifier=tools_gateway_id,
             name=TARGET_NAME,
-            description="guppi-mcp-app MCP server on AgentCore Runtime, token passthrough",
+            description="guppi-mcp-app MCP server on AgentCore Runtime",
             target_configuration=agentcore.CfnGatewayTarget.TargetConfigurationProperty(
                 mcp=agentcore.CfnGatewayTarget.McpTargetConfigurationProperty(
                     mcp_server=agentcore.CfnGatewayTarget.McpServerTargetConfigurationProperty(
@@ -150,7 +162,16 @@ class GuppiMcpAppStack(cdk.Stack):
             ),
             credential_provider_configurations=[
                 agentcore.CfnGatewayTarget.CredentialProviderConfigurationProperty(
-                    credential_provider_type="JWT_PASSTHROUGH"
+                    credential_provider_type=target_credentials,
+                    credential_provider=(
+                        agentcore.CfnGatewayTarget.CredentialProviderProperty(
+                            iam_credential_provider=agentcore.CfnGatewayTarget.IamCredentialProviderProperty(
+                                service="bedrock-agentcore", region=self.region
+                            )
+                        )
+                        if target_credentials == "GATEWAY_IAM_ROLE"
+                        else None
+                    ),
                 )
             ],
         )

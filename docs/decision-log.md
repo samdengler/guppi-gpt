@@ -101,3 +101,20 @@ entry names the step, the choice, and why. The smaller, reversible option wins b
   failed create left `GuppiMcpApp` in `ROLLBACK_COMPLETE` with no resources; `cdk deploy`
   deletes a stack in that state before creating it again, which is its own behavior and
   not a `cdk destroy`.
+- The third deploy created the Runtime, then the target failed: "MCP server target does
+  not support JWT_PASSTHROUGH credential provider type". The brief's design (the user's
+  token reaching the server) is not available for an MCP server target today. Of the
+  credential types the target can take, `GATEWAY_IAM_ROLE` is the one that needs nothing
+  outside this stack: the gateway signs each request to the Runtime with SigV4 as the
+  tools gateway role (`IamCredentialProvider` service `bedrock-agentcore`), and the
+  Runtime drops its JWT authorizer, since a JWT runtime rejects a SigV4 request as an
+  authorization method mismatch (guppi-gpt's decision log). `OAUTH` would need a
+  client-credentials app client and a resource server in the platform's Cognito pool plus
+  a client secret in an AgentCore Identity provider, which this repository may not create.
+  Consequences: the user's JWT is still checked by the tools gateway's own authorizer on
+  the way in, but the server no longer sees who the user is (it needs no identity in this
+  phase); the Runtime accepts only callers allowed `InvokeAgentRuntime`, which is the
+  tools gateway role through this stack's policy, so that grant is now the one that
+  matters. `-c target_credentials=JWT_PASSTHROUGH` synthesizes the brief's design (JWT
+  authorizer on the Runtime, passthrough on the target) for when the service accepts it;
+  a test covers both shapes.
