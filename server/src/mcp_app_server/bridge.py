@@ -154,43 +154,43 @@ _SHELL = """<!DOCTYPE html>
   body {
     margin: 0;
     font: var(--font-text-md-size, 15px)/1.5 var(--font-sans, system-ui, -apple-system, "Segoe UI", sans-serif);
-    color: var(--color-text-primary, #14243a);
+    color: var(--color-text-primary, #12263f);
     background: transparent;
   }
   .panel {
     position: relative; overflow: hidden;
     margin: 4px 2px 6px; padding: 14px 20px 16px 24px;
-    background: var(--color-background-secondary, #f4f6fa);
-    border: 1px solid var(--color-border-primary, #d9e0ea);
+    background: var(--color-background-secondary, #e9f1fc);
+    border: 1px solid var(--color-border-primary, #cfe0f5);
     border-radius: var(--border-radius-lg, 14px);
     box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.06));
   }
   .panel::before {
     content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 5px;
-    background: var(--color-background-info, #c8102e);
+    background: var(--color-background-info, #2d7ff9);
   }
   .panel .kicker {
     display: block; margin: 0 0 4px; font-size: 11px; font-weight: 600;
     letter-spacing: .08em; text-transform: uppercase;
-    color: var(--color-text-secondary, #5b6b80);
+    color: var(--color-text-secondary, #587089);
   }
   .panel h1 { margin: 0 0 6px; font-size: var(--font-heading-sm-size, 17px); font-weight: 600; letter-spacing: -.01em; }
   .panel p { margin: 0; }
   .panel button {
     font: inherit; font-size: 13px; font-weight: 600; padding: 6px 14px; border: 0;
     border-radius: var(--border-radius-full, 999px); cursor: pointer;
-    background: var(--color-background-info, #c8102e);
+    background: var(--color-background-info, #2d7ff9);
     color: var(--color-text-inverse, #fff);
   }
   .panel button:hover { filter: brightness(1.08); }
-  .panel button:focus-visible { outline: 2px solid var(--color-ring-primary, #c8102e); outline-offset: 2px; }
+  .panel button:focus-visible { outline: 2px solid var(--color-ring-primary, #2d7ff9); outline-offset: 2px; }
   .panel input, .panel select {
     font: inherit; padding: 6px 10px; color: inherit;
-    border: 1px solid var(--color-border-primary, #d9e0ea);
+    border: 1px solid var(--color-border-primary, #cfe0f5);
     border-radius: var(--border-radius-md, 10px);
     background: var(--color-background-primary, #fff);
   }
-  .panel .status { font-size: 13px; color: var(--color-text-secondary, #5b6b80); }
+  .panel .status { font-size: 13px; color: var(--color-text-secondary, #587089); }
 __STYLE__</style>
 </head>
 <body>

@@ -12,8 +12,8 @@ CHART_URI = "ui://mcp-app/chart"
 
 _STYLE = """\
   .bars { display: flex; align-items: flex-end; gap: 6px; height: 120px; margin-top: 8px; }
-  .bar { flex: 1; min-width: 8px; background: var(--color-background-info, #c8102e); border-radius: 4px 4px 0 0; }
-  .labels { display: flex; gap: 6px; font-size: 12px; color: var(--color-text-secondary, #5b6b80); }
+  .bar { flex: 1; min-width: 8px; background: var(--color-background-info, #2d7ff9); border-radius: 4px 4px 0 0; }
+  .labels { display: flex; gap: 6px; font-size: 12px; color: var(--color-text-secondary, #587089); }
   .labels span { flex: 1; min-width: 8px; text-align: center; }
 """
 

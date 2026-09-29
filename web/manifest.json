@@ -8,26 +8,26 @@
   ],
   "theme": {
     "light": {
-      "bg": "#f7f8fb",
-      "fg": "#14243a",
-      "muted": "#5b6b80",
-      "border": "#d9e0ea",
-      "surface": "#eef2f8",
-      "bubbleUser": "#e3ecf9",
-      "accent": "#c8102e",
+      "bg": "#f5f9ff",
+      "fg": "#12263f",
+      "muted": "#587089",
+      "border": "#cfe0f5",
+      "surface": "#e9f1fc",
+      "bubbleUser": "#dceafd",
+      "accent": "#2d7ff9",
       "accentContrast": "#ffffff",
-      "brand": "#003a70"
+      "brand": "#1a5ea8"
     },
     "dark": {
-      "bg": "#0f1a2b",
-      "fg": "#eef2f8",
-      "muted": "#a5b3c6",
-      "border": "#2a3a52",
-      "surface": "#182640",
-      "bubbleUser": "#20314f",
-      "accent": "#ff5a6e",
-      "accentContrast": "#0f1a2b",
-      "brand": "#9cc4ff"
+      "bg": "#0b1626",
+      "fg": "#e8f0fb",
+      "muted": "#9db3cc",
+      "border": "#233a58",
+      "surface": "#12223a",
+      "bubbleUser": "#1a2f4d",
+      "accent": "#6fb0ff",
+      "accentContrast": "#0b1626",
+      "brand": "#7fb4ff"
     }
   },
   "suggestions": [
