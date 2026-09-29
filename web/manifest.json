@@ -1,0 +1,7 @@
+{
+  "name": "mcp-app",
+  "label": "MCP App Lab",
+  "assistant": "Guppi",
+  "agent": "platform",
+  "capabilities": ["mcp-apps"]
+}
