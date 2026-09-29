@@ -13,6 +13,18 @@ manifest, both described in guppi-gpt's `docs/proposals/platform.md`.
 The server's one tool, `show_card`, returns an MCP Apps UI resource (`ui://mcp-app/card`),
 the first experiment toward MCP Apps in the platform page.
 
+The gateway target is named `mcp-app`, so the tool reaches the agent as
+`mcp-app___show_card`; the platform agent offers `mcp-app___*` (or `mcp_app___*`) tools on
+a run whose `forwardedProps.project` is `mcp-app`. The tools gateway checks the user's JWT
+and then signs its call to the Runtime with its own role (`GATEWAY_IAM_ROLE`), because it
+refuses `JWT_PASSTHROUGH` on an MCP server target; the Runtime therefore has no JWT
+authorizer and accepts only callers allowed `InvokeAgentRuntime`, which this stack grants
+to the tools gateway role. `-c target_credentials=JWT_PASSTHROUGH` synthesizes the
+passthrough design for when the service accepts it. The target lists in `DEFAULT` mode
+(tools cached at the control plane) so its tools share the first `tools/list` page with
+the `docs` target; the platform agent reads only the first page. `docs/decision-log.md`
+has the reasons.
+
 ## Tech Stack
 
 - Infrastructure: AWS CDK v2 in Python, one stack `GuppiMcpApp`, region `us-east-1`
@@ -57,6 +69,8 @@ scripts/
 - The server image installs dependencies from `uv.lock` in a layer before the source is
   copied; `.dockerignore` at the repo root limits the build context (and the CDK asset
   hash) to the server files and the lockfile.
+- The tools gateway pages `tools/list` and `resources/list`; any client here, the probe
+  included, follows `nextCursor`.
 - Every change to the stack must keep `uv run -- pytest` green and
   `uv run -- cdk synth -c image_uri=<any ecr uri>` working without Docker.
 - Only the `GuppiMcpApp` stack is deployed from here. Platform resources (the gateways,
@@ -82,6 +96,14 @@ uv run -- ruff check .
 ```sh
 uv run --package mcp-app-server -- python -m mcp_app_server   # serves http://localhost:8000/mcp
 uv run -- python scripts/probe.py http://localhost:8000/mcp
+```
+
+Through the platform's tools gateway, with a test token that never reaches a command
+line:
+
+```sh
+url="$(aws ssm get-parameter --name /guppi/platform/tools-gateway-url --query Parameter.Value --output text)"
+../guppi-gpt/scripts/test-token.sh | uv run -- python scripts/probe.py "$url" --token -
 ```
 
 The container runs the same way:
