@@ -66,7 +66,7 @@ def test_target_is_named_after_the_project_and_signs_with_the_gateway_role(templ
         }
     ]
     mcp_server = target["TargetConfiguration"]["Mcp"]["McpServer"]
-    assert mcp_server["ListingMode"] == "DYNAMIC"
+    assert mcp_server["ListingMode"] == "DEFAULT"
 
 
 def test_target_endpoint_is_the_runtime_mcp_invocation_url(template):

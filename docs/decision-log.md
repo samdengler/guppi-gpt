@@ -121,3 +121,19 @@ entry names the step, the choice, and why. The smaller, reversible option wins b
 - The fourth deploy failed on the Runtime: an `Authorization` request header allowlist is
   accepted only with a JWT authorizer. The allowlist now comes with the JWT variant only;
   with SigV4 there is no user token to forward to the container anyway.
+
+### Step 7: checks through the platform
+
+- The tools gateway pages `tools/list` and `resources/list`. With the target in `DYNAMIC`
+  listing mode, page 1 held only the `docs` tools and `mcp-app___show_card` came on page 2
+  behind `nextCursor`. The platform agent (guppi-gpt `agent.py`) calls Strands'
+  `list_tools_sync()` once and never follows the cursor, so its run log said `project
+  mcp-app has no mcp_app___* tools on the gateway` and the model answered in text
+  (`.deploy/phase2-agui-dynamic.txt`). The fix belongs in guppi-gpt (loop on
+  `pagination_token`) and needs a platform deploy, which this run may not make. Inside
+  this repository the target moved to `DEFAULT` listing: now that the gateway signs with
+  its own role, the control plane can sync the tools, and a cached target's tools come on
+  the first page beside `docs`. After the change `tools/list` is one page with all three
+  tools and the agent calls `mcp-app___show_card`. The agent fix is still owed, since any
+  later DYNAMIC target, or a first page that fills up, hides project tools again.
+- `scripts/probe.py` now follows `nextCursor` on both list calls and prints the page count.

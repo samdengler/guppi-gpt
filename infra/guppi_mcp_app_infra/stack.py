@@ -150,9 +150,10 @@ class GuppiMcpAppStack(cdk.Stack):
         # ---- Target on the tools gateway -------------------------------------------------
         # McpTargetConfiguration has no Runtime ARN property (only an agent runtime HTTP
         # target does); mcp_server takes an HTTPS endpoint, and a Runtime's MCP endpoint is
-        # its invocation URL with the ARN URL-encoded. DYNAMIC listing asks the server for
-        # its tools at list time instead of a control plane sync, which with passthrough
-        # would have no token to present.
+        # its invocation URL with the ARN URL-encoded. DEFAULT listing syncs the tools at
+        # the control plane, signed with the gateway role, and lists them with the other
+        # cached targets; a DYNAMIC target's tools arrive on a later tools/list page, which
+        # the platform agent does not read (docs/decision-log.md, step 7).
         target = agentcore.CfnGatewayTarget(
             self,
             "McpTarget",
@@ -163,7 +164,7 @@ class GuppiMcpAppStack(cdk.Stack):
                 mcp=agentcore.CfnGatewayTarget.McpTargetConfigurationProperty(
                     mcp_server=agentcore.CfnGatewayTarget.McpServerTargetConfigurationProperty(
                         endpoint=self._runtime_mcp_endpoint(runtime),
-                        listing_mode="DYNAMIC",
+                        listing_mode="DEFAULT",
                     )
                 )
             ),
