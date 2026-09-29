@@ -123,6 +123,8 @@ jq --slurpfile features web/features.json '{
   }
 }' "$OUTPUTS" > web/dist/config.json
 
-aws s3 sync web/dist "s3://$bucket" --delete --exclude '.*'
+# projects/ belongs to the project stacks that publish into this bucket
+# (docs/proposals/platform.md); --delete never reaches it.
+aws s3 sync web/dist "s3://$bucket" --delete --exclude '.*' --exclude 'projects/*'
 aws cloudfront create-invalidation --distribution-id "$distribution" --paths '/*' >/dev/null
 echo "published $(jq -r .siteUrl web/dist/config.json)"
