@@ -72,6 +72,8 @@ scripts/
   deploy.sh
   seed-content.sh         # clone the docs repositories at pinned revisions, sync Markdown to S3
   ingest.sh               # StartIngestionJob and wait
+  test-token.sh           # a fresh access token for the test session on stdout; rotates the stored refresh token
+  overnight.sh            # runs the platform phase briefs unattended, one claude -p session per phase
 ```
 
 ## Rules
@@ -138,6 +140,17 @@ also written to `.deploy/deploy-<timestamp>.log` with `.deploy/latest.log` point
 newest and a final `deploy exit=<code>` line, so a Claude session can watch a deploy
 started from any terminal. Deploys run on Sam's Mac; the Docker image is built there for
 arm64.
+
+`scripts/test-token.sh` prints a fresh access token for a test session on stdout and
+nothing else, for checks that need a signed-in bearer without a browser (a curl against
+`/api/invocations`, a phase's smoke test). It reads the refresh token from
+`$HOME/.config/guppi/test-session.json` (mode 600, outside the repository), which
+`scripts/overnight.sh` seeds from the 1Password item "GuppiGPT Test Session"; posts a
+`refresh_token` grant to `https://$GUPPI_AUTH_DOMAIN/oauth2/token` with
+`client_id=$GUPPI_USER_POOL_CLIENT_ID` (both read from `cdk-outputs.json` when unset); and
+writes the rotated refresh token back to the file. Every check that needs a token calls
+it, as `curl -H "authorization: Bearer $(scripts/test-token.sh)" ...`; tokens never go
+into logs, reports, commits, or test fixtures.
 
 The runtime's request header allowlist names `Authorization` and `traceparent`; without
 the first the runtime validates the bearer and drops it, and the agent has no token for
