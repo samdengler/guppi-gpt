@@ -6,7 +6,8 @@
 
 Runs the initialize handshake, then tools/list, tools/call on the show_card tool (the
 first tool whose name ends in `show_card`, so a gateway prefix is found), resources/list,
-and resources/read on ui://mcp-app/card. Each result is printed as the JSON the server
+and resources/read on ui://mcp-app/card. The two list calls follow `nextCursor` and print
+every page's items together with the page count. Each result is printed as the JSON the server
 sent, with long strings shortened, so fields an intermediary drops or adds (tool `_meta`,
 the embedded resource, `structuredContent`) are visible as they are. The client is plain
 JSON-RPC over HTTP with the standard library, so no SDK parsing hides anything.
@@ -98,6 +99,20 @@ def parse_messages(content_type: str, text: str) -> list[dict[str, Any]]:
     return parsed if isinstance(parsed, list) else [parsed]
 
 
+def list_all(client: McpHttp, method: str, key: str) -> dict[str, Any]:
+    """Every page of a list method; the gateway pages by target and returns nextCursor."""
+    pages = []
+    params: dict[str, Any] = {}
+    while True:
+        page = client.request(method, params)
+        pages.append(page)
+        cursor = page.get("nextCursor")
+        if not cursor or len(pages) >= 20:
+            break
+        params = {"cursor": cursor}
+    return {key: [item for page in pages for item in page.get(key, [])], "pages": len(pages)}
+
+
 def shorten(value: Any) -> Any:
     if isinstance(value, str) and len(value) > SHORTEN:
         return f"{value[:SHORTEN]}... ({len(value)} chars)"
@@ -144,7 +159,7 @@ def main() -> int:
 
     tool_name = "show_card"
     try:
-        listed = client.request("tools/list")
+        listed = list_all(client, "tools/list", "tools")
         show("tools/list", listed)
         names = [t.get("name", "") for t in listed.get("tools", [])]
         tool_name = next((n for n in names if n.endswith("show_card")), tool_name)
@@ -163,6 +178,9 @@ def main() -> int:
     ]
     for label, method, params in calls:
         try:
+            if method == "resources/list":
+                show(label, list_all(client, method, "resources"))
+                continue
             show(label, client.request(method, params))
         except ProbeError as error:
             failures += 1
