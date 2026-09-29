@@ -8,8 +8,8 @@ steps are done.
 | Step | State | Commit |
 | --- | --- | --- |
 | 1. E1, embedded resource (baseline) | done | `35c9bb6` |
-| 2. E2, host reads `ui://` by `resources/read` | done: blocked, platform change described | this commit |
-| 3. E3, app calls a tool | not started | |
+| 2. E2, host reads `ui://` by `resources/read` | done: blocked, platform change described | `ca95006` |
+| 3. E3, app calls a tool | done: partly, relay described | this commit |
 | 4. E4, a later tool updates the same app | not started | |
 | 5. E5, an app served as a static page | not started | |
 | 6. E6, a form that returns data to the model | not started | |

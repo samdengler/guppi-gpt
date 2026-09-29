@@ -7,15 +7,21 @@ that tells a host which `ui://` resource renders the result. The resource itself
 served by `resources/list` and `resources/read`, with the template values baked in.
 
 The experiments (`docs/experiments.md`) each add one tool: `show_chart` (E2) names its
-resource without embedding it.
+resource without embedding it; `card_clicked` (E3) is the tool the card's button calls
+through the host, visible to apps only, and it writes one audit line per call.
 """
+
+import json
+import logging
+import sys
+from datetime import UTC, datetime
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.resources import TextResource
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp_types import CallToolResult, EmbeddedResource, TextContent, TextResourceContents
 
-from mcp_app_server.card import APP_MIME_TYPE, CARD_URI, card_html
+from mcp_app_server.card import APP_MIME_TYPE, CARD_URI, card_html, card_id_for
 from mcp_app_server.chart import CHART_URI, chart_html
 
 HOST = "0.0.0.0"
@@ -24,6 +30,12 @@ PATH = "/mcp"
 
 UI_META = {"ui": {"resourceUri": CARD_URI}}
 CHART_META = {"ui": {"resourceUri": CHART_URI}}
+# An app-only tool: a host following the extension leaves it out of the model's tool list
+# and lets only this server's apps call it.
+APP_ONLY_META = {"ui": {"visibility": ["app"]}}
+
+# One JSON line per app-initiated tool call, on stdout, so it lands in the Runtime's logs.
+audit = logging.getLogger("mcp_app_server.audit")
 
 mcp = MCPServer(
     "mcp-app",
@@ -64,9 +76,12 @@ mcp.add_resource(
     meta=UI_META,
 )
 def show_card(title: str, body: str) -> CallToolResult:
+    card_id = card_id_for(title)
     return CallToolResult(
         content=[
-            TextContent(type="text", text=f"Showed the user a card titled {title!r}."),
+            TextContent(
+                type="text", text=f"Showed the user a card titled {title!r}, card id {card_id!r}."
+            ),
             EmbeddedResource(
                 type="resource",
                 resource=TextResourceContents(
@@ -74,7 +89,7 @@ def show_card(title: str, body: str) -> CallToolResult:
                 ),
             ),
         ],
-        structured_content={"title": title, "body": body},
+        structured_content={"card_id": card_id, "title": title, "body": body},
         meta=UI_META,
     )
 
@@ -97,7 +112,31 @@ def show_chart(values: list[float]) -> CallToolResult:
     )
 
 
+@mcp.tool(
+    description="Record that the user pressed the button on a card. Called by the card itself.",
+    meta=APP_ONLY_META,
+)
+def card_clicked(card_id: str) -> CallToolResult:
+    # E3: the target of the card's button. It reaches this server only if the host relays
+    # the app's tools/call.
+    clicked_at = datetime.now(UTC).isoformat(timespec="seconds")
+    audit.info(json.dumps({"event": "card_clicked", "card_id": card_id, "at": clicked_at}))
+    return CallToolResult(
+        content=[TextContent(type="text", text=f"Recorded a click on card {card_id!r}.")],
+        structured_content={"card_id": card_id, "clicked_at": clicked_at},
+    )
+
+
+def configure_audit_log() -> None:
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter("audit %(message)s"))
+    audit.addHandler(handler)
+    audit.setLevel(logging.INFO)
+    audit.propagate = False
+
+
 def main() -> None:
+    configure_audit_log()
     # Stateless streamable HTTP on 0.0.0.0:8000/mcp is the AgentCore Runtime contract for
     # protocol MCP. The runtime sits in front and sets its own Host header, so the SDK's
     # DNS rebinding check (meant for servers on a developer's loopback) is off.

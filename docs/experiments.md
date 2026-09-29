@@ -11,6 +11,7 @@ commit `82221c0`). Screenshots are in `.deploy/` (gitignored, on Sam's Mac).
 | --- | --- | --- | --- | --- | --- |
 | E1, embedded resource in the tool result (`show_card`) | A: the `tools/call` result embeds `ui://mcp-app/card`; the platform agent relays it as the `mcp-app/resource` event; the page frames it in `/sandbox/frame.html` | Render from `tool-input` and `tool-result` (`structuredContent`), resize itself, open http and https links | yes | Phase 3 browser check (card "Hello", frame resized 160 to 108 pixels); `.deploy/phase-4-E1.png` | none |
 | E2, host reads `ui://` by `resources/read` (`show_chart`) | B: the result carries only `_meta.ui.resourceUri = ui://mcp-app/chart` and `structuredContent`; the host must fetch the page through the tools gateway | Same as E1 once rendered; the page is fetched once per resource, not rebuilt per call | blocked | `resources/read ui://mcp-app/chart` answers through the gateway (probe); the page has no MCP client (`guppi.mcp` is `null`) and the agent relays only embedded resources, so no frame appears; `.deploy/phase-4-E2.png`, `.deploy/phase4-E2-routes.txt` | A `guppi.mcp` client in the page (initialize, `resources/read`) that the MCP Apps host calls when a tool call's definition names a `ui://` resource, plus a way for the browser to reach the tools gateway: the `/mcp/*` behavior, or the gateway's host in the page CSP's `connect-src` |
+| E3, app calls a tool (`card_clicked`) | The card's button sends `tools/call` `{name: "card_clicked", arguments: {card_id}}` to the host over the bridge; the host would relay it to the server | Ask its own server for work or fresh data without a model turn | partly | The request reaches the host and the host's refusal (`-32601`) is rendered in the card; `mcp-app___card_clicked` answers through the gateway (probe) and writes its audit line; `.deploy/phase-4-E3.png` | A relay in the host: `tools/call` through `guppi.mcp` to the tools gateway (the E2 client and route), adding the `mcp-app___` prefix and allowing only tools whose `_meta.ui.visibility` includes `app`; and the platform agent leaving `visibility: ["app"]` tools out of the model's list |
 
 ## E1, embedded resource in the tool result
 
@@ -93,3 +94,43 @@ and the `Authorization` header allowlist, the Runtime's host in `connect-src`, a
 page's MCP client talking to it with unprefixed tool names. It also skips the gateway's
 own checks and logs. That is more than the gateway route for the same result, so the
 gateway route is the one to build.
+
+## E3, app calls a tool
+
+What was built. The card gains a "Record a click" button. Pressing it sends
+`{"method": "tools/call", "params": {"name": "card_clicked", "arguments": {"card_id":
+...}}}` to the host and renders the answer (the first text block) or the JSON-RPC error
+in a status line under the body. The app names the tool as its server does; the prefix is
+the host's business. Each card has an id, its title as a slug (`hello` for "Hello"), in
+`structuredContent` and in the text the model reads. `card_clicked(card_id)` on the server
+returns a text block and `{card_id, clicked_at}`, and writes one line to stdout, which
+lands in the Runtime's CloudWatch log:
+`audit {"event": "card_clicked", "card_id": "hello", "at": "..."}`. Its definition carries
+`_meta.ui.visibility = ["app"]`, the extension's mark for a tool the model must not see.
+
+What happens here. The phase 3 host answers every `tools/call` with
+`{"code": -32601, "message": "tools/call is not available on this host yet"}`, and the
+card shows "Host refused tools/call: JSON-RPC error -32601: tools/call is not available on
+this host yet". The server half works: the probe calls `mcp-app___card_clicked` through
+the gateway. The platform agent does not read `visibility`, so the model is offered
+`mcp-app___card_clicked` beside the other tools; the tool description says the card calls
+it, which is the only thing keeping the model off it.
+
+Which relay would carry it. Two candidates.
+
+- Through `guppi.mcp`, the browser MCP client E2 needs. The host checks the tool's listed
+  `_meta.ui.visibility` includes `app` (the spec's MUST), adds `manifest.mcp.toolPrefix`,
+  sends `tools/call` to the tools gateway with the user's token, and returns the result
+  to the app as the response to its request. One HTTP round trip, no model turn, the
+  gateway's JWT check and logs still apply, and it is the shape the spec draws (the host
+  proxies to the server). It reuses everything E2 needs and adds about thirty lines to the
+  host.
+- A new AG-UI turn. The host posts a run whose `forwardedProps` carries the app's call,
+  and the platform agent runs the tool without asking the model and streams the result
+  back. It needs no browser route to the gateway, but costs an agent Runtime invocation
+  and an SSE stream per click, needs a new agent code path that bypasses the model, and
+  mixes app traffic into the conversation's run history.
+
+The first is the one to build, together with E2's client. The agent change to honour
+`visibility` is separate and small: drop tools whose `_meta.ui.visibility` lacks `model`
+in `select_tools`.

@@ -2,10 +2,17 @@
 runs the initialize handshake and JSON-RPC framing, as the tools gateway does."""
 
 import json
+import logging
 import re
 
 from mcp import Client
-from mcp_app_server.card import APP_MIME_TYPE, CARD_URI, TEMPLATE_BODY, TEMPLATE_TITLE
+from mcp_app_server.card import (
+    APP_MIME_TYPE,
+    CARD_URI,
+    TEMPLATE_BODY,
+    TEMPLATE_TITLE,
+    card_id_for,
+)
 from mcp_app_server.chart import CHART_URI
 from mcp_app_server.server import mcp
 
@@ -37,7 +44,7 @@ async def tools_by_name(client: Client) -> dict:
 async def test_tools_list_names_show_card_with_its_ui_resource():
     async with connect() as client:
         tools = await tools_by_name(client)
-        assert set(tools) == {"show_card", "show_chart"}
+        assert set(tools) == {"show_card", "show_chart", "card_clicked"}
         tool = tools["show_card"]
         assert set(tool.input_schema["properties"]) == {"title", "body"}
         assert set(tool.input_schema["required"]) == {"title", "body"}
@@ -50,12 +57,13 @@ async def test_show_card_returns_text_embedded_resource_and_meta():
         assert not result.is_error
         text, embedded = result.content
         assert text.type == "text"
-        assert "Hello" in text.text
+        assert "Hello" in text.text and "'hello'" in text.text
         assert embedded.type == "resource"
         assert str(embedded.resource.uri) == CARD_URI
         assert embedded.resource.mime_type == APP_MIME_TYPE
-        assert baked_values(embedded.resource.text) == {"title": "Hello", "body": "It works"}
-        assert result.structured_content == {"title": "Hello", "body": "It works"}
+        card = {"card_id": "hello", "title": "Hello", "body": "It works"}
+        assert baked_values(embedded.resource.text) == card
+        assert result.structured_content == card
         assert result.meta == {"ui": {"resourceUri": CARD_URI}}
 
 
@@ -69,7 +77,11 @@ async def test_resources_list_and_read_serve_the_card():
         assert len(contents) == 1
         assert str(contents[0].uri) == CARD_URI
         assert contents[0].mime_type == APP_MIME_TYPE
-        assert baked_values(contents[0].text) == {"title": TEMPLATE_TITLE, "body": TEMPLATE_BODY}
+        assert baked_values(contents[0].text) == {
+            "card_id": "mcp-app-card",
+            "title": TEMPLATE_TITLE,
+            "body": TEMPLATE_BODY,
+        }
 
 
 async def test_card_values_cannot_close_the_script_element():
@@ -79,7 +91,8 @@ async def test_card_values_cannot_close_the_script_element():
         html = result.content[1].resource.text
         assert html.count("</script>") == 2  # the data element and the page script, no more
         assert "<!--" not in html
-        assert baked_values(html) == {"title": hostile, "body": "&amp; <b>"}
+        assert baked_values(html)["title"] == hostile
+        assert baked_values(html)["body"] == "&amp; <b>"
 
 
 async def test_card_page_is_self_contained():
@@ -94,6 +107,40 @@ async def test_card_page_is_self_contained():
         ):
             assert method in html
         assert "setTimeout" in html and "2000" in html
+
+
+def test_card_id_is_the_title_as_a_slug():
+    assert card_id_for("Hello") == "hello"
+    assert card_id_for("Hello World!") == "hello-world"
+    assert card_id_for("  Q3 -- plan  ") == "q3-plan"
+    assert card_id_for("***") == "card"
+    assert len(card_id_for("x" * 100)) == 40
+
+
+async def test_card_button_calls_card_clicked_through_the_host():
+    async with connect() as client:
+        html = (await client.read_resource(CARD_URI)).contents[0].text
+        assert 'id="card-click"' in html
+        assert '"tools/call", { name: "card_clicked"' in html
+        assert "Host refused tools/call" in html
+
+
+async def test_card_clicked_is_app_only_and_writes_an_audit_line(caplog):
+    async with connect() as client:
+        tool = (await tools_by_name(client))["card_clicked"]
+        assert tool.meta == {"ui": {"visibility": ["app"]}}
+        assert set(tool.input_schema["required"]) == {"card_id"}
+
+        with caplog.at_level(logging.INFO, logger="mcp_app_server.audit"):
+            result = await client.call_tool("card_clicked", {"card_id": "hello"})
+        assert not result.is_error
+        assert "'hello'" in result.content[0].text
+        assert result.structured_content["card_id"] == "hello"
+        lines = [r.getMessage() for r in caplog.records if r.name == "mcp_app_server.audit"]
+        assert len(lines) == 1
+        line = json.loads(lines[0])
+        assert line["event"] == "card_clicked" and line["card_id"] == "hello"
+        assert line["at"] == result.structured_content["clicked_at"]
 
 
 async def test_show_chart_names_its_resource_and_embeds_nothing():
