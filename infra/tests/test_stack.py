@@ -3,7 +3,7 @@ import json
 import aws_cdk as cdk
 import pytest
 from aws_cdk.assertions import Match, Template
-from guppi_gpt_infra.stack import GuppiGptStack
+from guppi_gpt_infra.stack import FUNCTIONS_DIR, GuppiGptStack
 
 ACCOUNT = "123456789012"
 REGION = "us-east-1"
@@ -1083,3 +1083,50 @@ def test_platform_jwt_parameters_match_the_edge_gateway_authorizer(template):
     authorizer = gateway["Properties"]["AuthorizerConfiguration"]["CustomJWTAuthorizer"]
     assert parameters["/guppi/platform/jwt-discovery-url"] == authorizer["DiscoveryUrl"]
     assert [parameters["/guppi/platform/user-pool-client-id"]] == authorizer["AllowedClients"]
+
+
+def function_code(template, comment_prefix: str) -> tuple[str, dict]:
+    functions = template.find_resources("AWS::CloudFront::Function")
+    ((logical_id, function),) = [
+        (k, f)
+        for k, f in functions.items()
+        if f["Properties"]["FunctionConfig"]["Comment"].startswith(comment_prefix)
+    ]
+    return logical_id, function
+
+
+def viewer_request_function(behavior: dict) -> str:
+    (association,) = behavior["FunctionAssociations"]
+    assert association["EventType"] == "viewer-request"
+    return association["FunctionARN"]["Fn::GetAtt"][0]
+
+
+def test_two_cloudfront_functions_carry_the_code_from_the_functions_directory(template):
+    functions = template.find_resources("AWS::CloudFront::Function")
+    assert len(functions) == 2
+    for comment, file_name in (
+        ("Serves /p/<name>/", "page-path.js"),
+        ("Maps /api/<name>/invocations", "agent-path.js"),
+    ):
+        _, function = function_code(template, comment)
+        assert function["Properties"]["FunctionConfig"]["Runtime"] == "cloudfront-js-2.0"
+        source = (FUNCTIONS_DIR / file_name).read_text()
+        assert function["Properties"]["FunctionCode"] == source
+
+
+def test_page_path_function_is_on_the_default_behavior(template):
+    (distribution,) = template.find_resources("AWS::CloudFront::Distribution").values()
+    config = distribution["Properties"]["DistributionConfig"]
+    page_id, _ = function_code(template, "Serves /p/<name>/")
+    assert viewer_request_function(config["DefaultCacheBehavior"]) == page_id
+
+
+def test_agent_path_function_is_on_the_api_wildcard_only(template):
+    (distribution,) = template.find_resources("AWS::CloudFront::Distribution").values()
+    config = distribution["Properties"]["DistributionConfig"]
+    agent_id, _ = function_code(template, "Maps /api/<name>/invocations")
+    behaviors = {b["PathPattern"]: b for b in config["CacheBehaviors"]}
+    assert viewer_request_function(behaviors["/api/*"]) == agent_id
+    # The feedback behavior keeps its path and is still matched first.
+    assert "FunctionAssociations" not in behaviors["/api/feedback"]
+    assert list(behaviors) == ["/api/feedback", "/api/*"]

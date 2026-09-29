@@ -3,7 +3,9 @@
 DNS and certificates, Cognito with Google federation, the agent runtime, the edge
 gateway with a runtime target, the tools gateway in front of the knowledge base,
 CloudFront serving the page and proxying /api/* to the gateway, a regional web ACL on
-the edge gateway, and the billing and WAF alarms.
+the edge gateway, and the billing and WAF alarms. Two CloudFront Functions route project
+paths (/p/<name>/ to the page, /api/<name>/invocations to the gateway target <name>), and
+/guppi/platform/... SSM parameters publish the identifiers a project stack reads.
 
 Resource ordering that matters:
   apex A record -> user pool custom domain (Cognito refuses the domain without an A record)
@@ -227,6 +229,11 @@ DYNATRACE_BIZEVENTS_INGEST_PATH = "/api/v2/bizevents/ingest"
 # A vote is a business event, not a turn: it travels its own path (REST API to EventBridge
 # to a Dynatrace business event) rather than through the chat runtime or the trace
 # (docs/proposals/feedback.md).
+# CloudFront Functions for project routing (docs/proposals/platform.md): page-path.js
+# serves /p/<name>/ from /index.html, agent-path.js maps /api/<name>/invocations to the
+# gateway target <name>. Viewer request functions, not Lambda.
+FUNCTIONS_DIR = Path(__file__).resolve().parent / "functions"
+
 # The platform contract (docs/proposals/platform.md): identifiers a project's own stack
 # reads at deploy time with ssm.StringParameter.value_for_string_parameter. SSM rather
 # than CloudFormation exports, so a project never blocks a platform deploy.
@@ -1320,6 +1327,20 @@ class GuppiGptStack(cdk.Stack):
                 ),
             ),
         )
+        page_path_function = cloudfront.Function(
+            self,
+            "PagePathFunction",
+            code=cloudfront.FunctionCode.from_file(file_path=str(FUNCTIONS_DIR / "page-path.js")),
+            runtime=cloudfront.FunctionRuntime.JS_2_0,
+            comment="Serves /p/<name>/ from /index.html",
+        )
+        agent_path_function = cloudfront.Function(
+            self,
+            "AgentPathFunction",
+            code=cloudfront.FunctionCode.from_file(file_path=str(FUNCTIONS_DIR / "agent-path.js")),
+            runtime=cloudfront.FunctionRuntime.JS_2_0,
+            comment="Maps /api/<name>/invocations to the gateway target <name>",
+        )
         distribution = cloudfront.Distribution(
             self,
             "Distribution",
@@ -1335,6 +1356,12 @@ class GuppiGptStack(cdk.Stack):
                 viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                 cache_policy=cloudfront.CachePolicy.CACHING_OPTIMIZED,
                 response_headers_policy=security_headers_policy,
+                function_associations=[
+                    cloudfront.FunctionAssociation(
+                        function=page_path_function,
+                        event_type=cloudfront.FunctionEventType.VIEWER_REQUEST,
+                    )
+                ],
             ),
             # CloudFront compares the request path against these patterns in the order
             # they are listed, so the exact feedback path comes before the wildcard that
@@ -1355,6 +1382,12 @@ class GuppiGptStack(cdk.Stack):
                     # Forwarding Host breaks the gateway's TLS and routing.
                     origin_request_policy=cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
                     compress=False,
+                    function_associations=[
+                        cloudfront.FunctionAssociation(
+                            function=agent_path_function,
+                            event_type=cloudfront.FunctionEventType.VIEWER_REQUEST,
+                        )
+                    ],
                 ),
             },
         )
