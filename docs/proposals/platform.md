@@ -104,7 +104,7 @@ fetched with `cache: "no-store"` at load, like `config.json`.
   "features": { "history": true, "feedback": false },
   "extension": "/projects/mcp-app/ext.js",
   "capabilities": ["mcp-apps"],
-  "mcp": { "url": "/mcp", "toolPrefix": "mcpapp___" }
+  "mcp": { "url": "/mcp", "toolPrefix": "mcp-app___" }
 }
 ```
 
@@ -147,6 +147,39 @@ sandbox.
 `script-src 'self'`. The project builds it with esbuild as an ES module; this bundle stays
 an IIFE.
 
+## MCP Apps delivery
+
+A project's MCP App reaches the page through the agent's own AG-UI stream (path A), built
+in phase 3. guppi-mcp-app's phase 2 run through the platform showed why that is enough:
+the tools gateway passes the whole MCP Apps surface through (tool `_meta`, the embedded
+resource, `structuredContent`, `resources/list` and `resources/read`), and the
+`TOOL_CALL_RESULT` the page received for `mcp-app___show_card` held the complete card
+document. It held it only by position, though: Strands maps an embedded resource to a
+bare text item and the `ag_ui_strands` adapter keeps the last text item of a result, so
+the resource's uri, mime type, `structuredContent` and `_meta` were gone. The platform
+agent therefore relays the resource itself, as a `CUSTOM` event named `mcp-app/resource`
+right after the tool call's `TOOL_CALL_RESULT`:
+
+```json
+{ "toolCallId": "...", "uri": "ui://mcp-app/card", "mimeType": "text/html;profile=mcp-app",
+  "text": "<!DOCTYPE html>...", "toolResult": { "content": [...], "structuredContent": {...}, "_meta": {...} } }
+```
+
+The page's built-in host renderer (`web/src/mcp-apps/host.js`) claims that event, frames
+`/sandbox/frame.html` in the reply's attachment slot with `sandbox="allow-scripts"`, and
+runs the host half of the ext-apps bridge; the proxy page writes the HTML into a nested
+`srcdoc` frame. `/sandbox/*` has its own CSP, since a `srcdoc` frame inherits its parent's
+and the page's forbids inline script. The sandbox shares the page's origin, kept opaque by
+leaving out `allow-same-origin`; that is the proof of concept arrangement, and a separate
+origin for the sandbox is the production answer.
+
+The two paths set aside:
+
+| Path | What it is | Why not in phase 3 |
+| --- | --- | --- |
+| B | The page reads `ui://` through the tools gateway itself, from the tool's `_meta.ui.resourceUri` | Open at the gateway, and the spec-shaped path, but it needs the `/mcp/*` behavior and a browser MCP client; an experiment in phase 4, for when an app calls tools |
+| C | The agent issues `resources/read` for the tool's `_meta` reference and relays the result | Not needed while the result embeds the resource; the same `CUSTOM` event can carry it if a server stops embedding |
+
 ## Project tiers
 
 A project is one of two shapes and can grow from the first into the second without
@@ -172,18 +205,19 @@ touched.
 | --- | --- |
 | `web/src/app.js` | Resolve the project from the path before `config.json` is read; fetch the manifest; merge `manifest.features` into `config.features` before `initFeatures(config)`; carry the path in the OAuth `state`; set brand strings from the manifest; add the `reply-attachments` slot in `addTurn`; dispatch tool and custom events to the renderer registry; apply `onSend` hooks to the run input; import `ext.js`. Kept in named functions (`resolveProject`, `loadManifest`, `installExtension`) called from the boot |
 | `web/src/extensions.js` (new) | The `guppi` API object and the renderer registry |
-| `web/src/mcp-apps/` (new, a later phase) | The built-in MCP Apps host renderer and bridge |
+| `web/src/mcp-apps/` (new, phase 3) | The built-in MCP Apps host renderer and bridge, created by `extensions.js` for `capabilities: ["mcp-apps"]` |
+| `web/src/sandbox/` (new, phase 3) | `frame.html` and `frame.js`, the sandbox proxy served under `/sandbox/*` |
 | `web/src/index.html` | Brand elements keep their ids; text is set at load. Title falls back to GuppiGPT |
 | `web/test/` | Tests for project resolution, manifest merge and the `state` round trip |
-| `infra/guppi_gpt_infra/stack.py` | Two CloudFront Functions (page path rewrite, agent path rewrite) and the SSM parameters. Everything else as is |
-| `agent/src/guppi_agent/agent.py` | Project prefix filter driven by `forwardedProps.project`; `build_strands_agent` stays the test hook |
+| `infra/guppi_gpt_infra/stack.py` | Two CloudFront Functions (page path rewrite, agent path rewrite) and the SSM parameters; in phase 3 the `/sandbox/*` behavior with its response headers policy and `frame-src 'self'` on the page's CSP. Everything else as is |
+| `agent/src/guppi_agent/agent.py` | Project prefix filter driven by `forwardedProps.project`; in phase 3 the `mcp-app/resource` event; `build_strands_agent` stays the test hook |
 | `agent/pyproject.toml` | Package metadata so the kit installs by git URL |
 | `scripts/deploy.sh` | `--reuse-parameters`; the platform still publishes only its own page |
 
 Files left alone: `features.js`, `flags-core.js`, `flags.js`, `flags.html`,
 `features.test.mjs`, `flags.test.mjs`, `history.js`, `feedback.js`, `session.js`,
-`rum.js`, the legal pages, and every part of the stack that is not the two functions and
-the parameters.
+`rum.js`, the legal pages, and every part of the stack that is not the two functions, the
+parameters, and the sandbox behavior.
 
 ## Phases
 
@@ -199,16 +233,18 @@ Each phase ends with a deploy and a browser check.
    Guppi agent lists `mcpapp___*` beside `docs___Retrieve` for that project and it is known
    whether the gateway passes `resources/read` and tool `_meta` through.
 3. MCP Apps host: the built-in renderer and bridge, behind `capabilities: ["mcp-apps"]`;
-   the `/mcp/*` behavior if the browser path is needed; CSP `frame-src`.
+   the `/mcp/*` behavior if the browser path is needed; CSP `frame-src`. Built on path A
+   ("MCP Apps delivery" above); `/mcp/*` was not needed.
 4. Experiments, each inside guppi-mcp-app, none touching this repository.
 5. hr-super-agent re-homed as an agent project.
 
 ## Open questions
 
-- Does AgentCore Gateway pass `resources/read` and tool `_meta` through an MCP target, or
-  only `tools/list` and `tools/call`? Decides which MCP Apps delivery path phase 2 can use.
-- Sandboxed iframes need `frame-src` in the CSP; today `default-src 'self'` applies.
-  Decide in phase 3.
+- Answered in phase 2: AgentCore Gateway passes `resources/read`, `resources/list`, tool
+  `_meta`, `structuredContent` and embedded resources through an MCP target unchanged.
+- Decided in phase 3: the page's CSP names `frame-src 'self'`, and `/sandbox/*` carries its
+  own CSP. A separate origin for the sandbox is still owed before anyone else's apps run
+  here.
 - `import()` of `ext.js` from the IIFE bundle: esbuild keeps native dynamic import at
   `--target=es2022`; verify in the build.
 - The per-user rate limit on the edge gateway is per JWT subject across every project.

@@ -38,7 +38,7 @@ infra/
   tests/                  # assertions against the synthesized template
 agent/
   src/guppi_agent/app.py         # FastAPI app: POST /invocations (SSE), GET /ping, per-run log record with trace id
-  src/guppi_agent/agent.py       # per-run MCP client with the user token, Strands agent, AG-UI adapter, project tool filter
+  src/guppi_agent/agent.py       # per-run MCP client with the user token, Strands agent, AG-UI adapter, project tool filter, mcp-app/resource events
   src/guppi_agent/validation.py  # run input validation and front trimming
   src/guppi_agent/keepalive.py   # CUSTOM ping event after 15 silent seconds
   src/guppi_agent/conversation_log.py  # thread record: pseudonym, merge, conditional write to S3
@@ -49,7 +49,11 @@ web/
   src/index.html          # the page; no inline script or style (CSP is default-src 'self')
   src/app.js              # PKCE sign-in by hand, HttpAgent subscriber, plain text rendering, project boot
   src/project.js          # project from the /p/<name>/ path, manifest check, feature merge, brand strings, sign-in return path
-  src/extensions.js       # the guppi object a project's ext.js receives: renderers, onSend hooks, status, token
+  src/extensions.js       # the guppi object a project's ext.js receives: renderers, onSend hooks, status, token; built-ins by capability
+  src/mcp-apps/host.js    # built-in MCP Apps host: frames /sandbox/frame.html in the reply, host half of the ext-apps bridge
+  src/sandbox/frame.html  # the sandbox proxy page, served under /sandbox/* with its own CSP
+  src/sandbox/frame.js    # its script: proxy-ready, one resource-ready into a nested srcdoc frame, then the JSON-RPC relay
+  src/sandbox/relay.js    # the relay without the DOM, tested in node
   src/session.js          # idb-backed session store: refresh token, header claims, rotated on use
   src/app.css
   src/history.js          # local chat history: idb wrapper around one "threads" object store, behind the history flag
@@ -66,7 +70,9 @@ web/
   vendor/ruxitagentjs.js  # the Dynatrace RUM script itself; gitignored, not committed
   test/features.test.mjs  # node:test coverage for flags-core.js, run by `npm test`
   test/project.test.mjs   # node:test coverage for project.js, the state round trip included
-  test/extensions.test.mjs  # node:test coverage for the extension registry
+  test/extensions.test.mjs  # node:test coverage for the extension registry and built-in dispatch
+  test/mcp-apps-host.test.mjs  # the MCP Apps host's message dispatch with a fake postMessage and a fake DOM
+  test/sandbox-relay.test.mjs  # the sandbox proxy's relay rules
   test/cloudfront-functions.test.mjs  # the two CloudFront Functions run against sample URIs
   test/feedback.test.mjs  # node:test coverage for feedback.js's DOM-free functions
   test/flags.test.mjs     # node:test coverage for the flags page helpers in flags-core.js
@@ -170,6 +176,30 @@ and key secret, the alarm topic); their names are the `PARAM_*` constants in `st
 and a project reads them with `ssm.StringParameter.value_for_string_parameter`. No project
 changes this stack or the Google OAuth client. The `guppi-agent` package installs by git
 URL (`agent/README.md`).
+
+MCP Apps are hosted by the page itself (`docs/proposals/platform-phase-3.md`), for a
+project whose manifest lists `"mcp-apps"` in `capabilities`. When a tool result from the
+tools gateway embeds a `ui://` resource of type `text/html;profile=mcp-app`, the platform
+agent follows that call's `TOOL_CALL_RESULT` with an AG-UI `CUSTOM` event named
+`mcp-app/resource`, value `{ toolCallId, uri, mimeType, text, toolResult }`
+(`toolResult` holds the MCP result's text blocks, `structuredContent` and `_meta`, which
+the adapter drops); a subclass of Strands' `MCPClient` records the resource per tool use
+id. The built-in host renderer (`web/src/mcp-apps/host.js`, created by `extensions.js`)
+claims that event, puts an iframe with `sandbox="allow-scripts"` (no `allow-same-origin`,
+so an opaque origin) on `/sandbox/frame.html` in the reply's `reply-attachments` slot,
+and runs the host half of the ext-apps bridge (2.0.3, spec revision 2026-01-26):
+`ui/notifications/sandbox-resource-ready` with the HTML once the proxy is ready,
+`ui/initialize`, `tool-input` and `tool-result` after `initialized`, `size-changed`, and
+`ui/open-link` for http and https with `noopener`; `tools/call` is refused with a
+JSON-RPC error until phase 4. `frame.html` writes the HTML into a nested `srcdoc` frame
+sandboxed the same way and relays the rest. A `srcdoc` frame inherits its parent's CSP,
+and the page's forbids inline script, so `/sandbox/*` is a CloudFront behavior on the site
+bucket with its own response headers policy (`default-src 'none'; script-src 'self'
+'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'self'`, no
+`connect-src`, no `X-Frame-Options`), and the page's CSP carries `frame-src 'self'`. This
+same-origin path is the proof of concept arrangement; a separate origin for the sandbox
+is the production one. The page never writes HTML itself; the app's document is the only
+HTML written anywhere, inside the sandbox.
 
 `scripts/test-token.sh` prints a fresh access token for a test session on stdout and
 nothing else, for checks that need a signed-in bearer without a browser (a curl against
