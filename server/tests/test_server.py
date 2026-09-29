@@ -15,6 +15,7 @@ from mcp_app_server.card import (
     card_id_for,
 )
 from mcp_app_server.chart import CHART_URI
+from mcp_app_server.preferences import PREFERENCES_URI
 from mcp_app_server.server import mcp
 from mcp_app_server.static_page import STATIC_PAGE_URI, STATIC_PAGE_URL
 
@@ -52,6 +53,7 @@ async def test_tools_list_names_show_card_with_its_ui_resource():
             "card_clicked",
             "update_card",
             "show_static_page",
+            "ask_preferences",
         }
         tool = tools["show_card"]
         assert set(tool.input_schema["properties"]) == {"title", "body"}
@@ -78,7 +80,7 @@ async def test_show_card_returns_text_embedded_resource_and_meta():
 async def test_resources_list_and_read_serve_the_card():
     async with connect() as client:
         resources = {str(r.uri): r for r in (await client.list_resources()).resources}
-        assert set(resources) == {CARD_URI, CHART_URI, STATIC_PAGE_URI}
+        assert set(resources) == {CARD_URI, CHART_URI, STATIC_PAGE_URI, PREFERENCES_URI}
         assert resources[CARD_URI].mime_type == APP_MIME_TYPE
 
         contents = (await client.read_resource(CARD_URI)).contents
@@ -229,3 +231,23 @@ def test_static_page_is_published_beside_the_manifest():
     assert "<style" not in page and "style=" not in page
     assert "<script>" not in page
     assert "ui/initialize" in (root / "app" / "app.js").read_text()
+
+
+async def test_ask_preferences_embeds_a_form_that_updates_model_context():
+    async with connect() as client:
+        tool = (await tools_by_name(client))["ask_preferences"]
+        assert tool.meta == {"ui": {"resourceUri": PREFERENCES_URI}}
+
+        result = await client.call_tool("ask_preferences", {})
+        assert not result.is_error
+        text, embedded = result.content
+        assert text.type == "text"
+        assert str(embedded.resource.uri) == PREFERENCES_URI
+        assert embedded.resource.mime_type == APP_MIME_TYPE
+        html = embedded.resource.text
+        assert_self_contained(html)
+        assert html.count("<input") == 1 and html.count("<select") == 1
+        assert '"ui/update-model-context"' in html
+        assert "structuredContent: values" in html
+        assert baked_values(html) == {"reply_styles": ["brief", "detailed"]}
+        assert result.structured_content == {"fields": ["display_name", "reply_style"]}

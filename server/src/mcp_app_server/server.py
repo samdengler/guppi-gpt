@@ -10,7 +10,8 @@ The experiments (`docs/experiments.md`) each add one tool: `show_chart` (E2) nam
 resource without embedding it; `card_clicked` (E3) is the tool the card's button calls
 through the host, visible to apps only, and it writes one audit line per call;
 `update_card` (E4) returns the card resource again for an existing card id;
-`show_static_page` (E5) names a resource whose content is a URL.
+`show_static_page` (E5) names a resource whose content is a URL; `ask_preferences` (E6)
+shows a form whose answers go back to the host as model context.
 """
 
 import json
@@ -25,6 +26,7 @@ from mcp_types import CallToolResult, EmbeddedResource, TextContent, TextResourc
 
 from mcp_app_server.card import APP_MIME_TYPE, CARD_URI, card_html, card_id_for
 from mcp_app_server.chart import CHART_URI, chart_html
+from mcp_app_server.preferences import PREFERENCES_URI, preferences_html
 from mcp_app_server.static_page import (
     STATIC_PAGE_URI,
     STATIC_PAGE_URL,
@@ -39,6 +41,7 @@ PATH = "/mcp"
 UI_META = {"ui": {"resourceUri": CARD_URI}}
 CHART_META = {"ui": {"resourceUri": CHART_URI}}
 STATIC_PAGE_META = {"ui": {"resourceUri": STATIC_PAGE_URI}}
+PREFERENCES_META = {"ui": {"resourceUri": PREFERENCES_URI}}
 # An app-only tool: a host following the extension leaves it out of the model's tool list
 # and lets only this server's apps call it.
 APP_ONLY_META = {"ui": {"visibility": ["app"]}}
@@ -52,7 +55,8 @@ mcp = MCPServer(
         "show_card shows the user a card with a title and a body. "
         "update_card changes the body of a card shown earlier. "
         "show_chart shows the user a bar chart of a list of numbers. "
-        "show_static_page shows the user the MCP App Lab static page."
+        "show_static_page shows the user the MCP App Lab static page. "
+        "ask_preferences shows the user a form for their display name and reply style."
     ),
     version="0.1.0",
 )
@@ -87,6 +91,17 @@ mcp.add_resource(
         description="The MCP App Lab static page, named by its URL.",
         mime_type=URI_LIST_MIME_TYPE,
         text=static_page_uri_list(),
+    )
+)
+
+mcp.add_resource(
+    TextResource(
+        uri=PREFERENCES_URI,
+        name="preferences",
+        title="Preferences",
+        description="A form for the user's display name and reply style.",
+        mime_type=APP_MIME_TYPE,
+        text=preferences_html(),
     )
 )
 
@@ -183,6 +198,37 @@ def show_static_page() -> CallToolResult:
         ],
         structured_content={"url": STATIC_PAGE_URL},
         meta=STATIC_PAGE_META,
+    )
+
+
+@mcp.tool(
+    description=(
+        "Ask the user for their preferences (display name and reply style) with a form. "
+        "Use it when the user asks to set their preferences."
+    ),
+    meta=PREFERENCES_META,
+)
+def ask_preferences() -> CallToolResult:
+    # E6: the answers do not come back through this tool; the form sends them to the host
+    # as ui/update-model-context, for the host to add to the next turn.
+    return CallToolResult(
+        content=[
+            TextContent(
+                type="text",
+                text=(
+                    "Showed the user a preferences form. Their answers reach the conversation "
+                    "only if the host passes them on with a later turn."
+                ),
+            ),
+            EmbeddedResource(
+                type="resource",
+                resource=TextResourceContents(
+                    uri=PREFERENCES_URI, mime_type=APP_MIME_TYPE, text=preferences_html()
+                ),
+            ),
+        ],
+        structured_content={"fields": ["display_name", "reply_style"]},
+        meta=PREFERENCES_META,
     )
 
 

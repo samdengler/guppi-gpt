@@ -14,6 +14,7 @@ commit `82221c0`). Screenshots are in `.deploy/` (gitignored, on Sam's Mac).
 | E3, app calls a tool (`card_clicked`) | The card's button sends `tools/call` `{name: "card_clicked", arguments: {card_id}}` to the host over the bridge; the host would relay it to the server | Ask its own server for work or fresh data without a model turn | partly | The request reaches the host and the host's refusal (`-32601`) is rendered in the card; `mcp-app___card_clicked` answers through the gateway (probe) and writes its audit line; `.deploy/phase-4-E3.png` | A relay in the host: `tools/call` through `guppi.mcp` to the tools gateway (the E2 client and route), adding the `mcp-app___` prefix and allowing only tools whose `_meta.ui.visibility` includes `app`; and the platform agent leaving `visibility: ["app"]` tools out of the model's list |
 | E4, a later tool updates the same app (`update_card`) | A, twice: `update_card(card_id, body)` returns the same `ui://mcp-app/card` resource and card id as the earlier `show_card` | Change what an app already on screen shows, from a later turn | partly | The update renders, in a second frame under the second reply; the first card keeps its old body. The host mounts one frame per tool call id, and the extension defines no rule for sending a later tool's result to an existing view; `.deploy/phase-4-E4.png` | For in-place updates, a host rule of its own: route a result to the mounted frame whose resource uri and `structuredContent.card_id` match, as a second `ui/notifications/tool-result` (the card already re-renders on it). Or, within the spec, E3's relay, so the card fetches its own fresh state |
 | E5, an app served as a static page (`show_static_page`) | The result embeds `ui://mcp-app/static-page` as `text/uri-list` naming `https://chat.dengler.io/projects/mcp-app/app/index.html`, which this repository publishes beside its manifest | Run a whole existing web app with its own files, instead of one inline document | blocked | No frame: the agent relays only `text/html;profile=mcp-app` resources. Four more layers would refuse it: the host accepts only that mime type, the proxy writes only `srcdoc`, the sandbox CSP is `default-src 'none'` (no `frame-src`), and `/projects/*` is served with `X-Frame-Options: DENY` and `frame-ancestors 'none'`. The extension lists `text/uri-list` as deferred from its first version; `.deploy/phase-4-E5.png` | The agent and host accepting `text/uri-list`, a proxy message carrying a URL, `frame-src` for the app's origin in the sandbox CSP, and framing allowed on the app's responses. Before doing it for anyone's pages, apps on a separate origin from the chat page |
+| E6, a form that returns data to the model (`ask_preferences`) | A for the form; back from the app, `ui/update-model-context` with the answers as a text block and `structuredContent` | Collect input from the user in the app and hand it to the model for the next turn | partly | The form renders and sends the request; the host refuses it (`-32601`, "Method not found: ui/update-model-context") and the form shows that; a follow-up question shows the model never received the answers; `.deploy/phase-4-E6.png` | The host accepting `ui/update-model-context` (keep the last one per thread, answer `{}`), an `onSend` step that puts it in the next run (for example `forwardedProps.modelContext`), and the agent adding it to that run's prompt |
 
 ## E1, embedded resource in the tool result
 
@@ -209,3 +210,47 @@ framed page without `sandbox` would share the chat page's origin and its Indexed
 session. Apps loaded by URL belong on a separate origin, the same one the sandbox proxy is
 already owed (phase 3 report). The inline-HTML path (E1) needs none of this, which is why
 the extension starts there.
+
+## E6, a form that returns data to the model
+
+What was built. `ask_preferences()` returns a text block, the form embedded as
+`ui://mcp-app/preferences` (also in `resources/list` and `resources/read`),
+`structuredContent: {fields}` and `_meta.ui.resourceUri`. The form has two fields, a
+display name and a reply style (brief or detailed). Its button sends
+
+```json
+{"method": "ui/update-model-context",
+ "params": {"content": [{"type": "text", "text": "The user's preferences: display name \"Sam\", reply style detailed."}],
+            "structuredContent": {"display_name": "Sam", "reply_style": "detailed"}}}
+```
+
+and shows the host's answer. The extension has two app-to-host messages that carry data
+toward the model: `ui/message` adds a message to the conversation and triggers a
+follow-up turn at once, and `ui/update-model-context` hands the host context "used in
+future turns", which the host may hold until the next user message and should overwrite
+with each update. The brief asks for the answers to join the next turn, so the form uses
+`ui/update-model-context`.
+
+A finding on the way. The first version was an HTML `<form>` with a submit button. Inside
+the phase 3 sandbox (`allow-scripts` only) Chromium blocks the submission ("Blocked form
+submission ... the 'allow-forms' permission is not set") before the `submit` event
+reaches the page's handler, so nothing was sent. The extension asks hosts for
+`allow-scripts` and `allow-same-origin` only, so an app cannot count on `allow-forms`; the
+form now uses a plain `type="button"` click. Any MCP App author on this host needs the
+same rule.
+
+What happens here. The phase 3 host answers every request other than `ui/initialize`,
+`ui/open-link` and `ping` with `-32601`, so the form shows "Host refused
+ui/update-model-context: JSON-RPC error -32601: Method not found:
+ui/update-model-context". The answers stay in the frame. A follow-up question in the same
+chat ("What display name and reply style did I choose?") goes to the agent as text only,
+and the model cannot answer it from the form.
+
+The platform change. In the host: accept `ui/update-model-context`, keep the latest
+params per thread (the spec says each update overwrites the last, and only the last
+before a user message is sent), answer `{}`. In the page: an `onSend` step that attaches
+the kept context to the next run, for example as `forwardedProps.modelContext`, then
+clears it. In the platform agent: read it and add the text blocks to that run's prompt,
+as context from an app rather than words from the user. `ui/message` is the smaller
+change (the host puts the text in a user message and sends it), but it starts a turn the
+user did not ask for and shows the app's words as the user's.
