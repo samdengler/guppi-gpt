@@ -1010,3 +1010,76 @@ def test_feedback_outputs_name_the_api_and_the_bus(template):
     assert json.dumps(outputs["FeedbackApiUrl"]["Value"]).endswith('"/api/feedback"]]}')
     (bus_id,) = template.find_resources("AWS::Events::EventBus").keys()
     assert outputs["FeedbackBusName"]["Value"] == {"Ref": bus_id}
+
+
+PLATFORM_PARAMETERS_FROM_OUTPUTS = {
+    "/guppi/platform/site-bucket-name": "SiteBucketName",
+    "/guppi/platform/distribution-id": "DistributionId",
+    "/guppi/platform/site-url": "SiteUrl",
+    "/guppi/platform/edge-gateway-arn": "GatewayArn",
+    "/guppi/platform/tools-gateway-url": "ToolsGatewayUrl",
+    "/guppi/platform/user-pool-client-id": "UserPoolClientId",
+    "/guppi/platform/conversation-log-bucket-name": "ConversationLogBucketName",
+    "/guppi/platform/conversation-log-key-secret-arn": "ConversationLogKeySecretArn",
+    "/guppi/platform/alarm-topic-arn": "AlarmTopicArn",
+}
+
+
+def platform_parameters(template) -> dict[str, object]:
+    return {
+        p["Properties"]["Name"]: p["Properties"]["Value"]
+        for p in template.find_resources("AWS::SSM::Parameter").values()
+        if p["Properties"]["Name"].startswith("/guppi/platform/")
+    }
+
+
+def gateway_by_name(template, name: str) -> tuple[str, dict]:
+    gateways = template.find_resources("AWS::BedrockAgentCore::Gateway")
+    ((logical_id, gateway),) = [
+        (k, g) for k, g in gateways.items() if g["Properties"]["Name"] == name
+    ]
+    return logical_id, gateway
+
+
+def test_platform_parameters_are_the_contract_names(template):
+    assert set(platform_parameters(template)) == {
+        *PLATFORM_PARAMETERS_FROM_OUTPUTS,
+        "/guppi/platform/edge-gateway-id",
+        "/guppi/platform/edge-gateway-role-arn",
+        "/guppi/platform/tools-gateway-id",
+        "/guppi/platform/tools-gateway-role-arn",
+        "/guppi/platform/jwt-discovery-url",
+    }
+    for parameter in template.find_resources("AWS::SSM::Parameter").values():
+        assert parameter["Properties"]["Type"] == "String"
+
+
+def test_platform_parameters_carry_the_same_values_as_the_outputs(template):
+    parameters = platform_parameters(template)
+    outputs = template.to_json()["Outputs"]
+    for name, output in PLATFORM_PARAMETERS_FROM_OUTPUTS.items():
+        assert parameters[name] == outputs[output]["Value"], name
+    assert parameters["/guppi/platform/site-url"] == "https://chat.dengler.io/"
+
+
+def test_platform_gateway_parameters_point_at_each_gateway_and_its_role(template):
+    parameters = platform_parameters(template)
+    for prefix, gateway_name in (("edge", "guppi-gpt-edge"), ("tools", "guppi-gpt-tools")):
+        logical_id, gateway = gateway_by_name(template, gateway_name)
+        assert parameters[f"/guppi/platform/{prefix}-gateway-id"] == {
+            "Fn::GetAtt": [logical_id, "GatewayIdentifier"]
+        }
+        # The role parameter is the very role the gateway runs as.
+        role_arn = gateway["Properties"]["RoleArn"]
+        assert parameters[f"/guppi/platform/{prefix}-gateway-role-arn"] == role_arn
+    assert parameters["/guppi/platform/tools-gateway-url"] == {
+        "Fn::GetAtt": ["ToolsGateway", "GatewayUrl"]
+    }
+
+
+def test_platform_jwt_parameters_match_the_edge_gateway_authorizer(template):
+    parameters = platform_parameters(template)
+    _, gateway = gateway_by_name(template, "guppi-gpt-edge")
+    authorizer = gateway["Properties"]["AuthorizerConfiguration"]["CustomJWTAuthorizer"]
+    assert parameters["/guppi/platform/jwt-discovery-url"] == authorizer["DiscoveryUrl"]
+    assert [parameters["/guppi/platform/user-pool-client-id"]] == authorizer["AllowedClients"]

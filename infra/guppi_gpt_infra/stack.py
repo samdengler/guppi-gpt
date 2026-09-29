@@ -104,6 +104,9 @@ from aws_cdk import (
     aws_sqs as sqs,
 )
 from aws_cdk import (
+    aws_ssm as ssm,
+)
+from aws_cdk import (
     aws_wafv2 as wafv2,
 )
 from aws_cdk import (
@@ -224,6 +227,28 @@ DYNATRACE_BIZEVENTS_INGEST_PATH = "/api/v2/bizevents/ingest"
 # A vote is a business event, not a turn: it travels its own path (REST API to EventBridge
 # to a Dynatrace business event) rather than through the chat runtime or the trace
 # (docs/proposals/feedback.md).
+# The platform contract (docs/proposals/platform.md): identifiers a project's own stack
+# reads at deploy time with ssm.StringParameter.value_for_string_parameter. SSM rather
+# than CloudFormation exports, so a project never blocks a platform deploy.
+PLATFORM_PARAMETER_PREFIX = "/guppi/platform"
+PARAM_SITE_BUCKET_NAME = f"{PLATFORM_PARAMETER_PREFIX}/site-bucket-name"
+PARAM_DISTRIBUTION_ID = f"{PLATFORM_PARAMETER_PREFIX}/distribution-id"
+PARAM_SITE_URL = f"{PLATFORM_PARAMETER_PREFIX}/site-url"
+PARAM_EDGE_GATEWAY_ID = f"{PLATFORM_PARAMETER_PREFIX}/edge-gateway-id"
+PARAM_EDGE_GATEWAY_ARN = f"{PLATFORM_PARAMETER_PREFIX}/edge-gateway-arn"
+PARAM_EDGE_GATEWAY_ROLE_ARN = f"{PLATFORM_PARAMETER_PREFIX}/edge-gateway-role-arn"
+PARAM_TOOLS_GATEWAY_ID = f"{PLATFORM_PARAMETER_PREFIX}/tools-gateway-id"
+PARAM_TOOLS_GATEWAY_URL = f"{PLATFORM_PARAMETER_PREFIX}/tools-gateway-url"
+# A project's MCP server Runtime grants InvokeAgentRuntime to this role.
+PARAM_TOOLS_GATEWAY_ROLE_ARN = f"{PLATFORM_PARAMETER_PREFIX}/tools-gateway-role-arn"
+PARAM_USER_POOL_CLIENT_ID = f"{PLATFORM_PARAMETER_PREFIX}/user-pool-client-id"
+PARAM_JWT_DISCOVERY_URL = f"{PLATFORM_PARAMETER_PREFIX}/jwt-discovery-url"
+PARAM_CONVERSATION_LOG_BUCKET_NAME = f"{PLATFORM_PARAMETER_PREFIX}/conversation-log-bucket-name"
+PARAM_CONVERSATION_LOG_KEY_SECRET_ARN = (
+    f"{PLATFORM_PARAMETER_PREFIX}/conversation-log-key-secret-arn"
+)
+PARAM_ALARM_TOPIC_ARN = f"{PLATFORM_PARAMETER_PREFIX}/alarm-topic-arn"
+
 FEEDBACK_API_NAME = "guppi-gpt-feedback"
 FEEDBACK_STAGE_NAME = "prod"
 FEEDBACK_PATH = "feedback"  # under /api on the API, so /api/feedback through CloudFront lands on it
@@ -2137,6 +2162,39 @@ class GuppiGptStack(cdk.Stack):
         cdk.CfnOutput(self, "FeedbackBusName", value=feedback_bus.event_bus_name)
         cdk.CfnOutput(self, "RumScriptPath", value=RUM_SCRIPT_PATH)
         cdk.CfnOutput(self, "RumBeaconOrigin", value=dynatrace_beacon_origin.value_as_string)
+
+        # ---- Platform parameters -----------------------------------------------------
+        for construct_id, parameter_name, value in (
+            ("SiteBucketName", PARAM_SITE_BUCKET_NAME, site_bucket.bucket_name),
+            ("DistributionId", PARAM_DISTRIBUTION_ID, distribution.distribution_id),
+            ("SiteUrl", PARAM_SITE_URL, SITE_URL),
+            ("EdgeGatewayId", PARAM_EDGE_GATEWAY_ID, gateway.attr_gateway_identifier),
+            ("EdgeGatewayArn", PARAM_EDGE_GATEWAY_ARN, gateway.attr_gateway_arn),
+            ("EdgeGatewayRoleArn", PARAM_EDGE_GATEWAY_ROLE_ARN, gateway_role.role_arn),
+            ("ToolsGatewayId", PARAM_TOOLS_GATEWAY_ID, tools_gateway.attr_gateway_identifier),
+            ("ToolsGatewayUrl", PARAM_TOOLS_GATEWAY_URL, tools_gateway.attr_gateway_url),
+            ("ToolsGatewayRoleArn", PARAM_TOOLS_GATEWAY_ROLE_ARN, tools_gateway_role.role_arn),
+            ("UserPoolClientId", PARAM_USER_POOL_CLIENT_ID, client.user_pool_client_id),
+            ("JwtDiscoveryUrl", PARAM_JWT_DISCOVERY_URL, discovery_url),
+            (
+                "ConversationLogBucketName",
+                PARAM_CONVERSATION_LOG_BUCKET_NAME,
+                conversation_bucket.bucket_name,
+            ),
+            (
+                "ConversationLogKeySecretArn",
+                PARAM_CONVERSATION_LOG_KEY_SECRET_ARN,
+                conversation_secret.secret_arn,
+            ),
+            ("AlarmTopicArn", PARAM_ALARM_TOPIC_ARN, alarm_topic.topic_arn),
+        ):
+            ssm.StringParameter(
+                self,
+                f"Platform{construct_id}Parameter",
+                parameter_name=parameter_name,
+                string_value=value,
+                description="GuppiGPT platform contract, read by project stacks at deploy time",
+            )
 
     def _runtime_role(self) -> iam.Role:
         """Execution role for the runtime, following the AgentCore documented policy."""
