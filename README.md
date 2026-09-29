@@ -56,6 +56,13 @@ and its state kept deliberately small. In brief:
   queue ([proposal](docs/proposals/operations.md)), and [AWS WAF](https://aws.amazon.com/waf/)
   in front of the edge gateway.
 
+The same host also serves other projects, each from its own repository and stack: a
+project page lives at `chat.dengler.io/p/<name>/`, reads a manifest the project publishes
+to the site bucket, and talks to the platform agent or to the project's own agent through
+the edge gateway. This stack publishes what a project needs as `/guppi/platform/...` SSM
+parameters. The contract, the routing, the manifest, and the extension API are in
+[`docs/proposals/platform.md`](docs/proposals/platform.md).
+
 ## Documentation
 
 The architecture, requirements, wire format, security controls, and remaining work are in
@@ -78,7 +85,7 @@ disagree, fix one of them in the same change.
 | `infra/` | AWS CDK app (Python), one stack named `GuppiGpt` |
 | `agent/` | The agent container: FastAPI serving AG-UI over SSE on the AgentCore Runtime contract |
 | `web/` | The static page: sources in `src/`, esbuild bundle in `dist/` |
-| `scripts/` | `deploy.sh`, `seed-content.sh` (refresh the knowledge base corpus), `ingest.sh` (index it) |
+| `scripts/` | `deploy.sh`, `seed-content.sh` (refresh the knowledge base corpus), `ingest.sh` (index it), `test-token.sh` (an access token for scripted checks) |
 
 ## Prerequisites
 

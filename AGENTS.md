@@ -33,10 +33,12 @@ docs/                     # design document, decision log, architecture diagrams
 infra/
   app.py                  # CDK app entry
   guppi_gpt_infra/stack.py
+  guppi_gpt_infra/functions/page-path.js   # CloudFront Function: /p/<name>/ served from /index.html
+  guppi_gpt_infra/functions/agent-path.js  # CloudFront Function: /api/<name>/invocations to gateway target <name>
   tests/                  # assertions against the synthesized template
 agent/
   src/guppi_agent/app.py         # FastAPI app: POST /invocations (SSE), GET /ping, per-run log record with trace id
-  src/guppi_agent/agent.py       # per-run MCP client with the user token, Strands agent, AG-UI adapter
+  src/guppi_agent/agent.py       # per-run MCP client with the user token, Strands agent, AG-UI adapter, project tool filter
   src/guppi_agent/validation.py  # run input validation and front trimming
   src/guppi_agent/keepalive.py   # CUSTOM ping event after 15 silent seconds
   src/guppi_agent/conversation_log.py  # thread record: pseudonym, merge, conditional write to S3
@@ -45,7 +47,9 @@ agent/
 web/
   package.json            # esbuild, @ag-ui/client, @openfeature/web-sdk, idb; `npm run build` writes dist/, `npm test` runs node --test
   src/index.html          # the page; no inline script or style (CSP is default-src 'self')
-  src/app.js              # PKCE sign-in by hand, HttpAgent subscriber, plain text rendering
+  src/app.js              # PKCE sign-in by hand, HttpAgent subscriber, plain text rendering, project boot
+  src/project.js          # project from the /p/<name>/ path, manifest check, feature merge, brand strings, sign-in return path
+  src/extensions.js       # the guppi object a project's ext.js receives: renderers, onSend hooks, status, token
   src/session.js          # idb-backed session store: refresh token, header claims, rotated on use
   src/app.css
   src/history.js          # local chat history: idb wrapper around one "threads" object store, behind the history flag
@@ -61,6 +65,9 @@ web/
   features.json           # committed feature flag defaults, merged into config.json at deploy time
   vendor/ruxitagentjs.js  # the Dynatrace RUM script itself; gitignored, not committed
   test/features.test.mjs  # node:test coverage for flags-core.js, run by `npm test`
+  test/project.test.mjs   # node:test coverage for project.js, the state round trip included
+  test/extensions.test.mjs  # node:test coverage for the extension registry
+  test/cloudfront-functions.test.mjs  # the two CloudFront Functions run against sample URIs
   test/feedback.test.mjs  # node:test coverage for feedback.js's DOM-free functions
   test/flags.test.mjs     # node:test coverage for the flags page helpers in flags-core.js
   test/legal.test.mjs     # the privacy and terms pages: date, cross links, no inline style or script
@@ -140,6 +147,29 @@ also written to `.deploy/deploy-<timestamp>.log` with `.deploy/latest.log` point
 newest and a final `deploy exit=<code>` line, so a Claude session can watch a deploy
 started from any terminal. Deploys run on Sam's Mac; the Docker image is built there for
 arm64.
+
+Projects share this deployment (`docs/proposals/platform.md`). A project page is
+`https://chat.dengler.io/p/<name>/`: a viewer request CloudFront Function on the default
+behavior (`infra/guppi_gpt_infra/functions/page-path.js`) serves `/p/<name>/` and
+`/p/<name>/index.html` from `/index.html`, and the page reads `<name>` from the path,
+fetches `/projects/<name>/manifest.json` (a project publishes it to the site bucket), lays
+its `features` over `config.features`, takes its brand strings, posts to its `agent`
+(`"platform"` is `/api/invocations`), and imports its optional `extension` module. A
+second function on `/api/*` (`agent-path.js`) rewrites `/api/<name>/invocations` to the
+edge gateway path `/<name>/invocations`, the runtime target a project registers under its
+own name; `/api/invocations` and `/api/feedback` are left alone, and `/api/feedback` is
+still the first behavior. A project page sends `forwardedProps: { project: <name> }` on
+every run, and the platform agent then offers the tools gateway's `<name>___*` tools (a
+hyphen in the name also matched as an underscore) beside `docs___Retrieve`, with one
+sentence in the system prompt naming them. The OAuth `state` carries `/` or `/p/<name>/`
+through sign-in; anything else in it returns to `/`. The stack publishes the identifiers
+a project stack needs as SSM parameters under `/guppi/platform/` (site bucket,
+distribution, site URL, both gateways' ids and roles, the edge gateway ARN, the tools
+gateway URL, the user pool client id, the JWT discovery URL, the conversation log bucket
+and key secret, the alarm topic); their names are the `PARAM_*` constants in `stack.py`,
+and a project reads them with `ssm.StringParameter.value_for_string_parameter`. No project
+changes this stack or the Google OAuth client. The `guppi-agent` package installs by git
+URL (`agent/README.md`).
 
 `scripts/test-token.sh` prints a fresh access token for a test session on stdout and
 nothing else, for checks that need a signed-in bearer without a browser (a curl against
