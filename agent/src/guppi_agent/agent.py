@@ -88,12 +88,14 @@ def project_tool_prefix(project: str) -> str:
 
 
 def select_tools(tools: list[Any], retrieve_tool: str, project: str | None = None) -> list[Any]:
-    """The retrieve tool, plus the project's own tools when the run names a project."""
-    prefix = project_tool_prefix(project) if project else None
+    """The retrieve tool, plus the project's own tools when the run names a project. The
+    name as given is accepted as a prefix too, in case the gateway keeps a hyphen in a
+    target name."""
+    prefixes = (project_tool_prefix(project), f"{project}___") if project else ()
     return [
         tool
         for tool in tools
-        if tool.tool_name == retrieve_tool or (prefix and tool.tool_name.startswith(prefix))
+        if tool.tool_name == retrieve_tool or tool.tool_name.startswith(prefixes)
     ]
 
 

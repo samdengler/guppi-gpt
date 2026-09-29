@@ -20,6 +20,7 @@ LISTED = [
         "demo___chart",
         "demo___table",
         "mcp_app___open",
+        "mcp-app___close",
         "other___thing",
         "demochart",
     )
@@ -55,7 +56,8 @@ def test_a_project_adds_its_own_prefixed_tools_beside_retrieve():
 def test_hyphens_in_the_project_name_become_underscores_in_the_prefix():
     assert agent_module.project_tool_prefix("mcp-app") == "mcp_app___"
     selected = agent_module.select_tools(LISTED, RETRIEVE, "mcp-app")
-    assert names(selected) == [RETRIEVE, "mcp_app___open"]
+    # The hyphen-kept form is accepted too, in case the gateway keeps it.
+    assert names(selected) == [RETRIEVE, "mcp_app___open", "mcp-app___close"]
 
 
 def test_a_project_with_no_tools_on_the_gateway_keeps_retrieve():
