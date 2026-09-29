@@ -10,11 +10,15 @@ agent belong to the guppi-gpt repository; this repository never changes them. Th
 between the two is the set of SSM parameters under `/guppi/platform/` and the project
 manifest, both described in guppi-gpt's `docs/proposals/platform.md`.
 
-The server's one tool, `show_card`, returns an MCP Apps UI resource (`ui://mcp-app/card`),
-the first experiment toward MCP Apps in the platform page.
+`show_card` returns an MCP Apps UI resource (`ui://mcp-app/card`), which the platform
+page renders in a sandboxed frame (guppi-gpt phase 3). Phase 4 added one tool per way an
+app can reach and talk to the page: `show_chart` (resource by reference), `card_clicked`
+(called by the card's button, app-only), `update_card` (a later result for the same card),
+`show_static_page` (a `text/uri-list` resource naming `web/app/`) and `ask_preferences` (a
+form that sends `ui/update-model-context`). `docs/experiments.md` compares them.
 
-The gateway target is named `mcp-app`, so the tool reaches the agent as
-`mcp-app___show_card`; the platform agent offers `mcp-app___*` (or `mcp_app___*`) tools on
+The gateway target is named `mcp-app`, so the tools reach the agent as
+`mcp-app___<tool>`; the platform agent offers `mcp-app___*` (or `mcp_app___*`) tools on
 a run whose `forwardedProps.project` is `mcp-app`. The tools gateway checks the user's JWT
 and then signs its call to the Runtime with its own role (`GATEWAY_IAM_ROLE`), because it
 refuses `JWT_PASSTHROUGH` on an MCP server target; the Runtime therefore has no JWT
@@ -42,19 +46,26 @@ docs/
   phase-2.md              # the phase 2 brief
   decision-log.md         # decisions taken where a brief did not settle the question
   phase-2-report.md       # what phase 2 landed, its checks, and what is left for Sam
+  phase-4.md              # the phase 4 brief: the MCP Apps experiments
+  experiments.md          # the comparison: one row per experiment, E1 to E6
+  phase-4-report.md       # what phase 4 landed, its checks, and what is left for Sam
 infra/
   app.py                  # CDK app entry
   guppi_mcp_app_infra/stack.py  # the Runtime, the tools gateway target, the invoke grant
   tests/                  # assertions against the synthesized template
 server/
-  src/mcp_app_server/     # the FastMCP server, show_card, the card resource and its HTML
+  src/mcp_app_server/     # the FastMCP server and its tools; bridge.py (the app half of the
+                          # MCP Apps bridge, shared by every page), card.py, chart.py,
+                          # preferences.py, static_page.py (one UI resource each)
   Dockerfile              # arm64, the MCP server on 8000; built from the repo root so uv.lock is in context
-  tests/                  # show_card and the resource through an in-process MCP client
+  tests/                  # the tools and resources through an in-process MCP client
 web/
   manifest.json           # the project manifest the platform page loads
+  app/                    # E5's static MCP App page, published beside the manifest
 scripts/
-  deploy.sh               # cdk deploy, then publish web/ to projects/mcp-app/
+  deploy.sh               # cdk deploy, sync the gateway target, publish web/ to projects/mcp-app/
   probe.py                # a small MCP client: tools/list, tools/call, resources/list, resources/read
+  browser-check.mjs       # the signed-in headless check of each experiment on the live page
 ```
 
 ## Rules
@@ -77,8 +88,11 @@ scripts/
   the site bucket, the distribution) are read from SSM and never edited, and nothing is
   written to the site bucket outside `projects/mcp-app/`.
 - Prose in docs and comments: no em-dashes or en-dashes, no second person.
-- The page renders plain text only. The card HTML is served to an MCP Apps host, which
-  puts it in a sandboxed iframe; it has no external scripts and makes no network calls.
+- The page renders plain text only. The app pages are served to an MCP Apps host, which
+  puts them in a sandboxed iframe; they have no external scripts, make no network calls,
+  write values only through `textContent`, and never rely on form submission (the host's
+  sandbox has no `allow-forms`). `web/app/` is the exception by design: a static page
+  under the site CSP, so its script and style are files.
 
 ## Dependency Management
 
@@ -116,9 +130,20 @@ docker run --rm -p 8000:8000 mcp-app-server
 ## Deploying
 
 `scripts/deploy.sh` runs `cdk deploy GuppiMcpApp` (Docker builds the arm64 server image on
-Sam's Mac), then syncs `web/` to `s3://<site-bucket>/projects/mcp-app/` and invalidates
+Sam's Mac), synchronizes the `mcp-app` gateway target (a `DEFAULT`-listing target serves
+the tools of its last sync, so a new server changes nothing on the gateway without it),
+then syncs `web/` to `s3://<site-bucket>/projects/mcp-app/` and invalidates
 `/projects/mcp-app/*`, with the bucket and distribution read from SSM
 (`/guppi/platform/site-bucket-name`, `/guppi/platform/distribution-id`).
 `scripts/deploy.sh --site-only` skips `cdk deploy`. Every run is also written to
 `.deploy/deploy-<timestamp>.log` with `.deploy/latest.log` pointing at the newest and a
 final `deploy exit=<code>` line.
+
+The browser check runs every experiment on the live page with the test session (the same
+`$HOME/.config/guppi/test-session.json` guppi-gpt's `test-token.sh` uses), reading
+Playwright from `../guppi-gpt/web`:
+
+```sh
+node scripts/browser-check.mjs            # E1 to E6, screenshots in .deploy/phase-4-E<n>.png
+node scripts/browser-check.mjs E3         # one experiment
+```
