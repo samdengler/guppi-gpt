@@ -46,6 +46,25 @@ cd "$ROOT"
 platform_parameter() {
   aws ssm get-parameter --name "/guppi/platform/$1" --query Parameter.Value --output text
 }
+
+if [[ "$SITE_ONLY" == 0 ]]; then
+  # The target lists in DEFAULT mode: the gateway serves the tools and resources it cached
+  # at the last sync, so a new server image changes nothing on the gateway until the
+  # target is synchronized again.
+  gateway="$(platform_parameter tools-gateway-id)"
+  target="$(aws bedrock-agentcore-control list-gateway-targets --gateway-identifier "$gateway" \
+    --query "items[?name=='$PROJECT'].targetId | [0]" --output text)"
+  aws bedrock-agentcore-control synchronize-gateway-targets --gateway-identifier "$gateway" \
+    --target-id-list "$target" >/dev/null
+  for _ in $(seq 1 60); do
+    status="$(aws bedrock-agentcore-control get-gateway-target --gateway-identifier "$gateway" \
+      --target-id "$target" --query status --output text)"
+    [[ "$status" == "SYNCHRONIZING" ]] || break
+    sleep 5
+  done
+  echo "target $PROJECT ($target) after sync: $status"
+  [[ "$status" == "READY" ]] || exit 1
+fi
 bucket="$(platform_parameter site-bucket-name)"
 distribution="$(platform_parameter distribution-id)"
 

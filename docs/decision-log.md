@@ -137,3 +137,37 @@ entry names the step, the choice, and why. The smaller, reversible option wins b
   tools and the agent calls `mcp-app___show_card`. The agent fix is still owed, since any
   later DYNAMIC target, or a first page that fills up, hides project tools again.
 - `scripts/probe.py` now follows `nextCursor` on both list calls and prints the page count.
+
+## Phase 4 (29 Sep 2026)
+
+- The pages share one app-side bridge (`server/src/mcp_app_server/bridge.py`) instead of a
+  copy per page: `mcpApp()` runs the handshake, matches responses to the page's own
+  requests, and keeps the two second fallback. The card's markup and behavior are as in
+  phase 2 apart from the E3 button.
+- Card ids are the title as a slug (`card_id_for`), not random. The page sends the agent
+  only the conversation's text, so on the turn that asks to change a card the model has
+  the title from the user's own words and nothing from the earlier tool result. A slug
+  lets it name the card again (E4).
+- `card_clicked` carries `_meta.ui.visibility = ["app"]`, as the extension marks an
+  app-only tool, even though the platform agent does not read it yet; the gateway keeps
+  the key, and the row records that the model is offered the tool anyway.
+- E6 uses `ui/update-model-context`, not `ui/message`. The brief asks for the answers to
+  join the next turn; the spec defines update-model-context as context "used in future
+  turns" that the host may hold until the next user message, while `ui/message` starts a
+  turn in the user's name.
+- The E6 form uses a `type="button"` click, not a `<form>` submission: the host's sandbox
+  has no `allow-forms`, and Chromium blocks the submission before the `submit` handler
+  runs (found with a local harness before the deploy).
+- E5's page is three files (`web/app/`) with its script and style as files, since the site
+  CSP (`script-src 'self'`, `style-src 'self'`) covers `/projects/*`. The resource text is
+  the URL as one CRLF-terminated `text/uri-list` line.
+- The tool name for E5 is `show_static_page` and the resource `ui://mcp-app/static-page`;
+  the brief named neither.
+- `scripts/deploy.sh` synchronizes the `mcp-app` gateway target after `cdk deploy`. The
+  first deploy of this phase updated the Runtime, but the gateway kept listing only
+  `show_card` (DEFAULT listing caches at the last sync). Synchronizing a target of this
+  stack's own is inside the repository's remit; the gateway itself is untouched.
+- The browser check lives here (`scripts/browser-check.mjs`), adapted from guppi-gpt's
+  phase 3 check, and reads Playwright and the platform's stack outputs from `../guppi-gpt`
+  without writing there. It records each run's AG-UI events from the response body, so
+  the report can say which tool the model called and whether a `CUSTOM` event followed.
