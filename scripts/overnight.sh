@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# Runs platform phases 1 to 4 unattended: one `claude -p` session per phase, in the
-# repository each phase belongs to, each told to read its brief. A phase that exits
+# Runs platform phases unattended: one `claude -p` session per phase, in the
+# repository each phase belongs to, each told to read its brief. With no arguments it
+# runs phases 1 to 4; with arguments, each `<repo dir>=<brief path>` in order, for example
+#   caffeinate -i scripts/overnight.sh \
+#     ~/src/github.com/samdengler/guppi-gpt=docs/proposals/platform-phase-5a.md \
+#     ~/src/github.com/samdengler/hr-super-agent=docs/phase-8.md A phase that exits
 # non-zero (a usage-limit pause is the usual cause) is retried after thirty minutes, up
 # to four attempts; the briefs are written to resume from their reports. Phases 2 to 4
 # depend on the one before, so a phase that fails every attempt ends the run.
@@ -57,8 +61,15 @@ phase() {
 }
 
 say "overnight run starting; log $LOG"
-phase "$GUPPI"  docs/proposals/platform-phase-1.md "phase 1" || exit 1
-phase "$MCPAPP" docs/phase-2.md                    "phase 2" || exit 1
-phase "$GUPPI"  docs/proposals/platform-phase-3.md "phase 3" || exit 1
-phase "$MCPAPP" docs/phase-4.md                    "phase 4"
+if [[ $# -gt 0 ]]; then
+  # Each argument is <repo dir>=<brief path>, run in order; a failed phase ends the run.
+  for spec in "$@"; do
+    phase "${spec%%=*}" "${spec#*=}" "phase ${spec#*=}" || exit 1
+  done
+else
+  phase "$GUPPI"  docs/proposals/platform-phase-1.md "phase 1" || exit 1
+  phase "$MCPAPP" docs/phase-2.md                    "phase 2" || exit 1
+  phase "$GUPPI"  docs/proposals/platform-phase-3.md "phase 3" || exit 1
+  phase "$MCPAPP" docs/phase-4.md                    "phase 4"
+fi
 say "overnight run done"
