@@ -88,3 +88,31 @@ export function agentUrlFor(manifest) {
   if (!manifest || manifest.agent === "platform") return PLATFORM_AGENT_URL;
   return manifest.agent;
 }
+
+export const MAX_SUGGESTIONS = 6;
+const MAX_SUGGESTION_LABEL = 48;
+const MAX_SUGGESTION_PROMPT = 500;
+
+/**
+ * The manifest's `suggestions`, checked: up to MAX_SUGGESTIONS entries, each an object
+ * with a non-empty string `label` (the pill's text) and `prompt` (what clicking it
+ * sends), both trimmed and capped in length. Anything else is dropped, and the default
+ * project has none. The page renders them as plain text, never as markup.
+ */
+export function suggestionsFor(manifest) {
+  const raw = manifest && manifest.suggestions;
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const entry of raw) {
+    if (out.length === MAX_SUGGESTIONS) break;
+    if (!entry || typeof entry !== "object") continue;
+    const label = typeof entry.label === "string" ? entry.label.trim() : "";
+    const prompt = typeof entry.prompt === "string" ? entry.prompt.trim() : "";
+    if (!label || !prompt) continue;
+    out.push({
+      label: label.slice(0, MAX_SUGGESTION_LABEL),
+      prompt: prompt.slice(0, MAX_SUGGESTION_PROMPT),
+    });
+  }
+  return out;
+}

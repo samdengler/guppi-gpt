@@ -7,7 +7,7 @@ import { hintText, emptyStateText } from "./copy.js";
 import { initRum, identifyRumUser } from "./rum.js";
 import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideOnLoad, newestRefreshToken } from "./session.js";
 import { createExtensionHost, EXTENSION_EVENT_TYPES } from "./extensions.js";
-import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, manifestUrl, checkManifest, mergeFeatures, brandFor, agentUrlFor } from "./project.js";
+import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, manifestUrl, checkManifest, mergeFeatures, brandFor, agentUrlFor, suggestionsFor } from "./project.js";
 
 (async () => {
   const $ = (id) => document.getElementById(id);
@@ -40,6 +40,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
   const input = $("composer-input");
   const sendBtn = $("send-btn");
   const emptyCopy = $("empty-copy");
+  const suggestionsEl = $("suggestions");
   const composerHint = $("composer-hint");
 
   // ---- Project: /p/<name>/ selects a project by its manifest; / is the default ----
@@ -98,6 +99,24 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
   const loggingEnabled = isEnabled("logging");
   // The privacy notice states what the switches actually allow.
   emptyCopy.textContent = emptyStateText(historyEnabled, loggingEnabled);
+  // A project's suggested prompts sit under the empty state copy and go with it: one
+  // click sends the prompt as if typed, and the empty state (pills included) hides once
+  // the thread has a message. Plain text only; the labels never become markup.
+  const suggestions = suggestionsFor(manifest);
+  suggestionsEl.hidden = suggestions.length === 0;
+  for (const suggestion of suggestions) {
+    const pill = document.createElement("button");
+    pill.type = "button";
+    pill.className = "suggestion";
+    pill.textContent = suggestion.label;
+    pill.addEventListener("click", () => {
+      if (status !== "idle-empty" && status !== "idle") return;
+      input.value = "";
+      autosize();
+      send(suggestion.prompt);
+    });
+    suggestionsEl.appendChild(pill);
+  }
   composerHint.textContent = hintText(historyEnabled, loggingEnabled);
   if (feedbackEnabled) {
     // Keeps the in-memory thread in sync with a vote so a later persistCurrentThread

@@ -10,6 +10,8 @@ import {
   mergeFeatures,
   projectPath,
   resolveProject,
+  suggestionsFor,
+  MAX_SUGGESTIONS,
 } from "../src/project.js";
 
 const DEMO = { name: "demo", label: "Demo", agent: "platform" };
@@ -164,4 +166,30 @@ test("the path a sign-in starts from is always accepted on the way back", () => 
   for (const name of ["demo", "mcp-app", null]) {
     assert.equal(acceptedReturnPath(projectPath(name)), projectPath(name));
   }
+});
+
+test("suggestionsFor keeps well-formed entries, trimmed and capped", () => {
+  const manifest = {
+    suggestions: [
+      { label: "  Show a card ", prompt: " Show me a card titled Hello " },
+      { label: "", prompt: "no label" },
+      { label: "no prompt" },
+      "a string",
+      null,
+      { label: "x".repeat(80), prompt: "y".repeat(600) },
+    ],
+  };
+  const out = suggestionsFor(manifest);
+  assert.deepEqual(out[0], { label: "Show a card", prompt: "Show me a card titled Hello" });
+  assert.equal(out.length, 2);
+  assert.equal(out[1].label.length, 48);
+  assert.equal(out[1].prompt.length, 500);
+});
+
+test("suggestionsFor is empty for the default project and for a bad field", () => {
+  assert.deepEqual(suggestionsFor(null), []);
+  assert.deepEqual(suggestionsFor({ suggestions: "Show a card" }), []);
+  assert.deepEqual(suggestionsFor({ suggestions: { label: "a", prompt: "b" } }), []);
+  const many = Array.from({ length: 10 }, (_, i) => ({ label: `s${i}`, prompt: `p${i}` }));
+  assert.equal(suggestionsFor({ suggestions: many }).length, MAX_SUGGESTIONS);
 });

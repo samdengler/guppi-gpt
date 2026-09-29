@@ -150,6 +150,13 @@ body {
 .empty-state { text-align: center; padding: 3rem 1rem; }
 .empty-title { font-size: 1.4rem; margin: 0 0 .4rem; }
 .empty-copy { color: var(--muted); margin: 0; }
+/* A project's suggested prompts (manifest.suggestions), shown with the empty state only. */
+.suggestions { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: center; margin-top: 1.25rem; }
+.suggestion {
+  font: inherit; font-size: .9rem; color: var(--fg); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 999px; padding: .4rem .95rem; cursor: pointer;
+}
+.suggestion:hover { border-color: var(--accent); color: var(--accent); }
 
 .thread { display: flex; flex-direction: column; gap: 1.25rem; }
 

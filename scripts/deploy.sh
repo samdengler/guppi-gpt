@@ -124,7 +124,12 @@ jq --slurpfile features web/features.json '{
 }' "$OUTPUTS" > web/dist/config.json
 
 # projects/ belongs to the project stacks that publish into this bucket
-# (docs/proposals/platform.md); --delete never reaches it.
-aws s3 sync web/dist "s3://$bucket" --delete --exclude '.*' --exclude 'projects/*'
+# (docs/proposals/platform.md); --delete never reaches it. The page's files keep their
+# names across deploys, so they are published with no-cache: a browser revalidates each
+# one on every load (a cheap 304 from CloudFront) instead of keeping a stale bundle on
+# heuristic freshness after a deploy; CloudFront's own cache is emptied by the
+# invalidation below as before.
+aws s3 sync web/dist "s3://$bucket" --delete --exclude '.*' --exclude 'projects/*' \
+  --cache-control 'no-cache'
 aws cloudfront create-invalidation --distribution-id "$distribution" --paths '/*' >/dev/null
 echo "published $(jq -r .siteUrl web/dist/config.json)"

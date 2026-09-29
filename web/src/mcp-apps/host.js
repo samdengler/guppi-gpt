@@ -110,6 +110,10 @@ export function linkToOpen(url) {
 
 export function clampHeight(height) {
   if (typeof height !== "number" || !Number.isFinite(height)) return null;
+  // An app that measures itself before its sandboxed frame has been laid out (the
+  // frame's viewport is still 0 by 0 in that first task) reports 0; that is not a size,
+  // so the frame keeps its current height until a real measurement arrives.
+  if (height <= 0) return null;
   return Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, Math.ceil(height)));
 }
 

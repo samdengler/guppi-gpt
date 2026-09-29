@@ -177,6 +177,8 @@ test("size-changed resizes within the bounds", () => {
   b.receive(rpc({ method: "ui/notifications/size-changed", params: { width: 600, height: 97.2 } }));
   b.receive(rpc({ method: "ui/notifications/size-changed", params: { height: 5000 } }));
   b.receive(rpc({ method: "ui/notifications/size-changed", params: { height: 1 } }));
+  b.receive(rpc({ method: "ui/notifications/size-changed", params: { width: 0, height: 0 } }));
+  b.receive(rpc({ method: "ui/notifications/size-changed", params: { height: -3 } }));
   b.receive(rpc({ method: "ui/notifications/size-changed", params: { height: "tall" } }));
   b.receive(rpc({ method: "ui/notifications/size-changed" }));
   assert.deepEqual(resized, [98, MAX_HEIGHT, 40]);
