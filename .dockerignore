@@ -5,6 +5,7 @@
 !uv.lock
 !server/pyproject.toml
 !server/README.md
+!server/Dockerfile
 !server/src
 !infra/pyproject.toml
 **/__pycache__
