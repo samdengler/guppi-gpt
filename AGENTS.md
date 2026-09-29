@@ -126,7 +126,9 @@ deploy` and no CloudFormation parameter (`docs/proposals/feature-flags.md`).
 (`op://Personal/GuppiGPT Google OAuth/...`, an API Credential item whose `username` is the client id and `credential` is the client secret), runs `cdk deploy` with them as parameters,
 builds the page (`npm ci`, `npm run build` in `web/`), writes `web/dist/config.json` from the stack outputs, syncs `web/dist/` to the site bucket, and
 invalidates CloudFront. When the 1Password read fails the script omits both parameters and
-CloudFormation reuses the stack's existing values. `GUPPI_ALARM_EMAIL`, when set, becomes
+CloudFormation reuses the stack's existing values; `scripts/deploy.sh --reuse-parameters`
+skips the 1Password reads on purpose for the same effect, so a code-only redeploy never
+prompts for the vault (not for a first deploy, which has no previous values). `GUPPI_ALARM_EMAIL`, when set, becomes
 the `AlarmEmail` parameter and subscribes that address to the alarm topic.
 `GUPPI_INVESTIGATOR_ARN`, when set, becomes the `InvestigatorPrincipalArn` parameter and
 narrows the conversation investigator role's trust to that one ARN; left unset, the role

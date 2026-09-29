@@ -3,10 +3,21 @@
 # Extra arguments are passed to `cdk deploy` (for example --hotswap or --require-approval never).
 # `--site-only` skips cdk deploy (and the image build and push) and publishes the page
 # from the outputs of the last deploy; useful on a slow connection.
+# `--reuse-parameters` skips the 1Password reads and lets cdk deploy keep the stack's
+# existing Google OAuth and Dynatrace parameters (the CDK default, --previous-parameters),
+# so a code-only redeploy never prompts for the vault. Not for a first deploy of a stack,
+# which has no previous values to keep.
 set -euo pipefail
 
 SITE_ONLY=0
-if [[ "${1:-}" == "--site-only" ]]; then SITE_ONLY=1; shift; fi
+REUSE_PARAMETERS=0
+while [[ "${1:-}" == "--site-only" || "${1:-}" == "--reuse-parameters" ]]; do
+  case "$1" in
+    --site-only) SITE_ONLY=1 ;;
+    --reuse-parameters) REUSE_PARAMETERS=1 ;;
+  esac
+  shift
+done
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ITEM="op://Personal/GuppiGPT Google OAuth"
@@ -37,6 +48,8 @@ export AWS_REGION="${AWS_REGION:-us-east-1}"
 param_args=()
 if [[ "$SITE_ONLY" == 1 ]]; then
   echo "site only: skipping cdk deploy, using $OUTPUTS"
+elif [[ "$REUSE_PARAMETERS" == 1 ]]; then
+  echo "reuse parameters: skipping 1Password; cdk deploy keeps the stack's existing Google OAuth and Dynatrace parameters"
 # `op whoami` can report "not signed in" while reads succeed through the desktop app
 # integration, so the gate is a read of the item itself.
 elif op read "$ITEM/username" >/dev/null 2>&1; then
