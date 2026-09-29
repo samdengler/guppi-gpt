@@ -4,6 +4,11 @@ FastAPI application implementing the AgentCore Runtime AG-UI contract:
 `POST /invocations` streams AG-UI events as server-sent events, `GET /ping` reports health.
 See the repository AGENTS.md for how it fits the whole system.
 
+A project agent on the platform (`docs/proposals/platform.md`) installs this package by
+git URL, pinned to a tag:
+
+    uv add "guppi-agent @ git+https://github.com/samdengler/guppi-gpt@<tag>#subdirectory=agent"
+
 ## Modules
 
 | Module | Role |
@@ -19,7 +24,7 @@ See the repository AGENTS.md for how it fits the whole system.
 | --- | --- | --- |
 | `TOOLS_GATEWAY_URL` | MCP endpoint of the tools gateway (required) | none |
 | `MODEL_ID` | Bedrock model or inference profile id | `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
-| `RETRIEVE_TOOL` | The one gateway tool the agent is given | `docs___Retrieve` |
+| `RETRIEVE_TOOL` | The gateway tool every run is given; a run whose `forwardedProps.project` names a project also gets that project's `<project>___*` tools | `docs___Retrieve` |
 | `AWS_REGION` | Bedrock region | `us-east-1` |
 | `LOG_LEVEL` | Python logging level | `INFO` |
 

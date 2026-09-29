@@ -2,6 +2,7 @@
 name = "guppi-agent"
 version = "0.1.0"
 description = "GuppiGPT agent: AG-UI over SSE on the AgentCore Runtime contract"
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "ag-ui-protocol>=0.1.22",
@@ -20,6 +21,12 @@ dev = [
     "pytest-asyncio>=0.24",
 ]
 
+[project.urls]
+Repository = "https://github.com/samdengler/guppi-gpt"
+
+# The kit a project agent depends on by git URL, pinned to a tag (docs/proposals/platform.md):
+#   guppi-agent @ git+https://github.com/samdengler/guppi-gpt@<tag>#subdirectory=agent
+# The wheel carries src/guppi_agent only; the Dockerfile still installs from uv.lock.
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
