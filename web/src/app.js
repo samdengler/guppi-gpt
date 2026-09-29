@@ -6,6 +6,7 @@ import { renderFeedbackControls, initFeedbackSink, FEEDBACK_EVENT } from "./feed
 import { hintText, emptyStateText } from "./copy.js";
 import { initRum, identifyRumUser } from "./rum.js";
 import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideOnLoad, newestRefreshToken } from "./session.js";
+import { createExtensionHost, EXTENSION_EVENT_TYPES } from "./extensions.js";
 import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, manifestUrl, checkManifest, mergeFeatures, brandFor, agentUrlFor } from "./project.js";
 
 (async () => {
@@ -71,6 +72,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
     document.title = brand.label;
     brandEl.textContent = brand.label;
     signinTitle.textContent = brand.label;
+    input.placeholder = `Ask ${brand.assistant}`;
   }
 
   const project = resolveProject();
@@ -111,6 +113,22 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
 
   const tokens = {};        // access_token, id_token, refresh_token; access/id token: memory only
   let tokenExpiresAt = 0;    // epoch ms when access_token expires
+
+  // The `guppi` object a project's extension module receives (web/src/extensions.js).
+  const extensions = createExtensionHost({ project: manifest, getToken: () => tokens.access_token });
+
+  // A project's own module, same origin (the CSP is script-src 'self'). esbuild leaves a
+  // dynamic import of a runtime URL native in this IIFE bundle. A module that fails to
+  // load or throws leaves the page on its built-in behavior.
+  async function installExtension(url) {
+    try {
+      const module = await import(url);
+      if (typeof module.default !== "function") throw new Error("no default export function");
+      await module.default(extensions.guppi);
+    } catch (error) {
+      console.warn(`guppigpt: extension ${url} did not install; continuing without it`, error);
+    }
+  }
 
   if (feedbackEnabled) {
     // The second subscriber to the same event: a vote also goes to the feedback API on
@@ -482,6 +500,11 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
     text.className = "reply-text";
     reply.appendChild(text);
 
+    // Where extension renderers draw for this reply; the page never writes here itself.
+    const attachments = document.createElement("div");
+    attachments.className = "reply-attachments";
+    reply.appendChild(attachments);
+
     const errorLine = document.createElement("p");
     errorLine.className = "reply-error";
     errorLine.hidden = true;
@@ -501,7 +524,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
       retry();
     });
 
-    return { reply, statusLine, text, errorLine, errorText, retryLink };
+    return { reply, statusLine, text, attachments, errorLine, errorText, retryLink };
   }
 
   function markReply(reply, ids) {
@@ -648,6 +671,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
     refs.errorLine.hidden = true;
     refs.statusLine.hidden = true;
     refs.text.textContent = "";
+    refs.attachments.textContent = "";
     await runTurn(messageList, refs);
   }
 
@@ -684,6 +708,10 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
       refs.statusLine.textContent = line;
       refs.statusLine.hidden = false;
     };
+    extensions.setStatusSink(setStatusLine);
+    // Tool calls of this run by id, for the renderer an extension registered by name.
+    const toolCalls = new Map();
+    const renderContext = (event) => ({ event, runId, threadId });
     const showError = (refused) => {
       status = "error";
       // A 403 comes from the gateway's front door, which rejects any body containing a
@@ -697,15 +725,26 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
       render();
     };
 
+    // Extension onSend hooks may add forwardedProps or state; the thread, the run id
+    // and the messages are the page's and are not read back from them.
+    const runInput = extensions.applySendHooks({
+      threadId,
+      runId,
+      // Strip any bookkeeping field (feedback included) that does not belong on the
+      // wire; the agent's validation only expects id, role, and content per message.
+      messages: messageList.map(({ id, role, content }) => ({ id, role, content })),
+      forwardedProps: {},
+      state: {},
+    });
+
     // One agent per turn: the page owns the thread and resends it whole, so nothing is
     // kept on the client object between turns. The custom fetch turns a non-2xx answer
     // into a failure, which the client would otherwise read as an empty stream.
     const agent = new HttpAgent({
       url: agentUrl,
       threadId,
-      // Strip any bookkeeping field (feedback included) that does not belong on the
-      // wire; the agent's validation only expects id, role, and content per message.
       initialMessages: messageList.map(({ id, role, content }) => ({ id, role, content })),
+      initialState: runInput.state,
       headers: {
         authorization: `Bearer ${tokens.access_token}`,
         "x-amzn-bedrock-agentcore-runtime-session-id": sessionId,
@@ -723,19 +762,36 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
     });
     markReply(refs.reply, { runId, traceId, requestId });
     const subscriber = {
-      onEvent: () => {
+      onEvent: ({ event }) => {
         resetStallTimer(); // every event counts, the CUSTOM ping included
+        if (EXTENSION_EVENT_TYPES.includes(event.type)) {
+          extensions.renderEvent(event, refs.attachments, renderContext(event));
+        }
       },
-      onToolCallStartEvent: () => {
+      onToolCallStartEvent: ({ event }) => {
+        toolCalls.set(event.toolCallId, { id: event.toolCallId, name: event.toolCallName });
         // Text streamed before a search is the model narrating its plan ("Let me correct
         // that:"); the status line records the search, so only what follows the last
         // search is kept as the reply.
         draft = "";
         schedulePaint();
-        setStatusLine("Searching the knowledge base\u2026");
+        if (!extensions.claimsTool(event.toolCallName)) {
+          setStatusLine("Searching the knowledge base\u2026");
+        }
       },
-      onToolCallEndEvent: () => {
-        setStatusLine("Searched the knowledge base");
+      onToolCallEndEvent: ({ event, toolCallName, toolCallArgs }) => {
+        const toolCall = toolCalls.get(event.toolCallId) || { id: event.toolCallId, name: toolCallName };
+        toolCall.args = toolCallArgs;
+        toolCalls.set(event.toolCallId, toolCall);
+        if (!extensions.renderTool(toolCall, refs.attachments, renderContext(event))) {
+          setStatusLine("Searched the knowledge base");
+        }
+      },
+      onToolCallResultEvent: ({ event }) => {
+        const toolCall = toolCalls.get(event.toolCallId);
+        if (!toolCall) return;
+        toolCall.result = event.content;
+        extensions.renderTool(toolCall, refs.attachments, renderContext(event));
       },
       onTextMessageStartEvent: () => {
         // A second message in one run (text around a tool call) starts a new paragraph.
@@ -755,7 +811,10 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
 
     try {
       resetStallTimer();
-      await agent.runAgent({ runId, abortController: controller }, subscriber);
+      await agent.runAgent(
+        { runId, forwardedProps: runInput.forwardedProps, abortController: controller },
+        subscriber,
+      );
     } catch (error) {
       errored = true; // transport failure, a stall abort, or an event the client refused
       refused = error && error.status === 403;
@@ -779,6 +838,8 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
     status = "idle";
     render();
   }
+
+  if (manifest && manifest.extension) await installExtension(manifest.extension);
 
   // ---- Boot ----
   //
