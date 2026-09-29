@@ -87,3 +87,17 @@ entry names the step, the choice, and why. The smaller, reversible option wins b
   a later switch to `GATEWAY_IAM_ROLE` work without a policy change.
 - The runtime role follows guppi-gpt's documented execution role minus the workload token
   and Bedrock model permissions, which an MCP server with no outbound calls does not use.
+
+### Step 6: deploy
+
+- The first deploy failed before CloudFormation: the CDK asset stages the build context
+  through `.dockerignore`, which left out `server/Dockerfile`. `.dockerignore` now keeps
+  it, as guppi-gpt's keeps `agent/Dockerfile`. A local `docker build -f` does not show the
+  problem, since the Dockerfile is read outside the filtered context.
+- The second deploy built and pushed the image, then CloudFormation failed on the Runtime:
+  "Access denied while validating ECR URI". The Runtime referenced its role but not the
+  role's default policy, which carries the ECR pull grant, so the two were created in
+  parallel. The Runtime now depends on the whole role construct, policy included. The
+  failed create left `GuppiMcpApp` in `ROLLBACK_COMPLETE` with no resources; `cdk deploy`
+  deletes a stack in that state before creating it again, which is its own behavior and
+  not a `cdk destroy`.

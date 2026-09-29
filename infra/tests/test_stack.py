@@ -107,3 +107,12 @@ def test_outputs(template):
     outputs = template.to_json()["Outputs"]
     assert "RuntimeArn" in outputs
     assert outputs["TargetName"]["Value"] == "mcp-app"
+
+
+def test_runtime_waits_for_its_role_policy(template):
+    (runtime,) = template.find_resources("AWS::BedrockAgentCore::Runtime").values()
+    (policy_id,) = template.find_resources(
+        "AWS::IAM::Policy",
+        {"Properties": {"Roles": [{"Ref": Match.string_like_regexp("RuntimeRole")}]}},
+    )
+    assert policy_id in runtime["DependsOn"]

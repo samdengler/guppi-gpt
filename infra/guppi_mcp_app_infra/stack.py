@@ -104,6 +104,10 @@ class GuppiMcpAppStack(cdk.Stack):
             ),
             environment_variables={"LOG_LEVEL": "INFO"},
         )
+        # The Runtime checks at creation that its role can pull the image; without this
+        # the Runtime depends only on the role and races its default policy (observed on
+        # the first deploy, 29 Sep 2026: "Access denied while validating ECR URI").
+        runtime.node.add_dependency(runtime_role)
 
         # ---- Invoke grant for the tools gateway ------------------------------------------
         tools_gateway_role = iam.Role.from_role_arn(
