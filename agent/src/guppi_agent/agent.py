@@ -8,6 +8,10 @@ Strands agent per thread, so a fresh adapter per request keeps the service state
 A run from a tools-only project page carries `forwardedProps.project`; the agent then also
 offers the tools of that project's gateway target (`<project>___*`, hyphens as
 underscores) beside the retrieve tool (docs/proposals/platform.md, "Project tiers").
+
+A tool result that carries an MCP Apps UI resource is followed on the stream by a CUSTOM
+event named `mcp-app/resource`, which the page's MCP Apps host renders in a sandboxed
+iframe (web/src/mcp-apps/host.js).
 """
 
 from __future__ import annotations
@@ -19,7 +23,7 @@ import re
 from collections.abc import AsyncIterator
 from typing import Any
 
-from ag_ui.core import BaseEvent, RunAgentInput
+from ag_ui.core import BaseEvent, CustomEvent, EventType, RunAgentInput
 
 from guppi_agent import conversation_log
 
@@ -99,6 +103,90 @@ def select_tools(tools: list[Any], retrieve_tool: str, project: str | None = Non
     ]
 
 
+# MCP Apps (modelcontextprotocol/ext-apps, spec revision 2026-01-26): a UI resource is a
+# ui:// resource of this mime type; the page takes it from a CUSTOM event of this name.
+APP_RESOURCE_EVENT_NAME = "mcp-app/resource"
+APP_MIME_TYPE = "text/html;profile=mcp-app"
+APP_URI_SCHEME = "ui://"
+
+
+def is_app_mime_type(mime_type: str | None) -> bool:
+    return (mime_type or "").replace(" ", "").lower() == APP_MIME_TYPE
+
+
+def app_resource(tool_use_id: str, result: Any) -> dict[str, Any] | None:
+    """The MCP Apps UI resource an MCP CallToolResult embeds, as the value of the
+    `mcp-app/resource` event, or None. When the result's `_meta.ui.resourceUri` names a
+    resource, only that one is taken. `toolResult` holds what the host pushes to the app
+    as `ui/notifications/tool-result`: the text blocks, `structuredContent` and `_meta`,
+    none of which survive the adapter's TOOL_CALL_RESULT."""
+    meta = getattr(result, "meta", None)
+    ui = meta.get("ui") if isinstance(meta, dict) else None
+    wanted = ui.get("resourceUri") if isinstance(ui, dict) else None
+    for block in getattr(result, "content", None) or []:
+        if getattr(block, "type", None) != "resource":
+            continue
+        resource = block.resource
+        uri = str(resource.uri)
+        text = getattr(resource, "text", None)
+        if not isinstance(text, str) or not uri.startswith(APP_URI_SCHEME):
+            continue
+        if not is_app_mime_type(resource.mimeType) or (wanted and uri != wanted):
+            continue
+        tool_result: dict[str, Any] = {
+            "content": [
+                {"type": "text", "text": item.text}
+                for item in result.content
+                if getattr(item, "type", None) == "text"
+            ]
+        }
+        if getattr(result, "structuredContent", None) is not None:
+            tool_result["structuredContent"] = result.structuredContent
+        if isinstance(meta, dict):
+            tool_result["_meta"] = meta
+        return {
+            "toolCallId": tool_use_id,
+            "uri": uri,
+            "mimeType": resource.mimeType,
+            "text": text,
+            "toolResult": tool_result,
+        }
+    return None
+
+
+def app_resource_client(base: type, resources: dict[str, dict[str, Any]]) -> type:
+    """A subclass of Strands' MCPClient that keeps each tool call's UI resource in
+    `resources`, keyed by tool use id. Strands maps an embedded resource to a bare text
+    item and the adapter keeps only the last text item of a result, so the resource's uri
+    and mime type never reach the stream otherwise. `_handle_tool_result` is the one
+    method that sees the raw MCP result beside the tool use id; it is private to Strands,
+    so the version is pinned by uv.lock and agent/tests/test_app_resources.py calls it on
+    the installed client."""
+
+    class AppResourceClient(base):  # type: ignore[misc, valid-type]
+        def _handle_tool_result(self, tool_use_id: str, call_tool_result: Any) -> Any:
+            resource = app_resource(tool_use_id, call_tool_result)
+            if resource is not None:
+                resources[tool_use_id] = resource
+            return super()._handle_tool_result(tool_use_id, call_tool_result)
+
+    return AppResourceClient
+
+
+async def with_app_resources(
+    events: AsyncIterator[BaseEvent], resources: dict[str, dict[str, Any]]
+) -> AsyncIterator[BaseEvent]:
+    """Every event from the adapter, with an `mcp-app/resource` CUSTOM event right after
+    the TOOL_CALL_RESULT of a tool call whose result carried a UI resource."""
+    async for event in events:
+        yield event
+        if getattr(event, "type", None) != EventType.TOOL_CALL_RESULT:
+            continue
+        resource = resources.pop(event.tool_call_id, None)
+        if resource is not None:
+            yield CustomEvent(type=EventType.CUSTOM, name=APP_RESOURCE_EVENT_NAME, value=resource)
+
+
 class Settings:
     """Environment settings read once per request so tests can change them."""
 
@@ -126,7 +214,8 @@ class StrandsRun:
         from strands.tools.mcp import MCPClient
 
         settings = self._settings
-        client = MCPClient(
+        resources: dict[str, dict[str, Any]] = {}
+        client = app_resource_client(MCPClient, resources)(
             url=settings.tools_gateway_url,
             headers={"Authorization": f"Bearer {self._token}"},
         )
@@ -170,7 +259,7 @@ class StrandsRun:
                 config=StrandsAgentConfig(emit_messages_snapshot=False),
                 agents_by_thread=self._agents_by_thread,
             )
-            async for event in adapter.run(run_input):
+            async for event in with_app_resources(adapter.run(run_input), resources):
                 yield event
         finally:
             await asyncio.to_thread(client.stop, None, None, None)
