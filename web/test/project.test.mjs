@@ -2,11 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  acceptedReturnPath,
   agentUrlFor,
   brandFor,
   checkManifest,
   manifestUrl,
   mergeFeatures,
+  projectPath,
   resolveProject,
 } from "../src/project.js";
 
@@ -122,4 +124,44 @@ test("agentUrlFor maps platform and the default project to /api/invocations", ()
   assert.equal(agentUrlFor(null), "/api/invocations");
   assert.equal(agentUrlFor(DEMO), "/api/invocations");
   assert.equal(agentUrlFor({ ...DEMO, agent: "/api/demo/invocations" }), "/api/demo/invocations");
+});
+
+// ---- the sign-in round trip: the path carried in the OAuth state ----
+
+test("projectPath is /p/<name>/ for a project and / for the default", () => {
+  assert.equal(projectPath("demo"), "/p/demo/");
+  assert.equal(projectPath(null), "/");
+});
+
+test("acceptedReturnPath accepts / and /p/<name>/", () => {
+  assert.equal(acceptedReturnPath("/"), "/");
+  assert.equal(acceptedReturnPath("/p/demo/"), "/p/demo/");
+  assert.equal(acceptedReturnPath("/p/mcp-app/"), "/p/mcp-app/");
+});
+
+test("acceptedReturnPath turns anything else into /", () => {
+  for (const state of [
+    null,
+    undefined,
+    "",
+    "https://example.com/",
+    "//example.com/",
+    "/\\example.com",
+    "/p/demo",
+    "/p/demo/index.html",
+    "/p/Demo/",
+    "/p/demo/../../x",
+    "/p/demo/?x=1",
+    "/flags.html",
+    "/projects/demo/manifest.json",
+    "javascript:alert(1)",
+  ]) {
+    assert.equal(acceptedReturnPath(state), "/", String(state));
+  }
+});
+
+test("the path a sign-in starts from is always accepted on the way back", () => {
+  for (const name of ["demo", "mcp-app", null]) {
+    assert.equal(acceptedReturnPath(projectPath(name)), projectPath(name));
+  }
 });

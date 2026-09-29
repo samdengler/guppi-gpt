@@ -17,6 +17,21 @@ export function resolveProject(pathname) {
   return match ? match[1] : null;
 }
 
+/** The page path of a project, or / for the default project. */
+export function projectPath(name) {
+  return name ? `/p/${name}/` : "/";
+}
+
+/**
+ * The path to return to after sign-in, from the OAuth `state` parameter. Only / and
+ * /p/<name>/ are accepted; anything else, a missing state included, becomes /, so the
+ * parameter can never send the page somewhere else.
+ */
+export function acceptedReturnPath(state) {
+  if (typeof state !== "string") return "/";
+  return /^\/p\/[a-z0-9-]+\/$/.test(state) ? state : "/";
+}
+
 export function manifestUrl(name) {
   return `/projects/${name}/manifest.json`;
 }

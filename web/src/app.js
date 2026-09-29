@@ -6,7 +6,7 @@ import { renderFeedbackControls, initFeedbackSink, FEEDBACK_EVENT } from "./feed
 import { hintText, emptyStateText } from "./copy.js";
 import { initRum, identifyRumUser } from "./rum.js";
 import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideOnLoad, newestRefreshToken } from "./session.js";
-import { resolveProject as projectFromPath, manifestUrl, checkManifest, mergeFeatures, brandFor, agentUrlFor } from "./project.js";
+import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, manifestUrl, checkManifest, mergeFeatures, brandFor, agentUrlFor } from "./project.js";
 
 (async () => {
   const $ = (id) => document.getElementById(id);
@@ -43,7 +43,11 @@ import { resolveProject as projectFromPath, manifestUrl, checkManifest, mergeFea
 
   // ---- Project: /p/<name>/ selects a project by its manifest; / is the default ----
 
+  // The Cognito redirect URI is the root, so a sign-in started on /p/<name>/ comes back
+  // to / with the code and the path in `state`; that page load is already the project's.
   function resolveProject() {
+    const params = new URLSearchParams(location.search);
+    if (params.has("code")) return projectFromPath(acceptedReturnPath(params.get("state")));
     return projectFromPath(location.pathname);
   }
 
@@ -279,6 +283,8 @@ import { resolveProject as projectFromPath, manifestUrl, checkManifest, mergeFea
       identity_provider: "Google",
       code_challenge_method: "S256",
       code_challenge: b64url(await sha256(verifier)),
+      // Where to come back to; finishSignIn accepts only / and /p/<name>/ from it.
+      state: projectPath(project),
     });
     location.assign(`${authBase}/oauth2/authorize?${params}`);
   }
@@ -301,7 +307,7 @@ import { resolveProject as projectFromPath, manifestUrl, checkManifest, mergeFea
     if (!response.ok) throw new Error(`token exchange failed: ${response.status}`);
     applyTokens(await response.json());
     await persistSession();
-    history.replaceState(null, "", location.pathname);
+    history.replaceState(null, "", acceptedReturnPath(new URLSearchParams(location.search).get("state")));
   }
 
   function applyTokens(payload) {
