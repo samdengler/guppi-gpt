@@ -118,6 +118,7 @@ fetched with `cache: "no-store"` at load, like `config.json`.
 | `extension` | no | Same-origin ES module the page imports after the manifest; absent means built-in behavior only |
 | `capabilities` | no | Built-in host renderers to enable, `mcp-apps` first |
 | `mcp` | no | For a browser-side MCP connection: the CloudFront path to the tools gateway and the tool-name prefix this project owns |
+| `theme` | no | `{ light: {...}, dark: {...} }` of hex colors for the page's custom properties (`bg`, `fg`, `muted`, `border`, `surface`, `bubbleUser`, `accent`, `accentContrast`, `brand`); applied for the scheme in effect. The page passes its palette to MCP Apps as the extension's style variables in `hostContext.styles` |
 | `suggestions` | no | Up to six `{ "label", "prompt" }` entries shown as pills under the empty state; a click sends the prompt. Plain text; the default project has none |
 
 The page tolerates unknown fields so a project can carry its own settings for `ext.js`.

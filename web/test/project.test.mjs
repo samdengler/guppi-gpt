@@ -11,6 +11,7 @@ import {
   projectPath,
   resolveProject,
   suggestionsFor,
+  themeFor,
   MAX_SUGGESTIONS,
 } from "../src/project.js";
 
@@ -192,4 +193,27 @@ test("suggestionsFor is empty for the default project and for a bad field", () =
   assert.deepEqual(suggestionsFor({ suggestions: { label: "a", prompt: "b" } }), []);
   const many = Array.from({ length: 10 }, (_, i) => ({ label: `s${i}`, prompt: `p${i}` }));
   assert.equal(suggestionsFor({ suggestions: many }).length, MAX_SUGGESTIONS);
+});
+
+test("themeFor maps hex colors per scheme and drops the rest", () => {
+  const theme = themeFor({
+    theme: {
+      light: { accent: "#C8102E", brand: " #003a70 ", bg: "red", fg: 12, bogus: "#fff" },
+      dark: { accent: "#ff5a6e" },
+    },
+  });
+  assert.deepEqual(theme, {
+    light: { "--accent": "#c8102e", "--brand": "#003a70" },
+    dark: { "--accent": "#ff5a6e" },
+  });
+});
+
+test("themeFor takes a flat object as the light scheme and falls back to it for dark", () => {
+  assert.deepEqual(themeFor({ theme: { accent: "#abc" } }), {
+    light: { "--accent": "#abc" },
+    dark: { "--accent": "#abc" },
+  });
+  assert.equal(themeFor(null), null);
+  assert.equal(themeFor({ theme: "#c8102e" }), null);
+  assert.equal(themeFor({ theme: { light: { bg: "url(x)" } } }), null);
 });

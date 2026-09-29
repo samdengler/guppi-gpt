@@ -199,6 +199,63 @@ export function createBridge({ send, resource, toolCall, hostContext, onResize, 
   };
 }
 
+/**
+ * The page's palette as the extension's style variables (McpUiStyleVariableKey), so an
+ * app can match whichever project it renders in. `read(property)` returns a page custom
+ * property's computed value ("--accent" and the others in web/src/app.css); an empty
+ * value leaves that variable out. Pure, for the tests.
+ */
+export function styleVariablesFor(read) {
+  const value = (property) => {
+    const v = read(property);
+    return typeof v === "string" && v.trim() ? v.trim() : null;
+  };
+  const map = {
+    "--color-background-primary": value("--bg"),
+    "--color-background-secondary": value("--surface"),
+    "--color-background-tertiary": value("--bubble-user"),
+    "--color-background-inverse": value("--accent"),
+    "--color-background-info": value("--accent"),
+    "--color-background-danger": value("--danger"),
+    "--color-text-primary": value("--fg"),
+    "--color-text-secondary": value("--muted"),
+    "--color-text-tertiary": value("--muted"),
+    "--color-text-inverse": value("--accent-contrast"),
+    "--color-text-info": value("--accent"),
+    "--color-text-danger": value("--danger"),
+    "--color-border-primary": value("--border"),
+    "--color-border-secondary": value("--border"),
+    "--color-border-info": value("--accent"),
+    "--color-ring-primary": value("--accent"),
+    "--font-sans": 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+    "--font-mono": "ui-monospace, SFMono-Regular, Menlo, monospace",
+    "--font-weight-normal": "400",
+    "--font-weight-medium": "500",
+    "--font-weight-semibold": "600",
+    "--font-weight-bold": "700",
+    "--font-text-sm-size": "13px",
+    "--font-text-md-size": "15px",
+    "--font-heading-sm-size": "17px",
+    "--font-heading-md-size": "20px",
+    "--border-radius-sm": "6px",
+    "--border-radius-md": "10px",
+    "--border-radius-lg": "14px",
+    "--border-radius-full": "999px",
+    "--border-width-regular": "1px",
+    "--shadow-sm": "0 1px 2px rgba(0, 0, 0, 0.06)",
+    "--shadow-md": "0 4px 12px rgba(0, 0, 0, 0.08)",
+  };
+  const variables = {};
+  for (const [name, v] of Object.entries(map)) if (v !== null) variables[name] = v;
+  return variables;
+}
+
+function pageProperty(win, property) {
+  const doc = win.document;
+  if (!doc || !doc.documentElement || typeof win.getComputedStyle !== "function") return "";
+  return win.getComputedStyle(doc.documentElement).getPropertyValue(property);
+}
+
 function hostContextFor(win) {
   const dark = Boolean(win.matchMedia && win.matchMedia("(prefers-color-scheme: dark)").matches);
   const context = {
@@ -207,6 +264,7 @@ function hostContextFor(win) {
     availableDisplayModes: ["inline"],
     containerDimensions: { maxHeight: MAX_HEIGHT },
     platform: "web",
+    styles: { variables: styleVariablesFor((property) => pageProperty(win, property)) },
   };
   const locale = win.navigator && win.navigator.language;
   if (locale) context.locale = locale;

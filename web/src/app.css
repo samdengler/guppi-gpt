@@ -56,7 +56,7 @@ body {
   padding: 1rem 0;
 }
 
-.brand { font-size: 1.05rem; font-weight: 600; color: inherit; text-decoration: none; }
+.brand { font-size: 1.05rem; font-weight: 600; color: var(--brand, inherit); text-decoration: none; }
 
 .header-actions { display: flex; align-items: center; gap: .75rem; }
 
@@ -135,7 +135,7 @@ body {
 .signin-screen, .chat-screen { flex: 1; display: flex; flex-direction: column; }
 .signin-screen { align-items: center; justify-content: center; text-align: center; }
 
-.signin-title { font-size: 1.5rem; margin: 0 0 .5rem; }
+.signin-title { font-size: 1.5rem; margin: 0 0 .5rem; color: var(--brand, inherit); }
 .signin-copy { color: var(--muted); margin: 0 0 1.25rem; }
 
 .primary-btn {

@@ -116,3 +116,43 @@ export function suggestionsFor(manifest) {
   }
   return out;
 }
+
+/** Manifest theme keys and the page custom properties they set (web/src/app.css). */
+export const THEME_KEYS = Object.freeze({
+  bg: "--bg",
+  fg: "--fg",
+  muted: "--muted",
+  border: "--border",
+  surface: "--surface",
+  bubbleUser: "--bubble-user",
+  accent: "--accent",
+  accentContrast: "--accent-contrast",
+  brand: "--brand",
+});
+const HEX_COLOR = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+
+function themeValues(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const out = {};
+  for (const [key, property] of Object.entries(THEME_KEYS)) {
+    const value = raw[key];
+    if (typeof value === "string" && HEX_COLOR.test(value.trim())) out[property] = value.trim().toLowerCase();
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/**
+ * The manifest's `theme` as custom property values for the light and dark schemes, or
+ * null when the manifest sets none. `theme` is `{ light: {...}, dark: {...} }` with the
+ * keys of THEME_KEYS, or one flat object taken as the light scheme. Only hex colors are
+ * accepted, so a manifest can recolor the page and nothing else; the default project has
+ * no theme and keeps the stylesheet's own values.
+ */
+export function themeFor(manifest) {
+  const raw = manifest && manifest.theme;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const light = themeValues(raw.light) || (raw.light === undefined && raw.dark === undefined ? themeValues(raw) : null);
+  const dark = themeValues(raw.dark);
+  if (!light && !dark) return null;
+  return { light: light || {}, dark: dark || light || {} };
+}

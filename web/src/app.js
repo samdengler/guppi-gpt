@@ -7,7 +7,7 @@ import { hintText, emptyStateText } from "./copy.js";
 import { initRum, identifyRumUser } from "./rum.js";
 import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideOnLoad, newestRefreshToken } from "./session.js";
 import { createExtensionHost, EXTENSION_EVENT_TYPES } from "./extensions.js";
-import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, manifestUrl, checkManifest, mergeFeatures, brandFor, agentUrlFor, suggestionsFor } from "./project.js";
+import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, manifestUrl, checkManifest, mergeFeatures, brandFor, agentUrlFor, suggestionsFor, themeFor, THEME_KEYS } from "./project.js";
 
 (async () => {
   const $ = (id) => document.getElementById(id);
@@ -69,6 +69,22 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
     }
   }
 
+  // A project's colors (manifest.theme, web/src/project.js): custom properties set on the
+  // root element for the scheme in effect, swapped when the scheme changes. The default
+  // project sets none, so the stylesheet's own values stand.
+  function applyTheme(theme) {
+    if (!theme) return;
+    const root = document.documentElement;
+    const scheme = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => {
+      for (const property of Object.values(THEME_KEYS)) root.style.removeProperty(property);
+      const values = scheme.matches ? theme.dark : theme.light;
+      for (const [property, value] of Object.entries(values)) root.style.setProperty(property, value);
+    };
+    apply();
+    scheme.addEventListener("change", apply);
+  }
+
   function applyBrand() {
     document.title = brand.label;
     brandEl.textContent = brand.label;
@@ -86,6 +102,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
   const brand = brandFor(manifest);
   const agentUrl = agentUrlFor(manifest);
   applyBrand();
+  applyTheme(themeFor(manifest));
   const flags = await initFeatures(config);
   document.body.dataset.features = enabledFlagNames(flags).join(" ");
   // Registers the OpenFeature hook (when the rum flag and config.rum.scriptPath are

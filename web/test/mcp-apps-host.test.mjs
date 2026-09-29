@@ -330,3 +330,16 @@ test("a whole CallToolResult in TOOL_CALL_RESULT mounts the app without the even
   host.event(resourceEvent({ toolCallId: "tool-2" }), page.slot);
   assert.equal(page.frames.length, 1);
 });
+
+test("styleVariablesFor maps the page palette to the extension's variables", async () => {
+  const { styleVariablesFor } = await import("../src/mcp-apps/host.js");
+  const palette = { "--bg": " #fff ", "--accent": "#c8102e", "--fg": "", "--border": "#ddd" };
+  const variables = styleVariablesFor((property) => palette[property]);
+  assert.equal(variables["--color-background-primary"], "#fff");
+  assert.equal(variables["--color-background-info"], "#c8102e");
+  assert.equal(variables["--color-ring-primary"], "#c8102e");
+  assert.equal(variables["--color-border-primary"], "#ddd");
+  assert.equal("--color-text-primary" in variables, false);
+  assert.equal(typeof variables["--font-sans"], "string");
+  assert.equal(variables["--border-radius-full"], "999px");
+});
