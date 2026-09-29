@@ -6,7 +6,9 @@ call time after two seconds of host silence (see `bridge.py`).
 
 Each card has an id derived from its title, so the model can name the card again from
 the conversation text alone. The card's button (experiment E3) sends `tools/call` for
-`card_clicked` with that id to the host and shows what the host answered.
+`card_clicked` with that id to the host and shows what the host answered. A second
+`tool-result` in the same frame (experiment E4, `update_card`) re-renders the card and
+says so in the status line.
 """
 
 import re
@@ -77,9 +79,15 @@ _SCRIPT = """\
     );
   });
 
+  var results = 0;
+
   var app = mcpApp({ name: "mcp-app-card", version: "0.1.0" }, {
     toolInput: render,
-    toolResult: function (result) { render(result.structuredContent); },
+    toolResult: function (result) {
+      results += 1;
+      render(result.structuredContent);
+      if (results > 1) showStatus("Updated by a later tool result (" + results + ")");
+    },
     fallback: function () { render(baked); }
   });
 """

@@ -12,6 +12,7 @@ commit `82221c0`). Screenshots are in `.deploy/` (gitignored, on Sam's Mac).
 | E1, embedded resource in the tool result (`show_card`) | A: the `tools/call` result embeds `ui://mcp-app/card`; the platform agent relays it as the `mcp-app/resource` event; the page frames it in `/sandbox/frame.html` | Render from `tool-input` and `tool-result` (`structuredContent`), resize itself, open http and https links | yes | Phase 3 browser check (card "Hello", frame resized 160 to 108 pixels); `.deploy/phase-4-E1.png` | none |
 | E2, host reads `ui://` by `resources/read` (`show_chart`) | B: the result carries only `_meta.ui.resourceUri = ui://mcp-app/chart` and `structuredContent`; the host must fetch the page through the tools gateway | Same as E1 once rendered; the page is fetched once per resource, not rebuilt per call | blocked | `resources/read ui://mcp-app/chart` answers through the gateway (probe); the page has no MCP client (`guppi.mcp` is `null`) and the agent relays only embedded resources, so no frame appears; `.deploy/phase-4-E2.png`, `.deploy/phase4-E2-routes.txt` | A `guppi.mcp` client in the page (initialize, `resources/read`) that the MCP Apps host calls when a tool call's definition names a `ui://` resource, plus a way for the browser to reach the tools gateway: the `/mcp/*` behavior, or the gateway's host in the page CSP's `connect-src` |
 | E3, app calls a tool (`card_clicked`) | The card's button sends `tools/call` `{name: "card_clicked", arguments: {card_id}}` to the host over the bridge; the host would relay it to the server | Ask its own server for work or fresh data without a model turn | partly | The request reaches the host and the host's refusal (`-32601`) is rendered in the card; `mcp-app___card_clicked` answers through the gateway (probe) and writes its audit line; `.deploy/phase-4-E3.png` | A relay in the host: `tools/call` through `guppi.mcp` to the tools gateway (the E2 client and route), adding the `mcp-app___` prefix and allowing only tools whose `_meta.ui.visibility` includes `app`; and the platform agent leaving `visibility: ["app"]` tools out of the model's list |
+| E4, a later tool updates the same app (`update_card`) | A, twice: `update_card(card_id, body)` returns the same `ui://mcp-app/card` resource and card id as the earlier `show_card` | Change what an app already on screen shows, from a later turn | partly | The update renders, in a second frame under the second reply; the first card keeps its old body. The host mounts one frame per tool call id, and the extension defines no rule for sending a later tool's result to an existing view; `.deploy/phase-4-E4.png` | For in-place updates, a host rule of its own: route a result to the mounted frame whose resource uri and `structuredContent.card_id` match, as a second `ui/notifications/tool-result` (the card already re-renders on it). Or, within the spec, E3's relay, so the card fetches its own fresh state |
 
 ## E1, embedded resource in the tool result
 
@@ -131,6 +132,38 @@ Which relay would carry it. Two candidates.
   and an SSE stream per click, needs a new agent code path that bypasses the model, and
   mixes app traffic into the conversation's run history.
 
-The first is the one to build, together with E2's client. The agent change to honour
+The first is the one to build, together with E2's client. The agent change to follow
 `visibility` is separate and small: drop tools whose `_meta.ui.visibility` lacks `model`
 in `select_tools`.
+
+## E4, a later tool updates the same app
+
+What was built. `update_card(card_id, body)` returns a text block, the card page embedded
+again under the same `ui://mcp-app/card` with the card id and new body baked in,
+`structuredContent: {card_id, body}` and the same `_meta.ui.resourceUri`. The server keeps
+no state, so it sends no title; a card that is updated in place keeps the title it shows,
+and a new frame shows "Card <id>". The card counts the `tool-result` notifications it
+receives and, from the second on, says "Updated by a later tool result (n)" in its
+status line. The tool description tells the model how a card id is made (the title as a
+slug), since the page sends the model only the conversation's text, not earlier tool
+results.
+
+What the extension says. Nothing about this case. Spec revision 2026-01-26 and the draft
+both tie a view to one tool call: the host renders the tool's resource, sends that call's
+`tool-input` and `tool-result`, and the view's own route to fresh data is calling tools
+("Interactive Updates", which is E3). Neither text has a rule for routing a later tool
+call's result into a view that is already mounted, and the draft adds no view identity
+the host could match on.
+
+What happens here. The phase 3 host keys frames on the AG-UI tool call id
+(`mounted.has(resource.toolCallId)`), and `update_card` is a new tool call, so it mounts a
+second frame under the second reply. That frame renders "Card draft" with the new body;
+the first card is unchanged. The host is doing what the extension describes.
+
+Two ways to get an in-place update. A host rule outside the spec: when a
+`mcp-app/resource` event names a uri already mounted in the thread and its
+`structuredContent` carries an id the mounted frame was given, send the new result to
+that frame as another `ui/notifications/tool-result` and mount nothing. The card needs no
+change for that. Or stay inside the spec: the card asks its server for its current
+state through E3's relay, which needs the server to keep state (the Runtime is stateless
+today) and something to tell the card to ask.

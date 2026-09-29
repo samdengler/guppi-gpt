@@ -44,7 +44,7 @@ async def tools_by_name(client: Client) -> dict:
 async def test_tools_list_names_show_card_with_its_ui_resource():
     async with connect() as client:
         tools = await tools_by_name(client)
-        assert set(tools) == {"show_card", "show_chart", "card_clicked"}
+        assert set(tools) == {"show_card", "show_chart", "card_clicked", "update_card"}
         tool = tools["show_card"]
         assert set(tool.input_schema["properties"]) == {"title", "body"}
         assert set(tool.input_schema["required"]) == {"title", "body"}
@@ -167,3 +167,27 @@ async def test_chart_resource_is_read_by_uri():
         assert_self_contained(html)
         assert baked_values(html) == {"values": []}
         assert "structuredContent" in html and "ui/initialize" in html
+
+
+async def test_update_card_returns_the_same_resource_for_the_same_card():
+    async with connect() as client:
+        tool = (await tools_by_name(client))["update_card"]
+        assert tool.meta == {"ui": {"resourceUri": CARD_URI}}
+        assert set(tool.input_schema["required"]) == {"card_id", "body"}
+
+        shown = await client.call_tool("show_card", {"title": "Draft", "body": "First"})
+        updated = await client.call_tool("update_card", {"card_id": "draft", "body": "Second"})
+        assert not updated.is_error
+        assert updated.meta == shown.meta == {"ui": {"resourceUri": CARD_URI}}
+        text, embedded = updated.content
+        assert "'draft'" in text.text
+        assert str(embedded.resource.uri) == str(shown.content[1].resource.uri) == CARD_URI
+        assert embedded.resource.mime_type == APP_MIME_TYPE
+        assert updated.structured_content == {"card_id": "draft", "body": "Second"}
+        assert shown.structured_content["card_id"] == "draft"
+        assert baked_values(embedded.resource.text) == {
+            "card_id": "draft",
+            "title": "",
+            "body": "Second",
+        }
+        assert "Updated by a later tool result" in embedded.resource.text

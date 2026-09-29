@@ -8,7 +8,8 @@ served by `resources/list` and `resources/read`, with the template values baked 
 
 The experiments (`docs/experiments.md`) each add one tool: `show_chart` (E2) names its
 resource without embedding it; `card_clicked` (E3) is the tool the card's button calls
-through the host, visible to apps only, and it writes one audit line per call.
+through the host, visible to apps only, and it writes one audit line per call;
+`update_card` (E4) returns the card resource again for an existing card id.
 """
 
 import json
@@ -41,6 +42,7 @@ mcp = MCPServer(
     "mcp-app",
     instructions=(
         "show_card shows the user a card with a title and a body. "
+        "update_card changes the body of a card shown earlier. "
         "show_chart shows the user a bar chart of a list of numbers."
     ),
     version="0.1.0",
@@ -90,6 +92,35 @@ def show_card(title: str, body: str) -> CallToolResult:
             ),
         ],
         structured_content={"card_id": card_id, "title": title, "body": body},
+        meta=UI_META,
+    )
+
+
+@mcp.tool(
+    description=(
+        "Change the body of a card shown earlier with show_card. card_id is the card's id: "
+        "its title in lowercase with runs of other characters as one hyphen, so the card "
+        "titled 'Hello World' is 'hello-world'."
+    ),
+    meta=UI_META,
+)
+def update_card(card_id: str, body: str) -> CallToolResult:
+    # E4: the same ui://mcp-app/card resource and the same card id as the show_card call,
+    # so a host that routes a later result into the existing frame can. The server keeps
+    # no state; the title is whatever the frame already shows.
+    return CallToolResult(
+        content=[
+            TextContent(type="text", text=f"Sent a new body for card {card_id!r}."),
+            EmbeddedResource(
+                type="resource",
+                resource=TextResourceContents(
+                    uri=CARD_URI,
+                    mime_type=APP_MIME_TYPE,
+                    text=card_html(title="", body=body, card_id=card_id),
+                ),
+            ),
+        ],
+        structured_content={"card_id": card_id, "body": body},
         meta=UI_META,
     )
 
