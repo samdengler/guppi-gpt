@@ -166,6 +166,8 @@ body {
 .reply-status { font-size: .85rem; color: var(--muted); margin: 0 0 .3rem; }
 .reply-text { white-space: pre-wrap; }
 .reply-attachments:empty { display: none; }
+/* An MCP App (web/src/mcp-apps/host.js); its height comes from the app's size-changed notification. */
+.mcp-app-frame { display: block; width: 100%; border: 0; margin: .4rem 0 0; background: transparent; }
 .reply-error { color: var(--danger); }
 .reply-error a { color: var(--accent); margin-left: .3rem; }
 

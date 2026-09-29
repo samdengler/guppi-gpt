@@ -4,6 +4,12 @@
 // DOM of its own: app.js hands each renderer the reply's `reply-attachments` element.
 // Renderers write plain text or sandboxed iframes into that slot, never model or user
 // text through innerHTML.
+//
+// Built-in renderers ship with the page and are switched on by the manifest's
+// `capabilities`; `mcp-apps` enables the MCP Apps host (web/src/mcp-apps/host.js). A
+// built-in sees events and tool calls before a project's renderers do.
+
+import { createMcpAppsHost } from "./mcp-apps/host.js";
 
 // AG-UI event types a project renderer can take; the page renders none of them itself.
 export const EXTENSION_EVENT_TYPES = [
@@ -22,12 +28,25 @@ function warn(what, error) {
   console.warn(`guppigpt: ${what} failed`, error);
 }
 
+/** True when the manifest lists `name` among its capabilities. */
+export function hasCapability(project, name) {
+  return Boolean(project) && Array.isArray(project.capabilities) && project.capabilities.includes(name);
+}
+
+// Built-in renderer factories by capability name.
+const BUILTIN_RENDERERS = { "mcp-apps": createMcpAppsHost };
+
 /**
  * Builds the `guppi` object for one page load plus the page's side of it. `project` is
  * the manifest (null on the default project); `getToken` returns the current access
- * token.
+ * token. `builtins` maps capability names to renderer factories; tests pass fakes.
  */
-export function createExtensionHost({ project, getToken }) {
+export function createExtensionHost({ project, getToken, builtins = BUILTIN_RENDERERS }) {
+  // Each built-in is `{ tool(toolCall, slot, ctx), event(event, slot, ctx) }`; `event`
+  // returns true when it claims the event.
+  const builtinRenderers = Object.entries(builtins)
+    .filter(([capability]) => hasCapability(project, capability))
+    .map(([, create]) => create());
   const toolRenderers = new Map();
   const eventRenderers = new Map();
   const sendHooks = [];
@@ -83,8 +102,20 @@ export function createExtensionHost({ project, getToken }) {
       return current;
     },
 
-    /** Hands a tool call to its renderer, if any; called on TOOL_CALL_END and TOOL_CALL_RESULT. */
+    /**
+     * Hands a tool call to its renderer, if any; called on TOOL_CALL_END and
+     * TOOL_CALL_RESULT. True only when a project renderer claims the tool.
+     */
     renderTool(toolCall, slot, ctx) {
+      // Built-ins watch every tool call and never claim one, so the status line stays the
+      // page's unless a project renderer takes the tool.
+      for (const builtin of builtinRenderers) {
+        try {
+          builtin.tool(toolCall, slot, ctx);
+        } catch (error) {
+          warn("a built-in tool renderer", error);
+        }
+      }
       const fn = toolRenderers.get(toolCall.name);
       if (!fn) return false;
       try {
@@ -95,9 +126,19 @@ export function createExtensionHost({ project, getToken }) {
       return true;
     },
 
-    /** Hands an AG-UI event to the renderer registered for its type, if any. */
+    /**
+     * Hands an AG-UI event to a built-in that claims it, else to the renderer registered
+     * for its type, if any.
+     */
     renderEvent(event, slot, ctx) {
       if (event.type === "CUSTOM" && event.name === KEEPALIVE_EVENT_NAME) return false;
+      for (const builtin of builtinRenderers) {
+        try {
+          if (builtin.event(event, slot, ctx)) return true;
+        } catch (error) {
+          warn("a built-in event renderer", error);
+        }
+      }
       const fn = eventRenderers.get(event.type);
       if (!fn) return false;
       try {

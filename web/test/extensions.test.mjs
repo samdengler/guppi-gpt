@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { createExtensionHost, EXTENSION_EVENT_TYPES } from "../src/extensions.js";
+import { createExtensionHost, EXTENSION_EVENT_TYPES, hasCapability } from "../src/extensions.js";
 
 const MANIFEST = { name: "demo", label: "Demo", agent: "platform" };
 
@@ -116,4 +116,96 @@ test("registering something that is not a function is ignored", () => {
   guppi.onSend(null);
   assert.equal(claimsTool("demo___x"), false);
   assert.deepEqual(applySendHooks({ a: 1 }), { a: 1 });
+});
+
+// Built-in renderers, switched on by the manifest's capabilities. A fake factory stands in
+// for the MCP Apps host, which is covered in mcp-apps-host.test.mjs.
+function builtinHost(capabilities) {
+  const seen = { created: 0, tools: [], events: [] };
+  const builtins = {
+    "mcp-apps": () => {
+      seen.created += 1;
+      return {
+        tool: (toolCall, slot) => {
+          seen.tools.push([toolCall.id, slot]);
+          return false;
+        },
+        event: (event, slot) => {
+          seen.events.push([event.name, slot]);
+          return event.name === "mcp-app/resource";
+        },
+      };
+    },
+  };
+  const project = { ...MANIFEST, capabilities };
+  return { seen, ...createExtensionHost({ project, getToken: () => "t", builtins }) };
+}
+
+test("hasCapability reads the manifest's capabilities list", () => {
+  assert.equal(hasCapability({ capabilities: ["mcp-apps"] }, "mcp-apps"), true);
+  assert.equal(hasCapability({ capabilities: [] }, "mcp-apps"), false);
+  assert.equal(hasCapability({ capabilities: "mcp-apps" }, "mcp-apps"), false);
+  assert.equal(hasCapability({}, "mcp-apps"), false);
+  assert.equal(hasCapability(null, "mcp-apps"), false);
+});
+
+test("the mcp-apps built-in is created only when the manifest asks for it", () => {
+  assert.equal(builtinHost(["mcp-apps"]).seen.created, 1);
+  assert.equal(builtinHost([]).seen.created, 0);
+  assert.equal(builtinHost(undefined).seen.created, 0);
+  const defaultProject = createExtensionHost({ project: null, getToken: () => "t" });
+  assert.equal(defaultProject.renderEvent({ type: "CUSTOM", name: "mcp-app/resource" }, {}, {}), false);
+});
+
+test("a built-in claims its CUSTOM event ahead of a project renderer", () => {
+  const { seen, guppi, renderEvent } = builtinHost(["mcp-apps"]);
+  const projectEvents = [];
+  guppi.renderers.event("CUSTOM", (event) => projectEvents.push(event.name));
+  const slot = {};
+  assert.equal(renderEvent({ type: "CUSTOM", name: "mcp-app/resource" }, slot, {}), true);
+  assert.equal(renderEvent({ type: "CUSTOM", name: "progress" }, slot, {}), true);
+  assert.deepEqual(seen.events, [
+    ["mcp-app/resource", slot],
+    ["progress", slot],
+  ]);
+  assert.deepEqual(projectEvents, ["progress"]);
+  // The keepalive reaches no renderer, built-in or not.
+  assert.equal(renderEvent({ type: "CUSTOM", name: "ping" }, slot, {}), false);
+  assert.equal(seen.events.length, 2);
+});
+
+test("a built-in watches every tool call without claiming it", () => {
+  const { seen, guppi, renderTool } = builtinHost(["mcp-apps"]);
+  const slot = {};
+  assert.equal(renderTool({ id: "c1", name: "mcp-app___show_card" }, slot, {}), false);
+  guppi.renderers.tool("demo___chart", () => {});
+  assert.equal(renderTool({ id: "c2", name: "demo___chart" }, slot, {}), true);
+  assert.deepEqual(seen.tools, [
+    ["c1", slot],
+    ["c2", slot],
+  ]);
+});
+
+test("a built-in that throws logs one warning and the project renderer still runs", () => {
+  const builtins = {
+    "mcp-apps": () => ({
+      tool: () => {
+        throw new Error("boom");
+      },
+      event: () => {
+        throw new Error("boom");
+      },
+    }),
+  };
+  const ext = createExtensionHost({ project: { ...MANIFEST, capabilities: ["mcp-apps"] }, getToken: () => "t", builtins });
+  let rendered = 0;
+  ext.guppi.renderers.event("CUSTOM", () => {
+    rendered += 1;
+  });
+  const warnings = countWarnings(() => {
+    assert.equal(ext.renderEvent({ type: "CUSTOM", name: "x" }, {}, {}), true);
+    assert.equal(ext.renderTool({ id: "c", name: "t" }, {}, {}), false);
+  });
+  assert.equal(warnings, 2);
+  assert.equal(rendered, 1);
 });
