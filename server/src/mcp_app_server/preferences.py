@@ -17,16 +17,14 @@ PREFERENCES_URI = "ui://mcp-app/preferences"
 REPLY_STYLES = ("brief", "detailed")
 
 _STYLE = """\
-  .form { margin: 8px; padding: 16px 20px; border: 1px solid #8884; border-radius: 12px; }
-  .form h1 { margin: 0 0 12px; font-size: 18px; font-weight: 600; }
-  .form label { display: block; margin: 0 0 10px; font-size: 14px; }
-  .form input, .form select { display: block; margin-top: 4px; font: inherit; }
-  .form button { font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 6px; }
-  .form .status { margin: 10px 0 0; font-size: 13px; opacity: 0.8; }
+  .form label { display: block; margin: 0 0 12px; font-size: 14px; color: var(--color-text-secondary, #5b6b80); }
+  .form input, .form select { display: block; margin-top: 4px; min-width: 220px; }
+  .form .status { margin: 12px 0 0; }
 """
 
 _BODY = """\
-<section class="form" id="prefs-form">
+<section class="form panel" id="prefs-form">
+  <span class="kicker">MCP App</span>
   <h1>Your preferences</h1>
   <label>Display name <input id="prefs-name" name="display_name" maxlength="60" required></label>
   <label>Reply style

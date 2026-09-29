@@ -65,6 +65,24 @@ function mcpApp(appInfo, handlers) {
     new ResizeObserver(function () { resize(); }).observe(document.documentElement);
   }
 
+  // The host's context: its theme and, under styles.variables, the extension's style
+  // variables carrying the host page's palette. Applied to the root element so the
+  // page's stylesheet can use var(--color-...) with fallbacks; a later
+  // host-context-changed merges over it.
+  function applyHostContext(context) {
+    if (!context || typeof context !== "object") return;
+    var root = document.documentElement;
+    if (context.theme === "light" || context.theme === "dark") root.setAttribute("data-theme", context.theme);
+    var variables = context.styles && context.styles.variables;
+    if (!variables || typeof variables !== "object") return;
+    for (var name in variables) {
+      if (!Object.prototype.hasOwnProperty.call(variables, name)) continue;
+      if (name.indexOf("--") !== 0 || typeof variables[name] !== "string") continue;
+      root.style.setProperty(name, variables[name]);
+    }
+    resize();
+  }
+
   window.addEventListener("message", function (event) {
     if (event.source !== window.parent) return;
     var message = event.data;
@@ -78,7 +96,9 @@ function mcpApp(appInfo, handlers) {
       return;
     }
     var params = message.params || {};
-    if (message.method === "ui/notifications/tool-input") {
+    if (message.method === "ui/notifications/host-context-changed") {
+      applyHostContext(params);
+    } else if (message.method === "ui/notifications/tool-input") {
       heard = true;
       if (handlers.toolInput) handlers.toolInput(params.arguments || {});
     } else if (message.method === "ui/notifications/tool-result") {
@@ -92,8 +112,9 @@ function mcpApp(appInfo, handlers) {
       appInfo: appInfo,
       appCapabilities: {},
       protocolVersion: "__APPS_PROTOCOL_VERSION__"
-    }).then(function () {
+    }).then(function (result) {
       heard = true;
+      applyHostContext(result && result.hostContext);
       post({ method: "ui/notifications/initialized", params: {} });
     }, function () {});
   }
@@ -127,8 +148,49 @@ _SHELL = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>__TITLE__</title>
 <style>
+  /* The host's palette arrives as the extension's style variables (applyHostContext);
+     every color here reads one with a fallback for a page opened on its own. */
   :root { color-scheme: light dark; }
-  body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body {
+    margin: 0;
+    font: var(--font-text-md-size, 15px)/1.5 var(--font-sans, system-ui, -apple-system, "Segoe UI", sans-serif);
+    color: var(--color-text-primary, #14243a);
+    background: transparent;
+  }
+  .panel {
+    position: relative; overflow: hidden;
+    margin: 4px 2px 6px; padding: 14px 20px 16px 24px;
+    background: var(--color-background-secondary, #f4f6fa);
+    border: 1px solid var(--color-border-primary, #d9e0ea);
+    border-radius: var(--border-radius-lg, 14px);
+    box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.06));
+  }
+  .panel::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 5px;
+    background: var(--color-background-info, #c8102e);
+  }
+  .panel .kicker {
+    display: block; margin: 0 0 4px; font-size: 11px; font-weight: 600;
+    letter-spacing: .08em; text-transform: uppercase;
+    color: var(--color-text-secondary, #5b6b80);
+  }
+  .panel h1 { margin: 0 0 6px; font-size: var(--font-heading-sm-size, 17px); font-weight: 600; letter-spacing: -.01em; }
+  .panel p { margin: 0; }
+  .panel button {
+    font: inherit; font-size: 13px; font-weight: 600; padding: 6px 14px; border: 0;
+    border-radius: var(--border-radius-full, 999px); cursor: pointer;
+    background: var(--color-background-info, #c8102e);
+    color: var(--color-text-inverse, #fff);
+  }
+  .panel button:hover { filter: brightness(1.08); }
+  .panel button:focus-visible { outline: 2px solid var(--color-ring-primary, #c8102e); outline-offset: 2px; }
+  .panel input, .panel select {
+    font: inherit; padding: 6px 10px; color: inherit;
+    border: 1px solid var(--color-border-primary, #d9e0ea);
+    border-radius: var(--border-radius-md, 10px);
+    background: var(--color-background-primary, #fff);
+  }
+  .panel .status { font-size: 13px; color: var(--color-text-secondary, #5b6b80); }
 __STYLE__</style>
 </head>
 <body>

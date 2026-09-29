@@ -31,16 +31,13 @@ TEMPLATE_TITLE = "MCP App card"
 TEMPLATE_BODY = "Waiting for a show_card result from the host."
 
 _STYLE = """\
-  .card { margin: 8px; padding: 16px 20px; border: 1px solid #8884; border-radius: 12px; }
-  .card h1 { margin: 0 0 8px; font-size: 18px; font-weight: 600; }
-  .card p { margin: 0; white-space: pre-wrap; }
-  .card footer { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
-  .card button { font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 6px; }
-  .card .status { font-size: 13px; opacity: 0.8; }
+  .card footer { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+  .card p { white-space: pre-wrap; line-height: 1.55; }
 """
 
 _BODY = """\
-<article class="card">
+<article class="card panel">
+  <span class="kicker">MCP App</span>
   <h1 id="card-title"></h1>
   <p id="card-body"></p>
   <footer>

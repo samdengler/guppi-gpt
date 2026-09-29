@@ -11,16 +11,15 @@ from mcp_app_server.bridge import app_page
 CHART_URI = "ui://mcp-app/chart"
 
 _STYLE = """\
-  .chart { margin: 8px; padding: 12px 16px; border: 1px solid #8884; border-radius: 12px; }
-  .chart h1 { margin: 0 0 8px; font-size: 16px; font-weight: 600; }
-  .bars { display: flex; align-items: flex-end; gap: 6px; height: 120px; }
-  .bar { flex: 1; min-width: 8px; background: #4a7bd0; border-radius: 3px 3px 0 0; }
-  .labels { display: flex; gap: 6px; font-size: 12px; opacity: 0.8; }
+  .bars { display: flex; align-items: flex-end; gap: 6px; height: 120px; margin-top: 8px; }
+  .bar { flex: 1; min-width: 8px; background: var(--color-background-info, #c8102e); border-radius: 4px 4px 0 0; }
+  .labels { display: flex; gap: 6px; font-size: 12px; color: var(--color-text-secondary, #5b6b80); }
   .labels span { flex: 1; min-width: 8px; text-align: center; }
 """
 
 _BODY = """\
-<section class="chart">
+<section class="chart panel">
+  <span class="kicker">MCP App</span>
   <h1 id="chart-title">Chart</h1>
   <div class="bars" id="chart-bars"></div>
   <div class="labels" id="chart-labels"></div>
