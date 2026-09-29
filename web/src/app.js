@@ -733,7 +733,9 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
       // Strip any bookkeeping field (feedback included) that does not belong on the
       // wire; the agent's validation only expects id, role, and content per message.
       messages: messageList.map(({ id, role, content }) => ({ id, role, content })),
-      forwardedProps: {},
+      // A project page names its project, which gives the platform agent that project's
+      // gateway tools beside the knowledge base search (agent/src/guppi_agent/agent.py).
+      forwardedProps: manifest ? { project: manifest.name } : {},
       state: {},
     });
 

@@ -4,6 +4,10 @@ Everything here is built per request: the MCP client carries the caller's bearer
 the tools gateway, so it cannot outlive the request, and the AG-UI adapter caches one
 Strands agent per thread, so a fresh adapter per request keeps the service stateless.
 `build_strands_agent` is the seam the tests replace.
+
+A run from a tools-only project page carries `forwardedProps.project`; the agent then also
+offers the tools of that project's gateway target (`<project>___*`, hyphens as
+underscores) beside the retrieve tool (docs/proposals/platform.md, "Project tiers").
 """
 
 from __future__ import annotations
@@ -11,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -48,12 +53,48 @@ that contains one, which would end the conversation.
 """
 
 
-def system_prompt() -> str:
-    """The prompt for one run. The claim about saving follows the logging switch."""
+# The same rule as a manifest's `name` and the page's /p/<name>/ path.
+PROJECT_NAME = re.compile(r"[a-z0-9-]+")
+
+
+def system_prompt(project: str | None = None, project_tools: list[str] | None = None) -> str:
+    """The prompt for one run. The claim about saving follows the logging switch; a
+    project page's run adds one sentence naming the project's tools."""
     logged = conversation_log.enabled()
-    return SYSTEM_PROMPT_TEMPLATE.format(
+    prompt = SYSTEM_PROMPT_TEMPLATE.format(
         memory=LOGGED_MEMORY_SENTENCE if logged else MEMORY_SENTENCE
     )
+    if project and project_tools:
+        prompt += (
+            f"\nThis page belongs to the {project} project, which adds these tools: "
+            f"{', '.join(project_tools)}; use them for questions about that project.\n"
+        )
+    return prompt
+
+
+def run_project(run_input: RunAgentInput) -> str | None:
+    """The project named in the run's forwardedProps, or None for the default project."""
+    props = run_input.forwarded_props
+    project = props.get("project") if isinstance(props, dict) else None
+    if isinstance(project, str) and PROJECT_NAME.fullmatch(project):
+        return project
+    return None
+
+
+def project_tool_prefix(project: str) -> str:
+    """Gateway tool names are <target>___<tool>; the target is the project name with
+    hyphens as underscores."""
+    return f"{project.replace('-', '_')}___"
+
+
+def select_tools(tools: list[Any], retrieve_tool: str, project: str | None = None) -> list[Any]:
+    """The retrieve tool, plus the project's own tools when the run names a project."""
+    prefix = project_tool_prefix(project) if project else None
+    return [
+        tool
+        for tool in tools
+        if tool.tool_name == retrieve_tool or (prefix and tool.tool_name.startswith(prefix))
+    ]
 
 
 class Settings:
@@ -92,12 +133,22 @@ class StrandsRun:
         await asyncio.to_thread(client.start)
         try:
             listed = await asyncio.to_thread(client.list_tools_sync)
-            tools = [tool for tool in listed if tool.tool_name == settings.retrieve_tool]
-            if not tools:
+            project = run_project(run_input)
+            tools = select_tools(listed, settings.retrieve_tool, project)
+            if not any(tool.tool_name == settings.retrieve_tool for tool in tools):
                 log.warning(
-                    "tool %s not offered by the gateway (offered: %s); running without tools",
+                    "tool %s not offered by the gateway (offered: %s); running without it",
                     settings.retrieve_tool,
                     [tool.tool_name for tool in listed],
+                )
+            project_tools = [
+                tool.tool_name for tool in tools if tool.tool_name != settings.retrieve_tool
+            ]
+            if project and not project_tools:
+                log.warning(
+                    "project %s has no %s* tools on the gateway; running with the retrieve tool",
+                    project,
+                    project_tool_prefix(project),
                 )
             template = Agent(
                 model=BedrockModel(
@@ -107,7 +158,7 @@ class StrandsRun:
                     max_tokens=1024,
                     temperature=0.7,
                 ),
-                system_prompt=system_prompt(),
+                system_prompt=system_prompt(project, project_tools),
                 tools=tools,
                 callback_handler=None,
             )
