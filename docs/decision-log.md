@@ -39,3 +39,13 @@ entry names the step, the choice, and why. The smaller, reversible option wins b
 - `.python-version` pins 3.12 so the local venv matches the container image.
 - The in-process tests use `Client(mcp, mode="legacy")`, which runs the `initialize`
   handshake and JSON-RPC framing instead of the SDK's direct in-process dispatch.
+
+### Step 3: local check
+
+- `scripts/probe.py` speaks JSON-RPC over streamable HTTP with the standard library
+  instead of the SDK's `Client`, and prints each result as the server sent it. The point
+  of the probe in step 7 is to see which fields survive the gateway, and a typed client
+  would parse, rename, or drop fields before they could be seen. It offers protocol
+  revision 2025-06-18 in `initialize`.
+- The bearer token goes in with `--token -` from stdin, so it never appears on a command
+  line, in `ps`, or in shell history.
