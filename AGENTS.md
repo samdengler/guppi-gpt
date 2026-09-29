@@ -86,6 +86,7 @@ scripts/
   seed-content.sh         # clone the docs repositories at pinned revisions, sync Markdown to S3
   ingest.sh               # StartIngestionJob and wait
   test-token.sh           # a fresh access token for the test session on stdout; rotates the stored refresh token
+  browser-check.mjs       # headless Chromium (Playwright, a web/ dev dependency): seeded session, a card on /p/mcp-app/, / unchanged
   overnight.sh            # runs the platform phase briefs unattended, one claude -p session per phase
 ```
 
@@ -211,6 +212,14 @@ nothing else, for checks that need a signed-in bearer without a browser (a curl 
 writes the rotated refresh token back to the file. Every check that needs a token calls
 it, as `curl -H "authorization: Bearer $(scripts/test-token.sh)" ...`; tokens never go
 into logs, reports, commits, or test fixtures.
+
+`node scripts/browser-check.mjs` is the signed-in browser check for the MCP Apps host
+(after `npx playwright install chromium` in `web/`). It seeds the page's IndexedDB
+session (`guppigpt-session`, store `session`, record `current`) before load with the test
+session's refresh token and claims from a fresh id token, asks `/p/mcp-app/` for a card,
+waits for the iframe in `.reply-attachments` and the card's title inside the sandbox, and
+writes `.deploy/phase-3-card.png` and `.deploy/phase-3-root.png`. Each refresh token
+rotation, its own and the page's silent refresh, is written back to the session file.
 
 The runtime's request header allowlist names `Authorization` and `traceparent`; without
 the first the runtime validates the bearer and drops it, and the agent has no token for
