@@ -86,7 +86,7 @@ def test_target_endpoint_is_the_runtime_mcp_invocation_url(template):
 def test_runtime_speaks_mcp_and_takes_sigv4(template):
     runtime = only(template, "AWS::BedrockAgentCore::Runtime")
     assert runtime["ProtocolConfiguration"] == "MCP"
-    assert runtime["RequestHeaderConfiguration"] == {"RequestHeaderAllowlist": ["Authorization"]}
+    assert "RequestHeaderConfiguration" not in runtime
     assert "AuthorizerConfiguration" not in runtime
 
 
@@ -94,6 +94,7 @@ def test_jwt_passthrough_variant_puts_the_platform_jwt_on_the_runtime():
     template = synth(target_credentials="JWT_PASSTHROUGH")
     runtime = only(template, "AWS::BedrockAgentCore::Runtime")
     assert runtime["ProtocolConfiguration"] == "MCP"
+    assert runtime["RequestHeaderConfiguration"] == {"RequestHeaderAllowlist": ["Authorization"]}
     jwt = runtime["AuthorizerConfiguration"]["CustomJWTAuthorizer"]
     assert jwt["DiscoveryUrl"] == {"Ref": ssm_parameter(template, PARAM_JWT_DISCOVERY_URL)}
     assert jwt["AllowedClients"] == [{"Ref": ssm_parameter(template, PARAM_USER_POOL_CLIENT_ID)}]

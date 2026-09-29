@@ -110,8 +110,15 @@ class GuppiMcpAppStack(cdk.Stack):
                 network_mode="PUBLIC"
             ),
             protocol_configuration="MCP",
-            request_header_configuration=agentcore.CfnRuntime.RequestHeaderConfigurationProperty(
-                request_header_allowlist=["Authorization"]
+            # The Runtime accepts an Authorization allowlist only with a JWT authorizer
+            # ("Authorization header can be specified in requestHeaderAllowlist only when
+            # runtime is set up with customJWTAuthorizer", 29 Sep 2026).
+            request_header_configuration=(
+                agentcore.CfnRuntime.RequestHeaderConfigurationProperty(
+                    request_header_allowlist=["Authorization"]
+                )
+                if jwt_authorizer
+                else None
             ),
             authorizer_configuration=jwt_authorizer,
             environment_variables={"LOG_LEVEL": "INFO"},

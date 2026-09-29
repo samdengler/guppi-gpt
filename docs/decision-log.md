@@ -118,3 +118,6 @@ entry names the step, the choice, and why. The smaller, reversible option wins b
   matters. `-c target_credentials=JWT_PASSTHROUGH` synthesizes the brief's design (JWT
   authorizer on the Runtime, passthrough on the target) for when the service accepts it;
   a test covers both shapes.
+- The fourth deploy failed on the Runtime: an `Authorization` request header allowlist is
+  accepted only with a JWT authorizer. The allowlist now comes with the JWT variant only;
+  with SigV4 there is no user token to forward to the container anyway.
