@@ -252,9 +252,19 @@ def test_cloudfront_gateway_origin_carries_the_origin_verify_header(template):
     assert "resolve:secretsmanager" in json.dumps(header["HeaderValue"])
 
 
-def test_response_headers_policy_has_the_csp_and_is_on_the_default_behavior(template):
+def headers_policy(template, comment_prefix: str) -> tuple[str, dict]:
+    """The response headers policy whose comment starts with `comment_prefix`."""
     policies = template.find_resources("AWS::CloudFront::ResponseHeadersPolicy")
-    (policy_id, policy) = next(iter(policies.items()))
+    ((policy_id, policy),) = [
+        (policy_id, policy)
+        for policy_id, policy in policies.items()
+        if policy["Properties"]["ResponseHeadersPolicyConfig"]["Comment"].startswith(comment_prefix)
+    ]
+    return policy_id, policy
+
+
+def test_response_headers_policy_has_the_csp_and_is_on_the_default_behavior(template):
+    (policy_id, policy) = headers_policy(template, "CSP and security headers for the static page")
     csp = policy["Properties"]["ResponseHeadersPolicyConfig"]["SecurityHeadersConfig"][
         "ContentSecurityPolicy"
     ]["ContentSecurityPolicy"]
@@ -264,7 +274,7 @@ def test_response_headers_policy_has_the_csp_and_is_on_the_default_behavior(temp
     assert csp["Fn::If"][2] == (
         "default-src 'self'; connect-src 'self' https://auth.dengler.io; "
         "img-src 'self' data:; style-src 'self'; script-src 'self'; "
-        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+        "frame-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
     )
     template.has_resource_properties(
         "AWS::CloudFront::Distribution",
@@ -449,8 +459,7 @@ def test_rum_script_path_and_beacon_origin_outputs(template):
 
 
 def test_csp_adds_the_beacon_origin_only_when_the_parameter_is_set(template):
-    policies = template.find_resources("AWS::CloudFront::ResponseHeadersPolicy")
-    (policy,) = policies.values()
+    _, policy = headers_policy(template, "CSP and security headers for the static page")
     csp = policy["Properties"]["ResponseHeadersPolicyConfig"]["SecurityHeadersConfig"][
         "ContentSecurityPolicy"
     ]["ContentSecurityPolicy"]
@@ -462,7 +471,7 @@ def test_csp_adds_the_beacon_origin_only_when_the_parameter_is_set(template):
     assert without_beacon == (
         "default-src 'self'; connect-src 'self' https://auth.dengler.io; "
         "img-src 'self' data:; style-src 'self'; script-src 'self'; "
-        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+        "frame-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
     )
     # Rendering with the parameter set: the beacon origin joined into connect-src.
     with_beacon = if_branches[1]
@@ -473,7 +482,8 @@ def test_csp_adds_the_beacon_origin_only_when_the_parameter_is_set(template):
     assert rendered == (
         "default-src 'self'; connect-src 'self' https://auth.dengler.io "
         "<DynatraceBeaconOrigin>; img-src 'self' data:; style-src 'self'; "
-        "script-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+        "script-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'self'; "
+        "form-action 'self'"
     )
     conditions = template.to_json().get("Conditions", {})
     assert "HasDynatraceBeaconOrigin" in conditions
@@ -932,7 +942,11 @@ def test_feedback_behavior_is_matched_before_the_api_wildcard(template):
     config = distribution["Properties"]["DistributionConfig"]
     # CloudFront compares the path against these patterns in the order they are listed, so
     # a vote reaches the feedback API rather than the edge gateway only while this holds.
-    assert [b["PathPattern"] for b in config["CacheBehaviors"]] == ["/api/feedback", "/api/*"]
+    assert [b["PathPattern"] for b in config["CacheBehaviors"]] == [
+        "/api/feedback",
+        "/api/*",
+        "/sandbox/*",
+    ]
     feedback_behavior = config["CacheBehaviors"][0]
     assert feedback_behavior["CachePolicyId"] == "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
     assert feedback_behavior["OriginRequestPolicyId"] == "b689b0a8-53d0-40ab-baf2-68738e2966ac"
@@ -1129,4 +1143,47 @@ def test_agent_path_function_is_on_the_api_wildcard_only(template):
     assert viewer_request_function(behaviors["/api/*"]) == agent_id
     # The feedback behavior keeps its path and is still matched first.
     assert "FunctionAssociations" not in behaviors["/api/feedback"]
-    assert list(behaviors) == ["/api/feedback", "/api/*"]
+    assert list(behaviors) == ["/api/feedback", "/api/*", "/sandbox/*"]
+
+
+def test_sandbox_behavior_serves_the_site_bucket_with_the_sandbox_headers(template):
+    """/sandbox/frame.html holds the MCP Apps bridge; its CSP lets the app's inline script
+    and style run, fetches nothing, and lets only this site frame it."""
+    (distribution,) = template.find_resources("AWS::CloudFront::Distribution").values()
+    config = distribution["Properties"]["DistributionConfig"]
+    behaviors = {b["PathPattern"]: b for b in config["CacheBehaviors"]}
+    sandbox = behaviors["/sandbox/*"]
+    default = config["DefaultCacheBehavior"]
+    # The same S3 origin as the page, not the gateway, and no path rewrite.
+    assert sandbox["TargetOriginId"] == default["TargetOriginId"]
+    assert "FunctionAssociations" not in sandbox
+    assert sandbox["CachePolicyId"] == default["CachePolicyId"]
+    assert sandbox["ViewerProtocolPolicy"] == "redirect-to-https"
+
+    policy_id, policy = headers_policy(template, "CSP and security headers for the MCP Apps")
+    assert sandbox["ResponseHeadersPolicyId"] == {"Ref": policy_id}
+    headers = policy["Properties"]["ResponseHeadersPolicyConfig"]["SecurityHeadersConfig"]
+    assert headers["ContentSecurityPolicy"] == {
+        "ContentSecurityPolicy": (
+            "default-src 'none'; script-src 'self' 'unsafe-inline'; "
+            "style-src 'unsafe-inline'; img-src data:; frame-ancestors 'self'"
+        ),
+        "Override": True,
+    }
+    csp = headers["ContentSecurityPolicy"]["ContentSecurityPolicy"]
+    assert "connect-src" not in csp
+    # frame-ancestors decides who may frame it; X-Frame-Options DENY would refuse the page.
+    assert "FrameOptions" not in headers
+    assert headers["ContentTypeOptions"] == {"Override": True}
+    assert headers["StrictTransportSecurity"]["AccessControlMaxAgeSec"] == 31536000
+
+
+def test_the_page_may_frame_only_its_own_origin(template):
+    _, policy = headers_policy(template, "CSP and security headers for the static page")
+    csp = policy["Properties"]["ResponseHeadersPolicyConfig"]["SecurityHeadersConfig"][
+        "ContentSecurityPolicy"
+    ]["ContentSecurityPolicy"]
+    for branch in csp["Fn::If"][1:]:
+        rendered = json.dumps(branch)
+        assert "frame-src 'self';" in rendered
+        assert "frame-ancestors 'none';" in rendered

@@ -234,6 +234,22 @@ DYNATRACE_BIZEVENTS_INGEST_PATH = "/api/v2/bizevents/ingest"
 # gateway target <name>. Viewer request functions, not Lambda.
 FUNCTIONS_DIR = Path(__file__).resolve().parent / "functions"
 
+# The MCP Apps sandbox (docs/proposals/platform-phase-3.md). An app's HTML runs in an
+# iframe sandboxed without allow-same-origin, loaded from /sandbox/frame.html because a
+# srcdoc frame would inherit the page's CSP, which forbids inline scripts. The page and
+# the sandbox share the origin here, the proof of concept arrangement; the production
+# answer is a separate origin for the sandbox. The inner srcdoc frame that holds the app
+# inherits this policy: inline script and style, data: images, nothing fetched, no
+# connect-src, and framed only by this site.
+SANDBOX_PATH_PATTERN = "/sandbox/*"
+SANDBOX_CSP = (
+    "default-src 'none'; "
+    "script-src 'self' 'unsafe-inline'; "
+    "style-src 'unsafe-inline'; "
+    "img-src data:; "
+    "frame-ancestors 'self'"
+)
+
 # The platform contract (docs/proposals/platform.md): identifiers a project's own stack
 # reads at deploy time with ssm.StringParameter.value_for_string_parameter. SSM rather
 # than CloudFormation exports, so a project never blocks a platform deploy.
@@ -1282,6 +1298,7 @@ class GuppiGptStack(cdk.Stack):
             "img-src 'self' data:; "
             "style-src 'self'; "
             "script-src 'self'; "
+            "frame-src 'self'; "
             "frame-ancestors 'none'; "
             "base-uri 'self'; "
             "form-action 'self'"
@@ -1292,6 +1309,7 @@ class GuppiGptStack(cdk.Stack):
             "img-src 'self' data:; "
             "style-src 'self'; "
             "script-src 'self'; "
+            "frame-src 'self'; "
             "frame-ancestors 'none'; "
             "base-uri 'self'; "
             "form-action 'self'"
@@ -1327,6 +1345,29 @@ class GuppiGptStack(cdk.Stack):
                 ),
             ),
         )
+        # /sandbox/* gets its own headers: the app frame's CSP in place of the page's, and
+        # no X-Frame-Options, since frame-ancestors 'self' is what lets the page frame it.
+        sandbox_headers_policy = cloudfront.ResponseHeadersPolicy(
+            self,
+            "SandboxHeadersPolicy",
+            comment="CSP and security headers for the MCP Apps sandbox frame",
+            security_headers_behavior=cloudfront.ResponseSecurityHeadersBehavior(
+                content_security_policy=cloudfront.ResponseHeadersContentSecurityPolicy(
+                    content_security_policy=SANDBOX_CSP,
+                    override=True,
+                ),
+                strict_transport_security=cloudfront.ResponseHeadersStrictTransportSecurity(
+                    access_control_max_age=Duration.days(365),
+                    include_subdomains=True,
+                    override=True,
+                ),
+                content_type_options=cloudfront.ResponseHeadersContentTypeOptions(override=True),
+                referrer_policy=cloudfront.ResponseHeadersReferrerPolicy(
+                    referrer_policy=cloudfront.HeadersReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN,
+                    override=True,
+                ),
+            ),
+        )
         page_path_function = cloudfront.Function(
             self,
             "PagePathFunction",
@@ -1341,6 +1382,7 @@ class GuppiGptStack(cdk.Stack):
             runtime=cloudfront.FunctionRuntime.JS_2_0,
             comment="Maps /api/<name>/invocations to the gateway target <name>",
         )
+        site_origin = origins.S3BucketOrigin.with_origin_access_control(site_bucket)
         distribution = cloudfront.Distribution(
             self,
             "Distribution",
@@ -1352,7 +1394,7 @@ class GuppiGptStack(cdk.Stack):
             http_version=cloudfront.HttpVersion.HTTP2_AND_3,
             price_class=cloudfront.PriceClass.PRICE_CLASS_100,
             default_behavior=cloudfront.BehaviorOptions(
-                origin=origins.S3BucketOrigin.with_origin_access_control(site_bucket),
+                origin=site_origin,
                 viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                 cache_policy=cloudfront.CachePolicy.CACHING_OPTIMIZED,
                 response_headers_policy=security_headers_policy,
@@ -1388,6 +1430,12 @@ class GuppiGptStack(cdk.Stack):
                             event_type=cloudfront.FunctionEventType.VIEWER_REQUEST,
                         )
                     ],
+                ),
+                SANDBOX_PATH_PATTERN: cloudfront.BehaviorOptions(
+                    origin=site_origin,
+                    viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                    cache_policy=cloudfront.CachePolicy.CACHING_OPTIMIZED,
+                    response_headers_policy=sandbox_headers_policy,
                 ),
             },
         )
