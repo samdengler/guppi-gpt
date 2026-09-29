@@ -1,0 +1,160 @@
+"""The app half of the MCP Apps bridge and the page shell every UI resource here shares.
+
+Each page is one self-contained HTML document (MCP Apps extension, SEP-1865, spec
+revision 2026-01-26). `mcpApp()` sends `ui/initialize` to the host over `postMessage`,
+answers the host's result with `ui/notifications/initialized`, hands
+`ui/notifications/tool-input` and `ui/notifications/tool-result` to the page, and matches
+the host's responses to the page's own requests (`tools/call`, `ui/update-model-context`).
+When no host message arrives within two seconds the page renders the values baked in at
+call time, so a document works as an embedded resource, as a `resources/read` result, and
+opened on its own. Pages load nothing and call nothing over the network; every value
+reaches the document through `textContent`.
+"""
+
+import json
+from typing import Any
+
+# The MCP Apps profile of text/html; hosts render a ui:// resource only under this type.
+APP_MIME_TYPE = "text/html;profile=mcp-app"
+
+# The spec revision a page names in ui/initialize.
+APPS_PROTOCOL_VERSION = "2026-01-26"
+
+BRIDGE_JS = """
+function mcpApp(appInfo, handlers) {
+  "use strict";
+  var embedded = window.parent && window.parent !== window;
+  var nextId = 1;
+  var pending = {};
+  var heard = false;
+
+  function post(message) {
+    if (!embedded) return;
+    message.jsonrpc = "2.0";
+    window.parent.postMessage(message, "*");
+  }
+
+  // A request to the host: resolves with its result, rejects with its JSON-RPC error.
+  function request(method, params) {
+    return new Promise(function (resolve, reject) {
+      if (!embedded) {
+        reject({ code: -32000, message: "no MCP Apps host around this page" });
+        return;
+      }
+      var id = nextId++;
+      pending[id] = { resolve: resolve, reject: reject };
+      post({ id: id, method: method, params: params || {} });
+    });
+  }
+
+  function resize() {
+    var box = document.documentElement.getBoundingClientRect();
+    post({
+      method: "ui/notifications/size-changed",
+      params: { width: Math.ceil(box.width), height: Math.ceil(box.height) }
+    });
+  }
+
+  window.addEventListener("message", function (event) {
+    if (event.source !== window.parent) return;
+    var message = event.data;
+    if (!message || message.jsonrpc !== "2.0") return;
+    if (!message.method) {
+      var waiting = pending[message.id];
+      if (!waiting) return;
+      delete pending[message.id];
+      if (message.error) waiting.reject(message.error);
+      else waiting.resolve(message.result);
+      return;
+    }
+    var params = message.params || {};
+    if (message.method === "ui/notifications/tool-input") {
+      heard = true;
+      if (handlers.toolInput) handlers.toolInput(params.arguments || {});
+    } else if (message.method === "ui/notifications/tool-result") {
+      heard = true;
+      if (handlers.toolResult) handlers.toolResult(params);
+    }
+  });
+
+  if (embedded) {
+    request("ui/initialize", {
+      appInfo: appInfo,
+      appCapabilities: {},
+      protocolVersion: "__APPS_PROTOCOL_VERSION__"
+    }).then(function () {
+      heard = true;
+      post({ method: "ui/notifications/initialized", params: {} });
+    }, function () {});
+  }
+
+  setTimeout(function () {
+    if (!heard && handlers.fallback) handlers.fallback();
+  }, 2000);
+
+  return { request: request, resize: resize };
+}
+
+function errorText(error) {
+  if (!error || typeof error !== "object") return String(error);
+  return "JSON-RPC error " + error.code + ": " + error.message;
+}
+
+function firstText(result) {
+  var content = result && result.content;
+  if (!content || !content.length) return "(no text)";
+  for (var i = 0; i < content.length; i++) {
+    if (content[i] && content[i].type === "text") return content[i].text;
+  }
+  return "(no text)";
+}
+""".replace("__APPS_PROTOCOL_VERSION__", APPS_PROTOCOL_VERSION)
+
+_SHELL = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+__STYLE__</style>
+</head>
+<body>
+__BODY__<script type="application/json" id="app-data">__DATA__</script>
+<script>
+__BRIDGE__
+(function () {
+  "use strict";
+  var baked = JSON.parse(document.getElementById("app-data").textContent);
+__SCRIPT__})();
+</script>
+</body>
+</html>
+"""
+
+
+def script_json(value: Any) -> str:
+    """JSON that is safe inside a <script> element: no `<`, `>` or `&` survives, so the
+    values cannot close the element or open a comment."""
+    return (
+        json.dumps(value, ensure_ascii=False)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+    )
+
+
+def app_page(*, title: str, style: str, body: str, script: str, data: Any) -> str:
+    """One app document: the shell, the bridge, the page's own markup and script, and
+    `data` as the page's baked values (`baked` in the script). The data goes in last, so
+    nothing a caller passes can be read as a placeholder."""
+    return (
+        _SHELL.replace("__TITLE__", title)
+        .replace("__STYLE__", style)
+        .replace("__BODY__", body)
+        .replace("__BRIDGE__", BRIDGE_JS)
+        .replace("__SCRIPT__", script)
+        .replace("__DATA__", script_json(data))
+    )

@@ -5,9 +5,11 @@
     ../guppi-gpt/scripts/test-token.sh | uv run -- python scripts/probe.py <url> --token -
 
 Runs the initialize handshake, then tools/list, tools/call on the show_card tool (the
-first tool whose name ends in `show_card`, so a gateway prefix is found), resources/list,
-and resources/read on ui://mcp-app/card. The two list calls follow `nextCursor` and print
-every page's items together with the page count. Each result is printed as the JSON the server
+first tool whose name ends in `show_card`, so a gateway prefix is found), any further
+calls named with `--call NAME JSON` (found by the same suffix match), resources/list, and
+resources/read on ui://mcp-app/card and on every other `ui://mcp-app/` resource listed.
+The two list calls follow `nextCursor` and print every page's items together with the
+page count. Each result is printed as the JSON the server
 sent, with long strings shortened, so fields an intermediary drops or adds (tool `_meta`,
 the embedded resource, `structuredContent`) are visible as they are. The client is plain
 JSON-RPC over HTTP with the standard library, so no SDK parsing hides anything.
@@ -25,6 +27,7 @@ from typing import Any
 
 PROTOCOL_VERSION = "2025-06-18"
 CARD_URI = "ui://mcp-app/card"
+RESOURCE_PREFIX = "ui://mcp-app/"
 SHORTEN = 160
 
 
@@ -135,6 +138,14 @@ def main() -> int:
     parser.add_argument("--token", help="bearer token, or - to read it from stdin")
     parser.add_argument("--title", default="Hello")
     parser.add_argument("--body", default="It works")
+    parser.add_argument(
+        "--call",
+        nargs=2,
+        action="append",
+        default=[],
+        metavar=("NAME", "JSON"),
+        help='another tools/call, for example --call card_clicked \'{"card_id": "hello"}\'',
+    )
     args = parser.parse_args()
 
     token = sys.stdin.readline().strip() if args.token == "-" else args.token
@@ -157,36 +168,53 @@ def main() -> int:
     client.protocol_version = init.get("protocolVersion", PROTOCOL_VERSION)
     client.notify("notifications/initialized")
 
-    tool_name = "show_card"
+    names: list[str] = []
     try:
         listed = list_all(client, "tools/list", "tools")
         show("tools/list", listed)
         names = [t.get("name", "") for t in listed.get("tools", [])]
-        tool_name = next((n for n in names if n.endswith("show_card")), tool_name)
     except ProbeError as error:
         failures += 1
         print(f"== tools/list\nFAILED {error}\n")
 
-    calls: list[tuple[str, str, dict[str, Any]]] = [
-        (
-            f"tools/call {tool_name}",
-            "tools/call",
-            {"name": tool_name, "arguments": {"title": args.title, "body": args.body}},
-        ),
-        ("resources/list", "resources/list", {}),
-        (f"resources/read {CARD_URI}", "resources/read", {"uri": CARD_URI}),
+    def listed_name(name: str) -> str:
+        return next((n for n in names if n.endswith(name)), name)
+
+    calls: list[tuple[str, dict[str, Any]]] = [
+        (listed_name("show_card"), {"title": args.title, "body": args.body}),
+        *[(listed_name(name), json.loads(arguments)) for name, arguments in args.call],
     ]
-    for label, method, params in calls:
+    for tool_name, arguments in calls:
         try:
-            if method == "resources/list":
-                show(label, list_all(client, method, "resources"))
-                continue
-            show(label, client.request(method, params))
+            show(
+                f"tools/call {tool_name}",
+                client.request("tools/call", {"name": tool_name, "arguments": arguments}),
+            )
         except ProbeError as error:
             failures += 1
-            print(f"== {label}\nFAILED {error}\n")
+            print(f"== tools/call {tool_name}\nFAILED {error}\n")
 
-    print(f"probe: {4 - failures} of 4 calls answered")
+    uris = [CARD_URI]
+    try:
+        resources = list_all(client, "resources/list", "resources")
+        show("resources/list", resources)
+        for resource in resources.get("resources", []):
+            uri = resource.get("uri", "")
+            if uri.startswith(RESOURCE_PREFIX) and uri not in uris:
+                uris.append(uri)
+    except ProbeError as error:
+        failures += 1
+        print(f"== resources/list\nFAILED {error}\n")
+
+    for uri in uris:
+        try:
+            show(f"resources/read {uri}", client.request("resources/read", {"uri": uri}))
+        except ProbeError as error:
+            failures += 1
+            print(f"== resources/read {uri}\nFAILED {error}\n")
+
+    total = 2 + len(calls) + len(uris)
+    print(f"probe: {total - failures} of {total} calls answered")
     return 1 if failures else 0
 
 

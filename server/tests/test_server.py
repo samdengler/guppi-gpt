@@ -6,6 +6,7 @@ import re
 
 from mcp import Client
 from mcp_app_server.card import APP_MIME_TYPE, CARD_URI, TEMPLATE_BODY, TEMPLATE_TITLE
+from mcp_app_server.chart import CHART_URI
 from mcp_app_server.server import mcp
 
 
@@ -16,16 +17,28 @@ def connect() -> Client:
 
 
 def baked_values(html: str) -> dict:
-    match = re.search(r'<script type="application/json" id="card-data">(.*?)</script>', html)
+    match = re.search(r'<script type="application/json" id="app-data">(.*?)</script>', html)
     assert match, "the page carries its fallback values in a JSON script element"
     return json.loads(match.group(1))
 
 
+def assert_self_contained(html: str) -> None:
+    assert "<script src" not in html
+    assert "<link" not in html
+    for call in ("fetch(", "XMLHttpRequest", "WebSocket", "import(", "http://", "https://"):
+        assert call not in html
+    assert "innerHTML" not in html
+
+
+async def tools_by_name(client: Client) -> dict:
+    return {t.name: t for t in (await client.list_tools()).tools}
+
+
 async def test_tools_list_names_show_card_with_its_ui_resource():
     async with connect() as client:
-        tools = (await client.list_tools()).tools
-        assert [t.name for t in tools] == ["show_card"]
-        tool = tools[0]
+        tools = await tools_by_name(client)
+        assert set(tools) == {"show_card", "show_chart"}
+        tool = tools["show_card"]
         assert set(tool.input_schema["properties"]) == {"title", "body"}
         assert set(tool.input_schema["required"]) == {"title", "body"}
         assert tool.meta == {"ui": {"resourceUri": CARD_URI}}
@@ -48,9 +61,9 @@ async def test_show_card_returns_text_embedded_resource_and_meta():
 
 async def test_resources_list_and_read_serve_the_card():
     async with connect() as client:
-        resources = (await client.list_resources()).resources
-        assert [str(r.uri) for r in resources] == [CARD_URI]
-        assert resources[0].mime_type == APP_MIME_TYPE
+        resources = {str(r.uri): r for r in (await client.list_resources()).resources}
+        assert set(resources) == {CARD_URI, CHART_URI}
+        assert resources[CARD_URI].mime_type == APP_MIME_TYPE
 
         contents = (await client.read_resource(CARD_URI)).contents
         assert len(contents) == 1
@@ -72,10 +85,7 @@ async def test_card_values_cannot_close_the_script_element():
 async def test_card_page_is_self_contained():
     async with connect() as client:
         html = (await client.read_resource(CARD_URI)).contents[0].text
-        assert "<script src" not in html
-        assert "<link" not in html
-        for call in ("fetch(", "XMLHttpRequest", "WebSocket", "import(", "http://", "https://"):
-            assert call not in html
+        assert_self_contained(html)
         for method in (
             "ui/initialize",
             "ui/notifications/initialized",
@@ -84,4 +94,29 @@ async def test_card_page_is_self_contained():
         ):
             assert method in html
         assert "setTimeout" in html and "2000" in html
-        assert "innerHTML" not in html
+
+
+async def test_show_chart_names_its_resource_and_embeds_nothing():
+    async with connect() as client:
+        tool = (await tools_by_name(client))["show_chart"]
+        assert tool.meta == {"ui": {"resourceUri": CHART_URI}}
+        assert tool.input_schema["properties"]["values"]["type"] == "array"
+
+        result = await client.call_tool("show_chart", {"values": [3, 1, 4.5]})
+        assert not result.is_error
+        assert [block.type for block in result.content] == ["text"]
+        assert "3 values" in result.content[0].text
+        assert result.structured_content == {"values": [3, 1, 4.5]}
+        assert result.meta == {"ui": {"resourceUri": CHART_URI}}
+
+
+async def test_chart_resource_is_read_by_uri():
+    async with connect() as client:
+        contents = (await client.read_resource(CHART_URI)).contents
+        assert len(contents) == 1
+        assert str(contents[0].uri) == CHART_URI
+        assert contents[0].mime_type == APP_MIME_TYPE
+        html = contents[0].text
+        assert_self_contained(html)
+        assert baked_values(html) == {"values": []}
+        assert "structuredContent" in html and "ui/initialize" in html
