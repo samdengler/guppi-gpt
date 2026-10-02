@@ -304,3 +304,57 @@ async def test_keepalive_propagates_errors():
     with pytest.raises(RuntimeError):
         async for _ in with_keepalive(failing(), interval=0.1):
             pass
+
+
+async def test_create_app_runs_a_project_agent():
+    """A project agent through the kit's factory: any object whose run() yields AG-UI events."""
+    import guppi_agent
+
+    built: list[str] = []
+
+    class ProjectAgent:
+        def __init__(self, token: str) -> None:
+            built.append(token)
+
+        async def run(self, run_input: RunAgentInput):
+            thread, run = run_input.thread_id, run_input.run_id
+            yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread, run_id=run)
+            yield TextMessageStartEvent(
+                type=EventType.TEXT_MESSAGE_START, message_id="p1", role="assistant"
+            )
+            yield TextMessageContentEvent(
+                type=EventType.TEXT_MESSAGE_CONTENT, message_id="p1", delta="from the project"
+            )
+            yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id="p1")
+            yield RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread, run_id=run)
+
+    project_app = guppi_agent.create_app(ProjectAgent)
+    async with AsyncClient(transport=ASGITransport(app=project_app), base_url="http://t") as c:
+        response = await c.post("/invocations", json=run_body("hello"), headers=HEADERS)
+        ping = await c.get("/ping")
+    events = parse_sse(response.text)
+    assert built == [TOKEN]
+    assert [e["type"] for e in events] == [
+        "RUN_STARTED",
+        "TEXT_MESSAGE_START",
+        "TEXT_MESSAGE_CONTENT",
+        "TEXT_MESSAGE_END",
+        "RUN_FINISHED",
+    ]
+    assert events[2]["delta"] == "from the project"
+    assert ping.json() == {"status": "Healthy"}
+
+
+def test_kit_exports_what_a_project_needs():
+    import guppi_agent
+
+    for name in (
+        "create_app",
+        "with_keepalive",
+        "trim_messages",
+        "validate_run",
+        "conversation_log",
+        "app_resource",
+        "with_app_resources",
+    ):
+        assert hasattr(guppi_agent, name), name

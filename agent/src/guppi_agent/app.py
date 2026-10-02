@@ -2,8 +2,13 @@
 
 POST /invocations takes an AG-UI run input and streams AG-UI events as server-sent events;
 GET /ping reports health. Per run: read the caller's bearer token, validate and trim the
-thread, hand it to the Strands agent (agent.py) with the token forwarded to the tools
-gateway, and keep the stream alive with ping events while the model or a tool is silent.
+thread, hand it to the agent built for that token, and keep the stream alive with ping
+events while the model or a tool is silent.
+
+`create_app(build_agent)` is the factory a project agent uses (docs/proposals/platform.md):
+`build_agent(token)` returns an object whose `run(run_input)` is an async iterator of
+AG-UI events, and optionally a `usage()` returning fields for the run log. This
+repository's own app is `create_app()`, which builds the Strands agent in agent.py.
 """
 
 from __future__ import annotations
@@ -16,7 +21,8 @@ import logging
 import os
 import re
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
+from typing import Any
 
 from ag_ui.core import (
     BaseEvent,
@@ -38,7 +44,8 @@ from guppi_agent.validation import trim_messages, validate_run
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 log = logging.getLogger("guppi_agent")
 
-app = FastAPI(title="guppi-agent")
+#: Given the caller's bearer token, the object that runs one request (see create_app).
+BuildAgent = Callable[[str], Any]
 
 SESSION_HEADER = "x-amzn-bedrock-agentcore-runtime-session-id"
 # W3C trace context, minted by the page per run and passed through by the edge gateway
@@ -100,7 +107,14 @@ def started_then_error(run: RunAgentInput, message: str, code: str) -> list[Base
     ]
 
 
-async def run_agent(run: RunAgentInput, token: str, record: dict) -> AsyncIterator[BaseEvent]:
+def default_build_agent(token: str) -> Any:
+    """agent.py's Strands agent, looked up at call time so tests can replace it."""
+    return agent_module.build_strands_agent(token)
+
+
+async def run_agent(
+    run: RunAgentInput, token: str, record: dict, build_agent: BuildAgent = default_build_agent
+) -> AsyncIterator[BaseEvent]:
     """Produce the AG-UI events for one run and fill in the log record as they pass."""
     reason = validate_run(run)
     if reason is not None:
@@ -113,7 +127,7 @@ async def run_agent(run: RunAgentInput, token: str, record: dict) -> AsyncIterat
     record["messages"] = len(messages)
     run = run.model_copy(update={"messages": messages})
 
-    runner = agent_module.build_strands_agent(token)
+    runner = build_agent(token)
     started = False
     reply: list[str] = []
     try:
@@ -155,14 +169,20 @@ def elapsed_ms(record: dict) -> int:
 
 
 async def event_stream(
-    run: RunAgentInput, token: str, encoder: EventEncoder, record: dict
+    run: RunAgentInput,
+    token: str,
+    encoder: EventEncoder,
+    record: dict,
+    build_agent: BuildAgent = default_build_agent,
 ) -> AsyncIterator[str]:
     record["_t0"] = time.monotonic()
     record["started_at"] = conversation_log.now_iso()
     record["model"] = os.environ.get("MODEL_ID", agent_module.DEFAULT_MODEL_ID)
     record.setdefault("outcome", "finished")
     try:
-        async for event in with_keepalive(run_agent(run, token, record), DEFAULT_PING_INTERVAL):
+        async for event in with_keepalive(
+            run_agent(run, token, record, build_agent), DEFAULT_PING_INTERVAL
+        ):
             yield encoder.encode(event)
     except asyncio.CancelledError:
         record["outcome"] = "client_disconnected"
@@ -178,53 +198,63 @@ async def event_stream(
             log.info(json.dumps(conversation_log.loggable(record), sort_keys=True))
 
 
-@app.post("/invocations")
-async def invocations(request: Request) -> StreamingResponse:
-    body = await request.json()
-    encoder = EventEncoder(accept=request.headers.get("accept"))
-    media_type = encoder.get_content_type()
-    try:
-        run = RunAgentInput.model_validate(body)
-    except Exception as exc:
-        # The contract wants errors on the stream, so a bad body still answers with SSE.
-        reason = str(exc)
+def create_app(build_agent: BuildAgent = default_build_agent) -> FastAPI:
+    """The AG-UI app for an agent built per request by `build_agent(token)`."""
+    app = FastAPI(title="guppi-agent")
 
-        async def bad_body() -> AsyncIterator[str]:
-            yield encoder.encode(
-                RunErrorEvent(type=EventType.RUN_ERROR, message=reason, code="BAD_INPUT")
+    @app.post("/invocations")
+    async def invocations(request: Request) -> StreamingResponse:
+        body = await request.json()
+        encoder = EventEncoder(accept=request.headers.get("accept"))
+        media_type = encoder.get_content_type()
+        try:
+            run = RunAgentInput.model_validate(body)
+        except Exception as exc:
+            # The contract wants errors on the stream, so a bad body still answers with SSE.
+            reason = str(exc)
+
+            async def bad_body() -> AsyncIterator[str]:
+                yield encoder.encode(
+                    RunErrorEvent(type=EventType.RUN_ERROR, message=reason, code="BAD_INPUT")
+                )
+
+            return StreamingResponse(bad_body(), media_type=media_type)
+
+        token = bearer_token(request)
+        if token is None:
+            # Header names only: the runtime forwards Authorization solely when its request
+            # header allowlist names it, and this line is what shows that it did not.
+            log.warning(
+                "no bearer token; headers present: %s", sorted(set(request.headers.keys()))
             )
 
-        return StreamingResponse(bad_body(), media_type=media_type)
+            async def unauthorized() -> AsyncIterator[str]:
+                for event in started_then_error(run, "bearer token required", "UNAUTHORIZED"):
+                    yield encoder.encode(event)
 
-    token = bearer_token(request)
-    if token is None:
-        # Header names only: the runtime forwards Authorization solely when its request
-        # header allowlist names it, and this line is what shows that it did not.
-        log.warning("no bearer token; headers present: %s", sorted(set(request.headers.keys())))
+            return StreamingResponse(unauthorized(), media_type=media_type)
 
-        async def unauthorized() -> AsyncIterator[str]:
-            for event in started_then_error(run, "bearer token required", "UNAUTHORIZED"):
-                yield encoder.encode(event)
+        record = {
+            "sub": subject_hash(token),
+            "session": request.headers.get(SESSION_HEADER, "-"),
+            "thread": run.thread_id,
+            "run": run.run_id,
+            "trace_id": trace_id(request),
+            "request_id": request.headers.get(REQUEST_ID_HEADER, "-"),
+            "messages": len(run.messages),
+            "tool_calls": 0,
+        }
+        return StreamingResponse(
+            event_stream(run, token, encoder, record, build_agent),
+            media_type=media_type,
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
-        return StreamingResponse(unauthorized(), media_type=media_type)
+    @app.get("/ping")
+    async def ping() -> JSONResponse:
+        return JSONResponse({"status": "Healthy"})
 
-    record = {
-        "sub": subject_hash(token),
-        "session": request.headers.get(SESSION_HEADER, "-"),
-        "thread": run.thread_id,
-        "run": run.run_id,
-        "trace_id": trace_id(request),
-        "request_id": request.headers.get(REQUEST_ID_HEADER, "-"),
-        "messages": len(run.messages),
-        "tool_calls": 0,
-    }
-    return StreamingResponse(
-        event_stream(run, token, encoder, record),
-        media_type=media_type,
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return app
 
 
-@app.get("/ping")
-async def ping() -> JSONResponse:
-    return JSONResponse({"status": "Healthy"})
+app = create_app()
