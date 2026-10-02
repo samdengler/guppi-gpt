@@ -202,7 +202,8 @@ For tools-only projects `agent.py` gains a second filter: when the run's
 
 ## Changes to this repository
 
-All changes are additive and land on the `platform` branch. The flag system is not
+All changes are additive and landed on the `platform` branch, merged into `main` on 2 October
+2026. The flag system is not
 touched.
 
 | File | Change |
