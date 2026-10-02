@@ -9,6 +9,30 @@ git URL, pinned to a tag:
 
     uv add "guppi-agent @ git+https://github.com/samdengler/guppi-gpt@<tag>#subdirectory=agent"
 
+A project's whole HTTP surface is the factory. `build_agent(token)` returns an object
+whose `run(run_input)` is an async iterator of AG-UI events (a Strands agent behind the
+`ag_ui_strands` adapter, or anything else that yields them), and optionally `usage()` with
+fields for the run log:
+
+```python
+# my_project/app.py
+from guppi_agent import create_app
+
+from my_project.agent import build_agent
+
+app = create_app(build_agent)
+```
+
+and in the project's Dockerfile, the same server line as this repository's:
+
+```dockerfile
+CMD ["opentelemetry-instrument", "uvicorn", "my_project.app:app", "--host", "0.0.0.0", "--port", "8080"]
+```
+
+`guppi_agent` also exports `with_keepalive`, `trim_messages`, `validate_run`,
+`conversation_log`, `app_resource` and `with_app_resources` for a project that needs the
+same pieces outside the factory.
+
 ## Modules
 
 | Module | Role |
