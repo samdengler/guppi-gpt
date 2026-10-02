@@ -236,6 +236,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
 
   function switchToThread(thread) {
     threadId = thread.id;
+    extensions.notifyThread(threadId);
     threadCreatedAt = thread.createdAt;
     threadTitle = thread.title;
     // A stored feedback field carries through in memory so a later send does not wipe
@@ -492,6 +493,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
   function clearThreadState() {
     messages = [];
     threadId = crypto.randomUUID();
+    extensions.notifyThread(threadId);
     threadCreatedAt = Date.now();
     threadTitle = null;
     status = "idle-empty";
@@ -560,7 +562,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
       retry();
     });
 
-    return { reply, statusLine, text, attachments, errorLine, errorText, retryLink };
+    return { reply, label, statusLine, text, attachments, errorLine, errorText, retryLink };
   }
 
   function markReply(reply, ids) {
@@ -747,7 +749,19 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
     extensions.setStatusSink(setStatusLine);
     // Tool calls of this run by id, for the renderer an extension registered by name.
     const toolCalls = new Map();
-    const renderContext = (event) => ({ event, runId, threadId });
+    // Tool calls whose start or end event an extension renderer took; the page then
+    // leaves their status line to the extension.
+    const statusClaimed = new Set();
+    // setLabel replaces the running reply's label, "Guppi" by default (for example an
+    // agent name per delegation); the page's history keeps text only, not the label.
+    const renderContext = (event) => ({
+      event,
+      runId,
+      threadId,
+      setLabel: (text) => {
+        refs.label.textContent = String(text);
+      },
+    });
     const showError = (refused) => {
       status = "error";
       // A 403 comes from the gateway's front door, which rejects any body containing a
@@ -803,7 +817,8 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
       onEvent: ({ event }) => {
         resetStallTimer(); // every event counts, the CUSTOM ping included
         if (EXTENSION_EVENT_TYPES.includes(event.type)) {
-          extensions.renderEvent(event, refs.attachments, renderContext(event));
+          const claimed = extensions.renderEvent(event, refs.attachments, renderContext(event));
+          if (claimed && event.toolCallId) statusClaimed.add(event.toolCallId);
         }
       },
       onToolCallStartEvent: ({ event }) => {
@@ -813,7 +828,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
         // search is kept as the reply.
         draft = "";
         schedulePaint();
-        if (!extensions.claimsTool(event.toolCallName)) {
+        if (!extensions.claimsTool(event.toolCallName) && !statusClaimed.has(event.toolCallId)) {
           setStatusLine(toolStatus(event.toolCallName, false));
         }
       },
@@ -821,7 +836,8 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
         const toolCall = toolCalls.get(event.toolCallId) || { id: event.toolCallId, name: toolCallName };
         toolCall.args = toolCallArgs;
         toolCalls.set(event.toolCallId, toolCall);
-        if (!extensions.renderTool(toolCall, refs.attachments, renderContext(event))) {
+        const renderedByTool = extensions.renderTool(toolCall, refs.attachments, renderContext(event));
+        if (!renderedByTool && !statusClaimed.has(event.toolCallId)) {
           setStatusLine(toolStatus(toolCall.name, true));
         }
       },
@@ -878,6 +894,8 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
   }
 
   if (manifest && manifest.extension) await installExtension(manifest.extension);
+  // The first thread of this page load; a resumed thread notifies again in switchToThread.
+  extensions.notifyThread(threadId);
 
   // ---- Boot ----
   //

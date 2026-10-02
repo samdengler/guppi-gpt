@@ -11,8 +11,12 @@
 
 import { createMcpAppsHost } from "./mcp-apps/host.js";
 
-// AG-UI event types a project renderer can take; the page renders none of them itself.
+// AG-UI event types a project renderer can take. The page renders none of these itself
+// except the tool call pair, whose built-in status line a renderer can replace: the page
+// skips its own line for a tool call whose start or end event a renderer took.
 export const EXTENSION_EVENT_TYPES = [
+  "TOOL_CALL_START",
+  "TOOL_CALL_END",
   "CUSTOM",
   "STEP_STARTED",
   "STEP_FINISHED",
@@ -50,6 +54,7 @@ export function createExtensionHost({ project, getToken, builtins = BUILTIN_REND
   const toolRenderers = new Map();
   const eventRenderers = new Map();
   const sendHooks = [];
+  const threadHooks = [];
   let statusSink = null;
 
   const guppi = Object.freeze({
@@ -66,6 +71,11 @@ export function createExtensionHost({ project, getToken, builtins = BUILTIN_REND
     }),
     onSend(fn) {
       if (typeof fn === "function") sendHooks.push(fn);
+    },
+    // Called with { threadId } on the first load, a new chat, and a resumed or switched
+    // thread, so an extension can drop state it kept for the previous thread.
+    onThread(fn) {
+      if (typeof fn === "function") threadHooks.push(fn);
     },
     status(text) {
       if (statusSink) statusSink(String(text));
@@ -147,6 +157,17 @@ export function createExtensionHost({ project, getToken, builtins = BUILTIN_REND
         warn(`the ${event.type} renderer`, error);
       }
       return true;
+    },
+
+    /** Tells every onThread hook which thread the page is now on. */
+    notifyThread(threadId) {
+      for (const hook of threadHooks) {
+        try {
+          hook({ threadId });
+        } catch (error) {
+          warn("an onThread hook", error);
+        }
+      }
     },
 
     /** Where guppi.status(text) writes: the running reply's status line, or nowhere. */

@@ -209,3 +209,59 @@ test("a built-in that throws logs one warning and the project renderer still run
   assert.equal(warnings, 2);
   assert.equal(rendered, 1);
 });
+
+test("tool call start and end events reach a project renderer, which claims them", () => {
+  const { guppi, renderEvent } = host();
+  assert.ok(EXTENSION_EVENT_TYPES.includes("TOOL_CALL_START"));
+  assert.ok(EXTENSION_EVENT_TYPES.includes("TOOL_CALL_END"));
+  const seen = [];
+  guppi.renderers.event("TOOL_CALL_START", (event, slot, ctx) => {
+    seen.push([event.toolCallName, slot, ctx.threadId]);
+    guppi.status("Asking the Pay agent…");
+  });
+  const claimed = renderEvent(
+    { type: "TOOL_CALL_START", toolCallId: "c1", toolCallName: "delegate_pay" },
+    "slot",
+    { threadId: "t1" },
+  );
+  assert.equal(claimed, true);
+  assert.deepEqual(seen, [["delegate_pay", "slot", "t1"]]);
+  // Without a renderer for the type the page keeps its own status line.
+  assert.equal(host().renderEvent({ type: "TOOL_CALL_END", toolCallId: "c1" }, "slot", {}), false);
+});
+
+test("the render context's setLabel is what a renderer calls to relabel the reply", () => {
+  const { guppi, renderEvent } = host();
+  let label = "Guppi";
+  guppi.renderers.event("STEP_STARTED", (event, slot, ctx) => ctx.setLabel(`HR Assistant · ${event.stepName}`));
+  renderEvent({ type: "STEP_STARTED", stepName: "Pay" }, "slot", {
+    setLabel: (text) => {
+      label = text;
+    },
+  });
+  assert.equal(label, "HR Assistant · Pay");
+});
+
+test("onThread hooks hear every thread change, and a throwing hook is skipped", () => {
+  const { guppi, notifyThread } = host();
+  const heard = [];
+  guppi.onThread(({ threadId }) => heard.push(threadId));
+  guppi.onThread(() => {
+    throw new Error("boom");
+  });
+  guppi.onThread(({ threadId }) => heard.push(`second:${threadId}`));
+  const warnings = countWarnings(() => {
+    notifyThread("t1");
+    notifyThread("t2");
+  });
+  assert.deepEqual(heard, ["t1", "second:t1", "t2", "second:t2"]);
+  assert.equal(warnings, 2);
+});
+
+test("an onSend hook can set the run's state, which the page sends as AG-UI state", () => {
+  const { guppi, applySendHooks } = host();
+  guppi.onSend((input) => ({ ...input, state: { activeDomain: "pay", pendingAction: null } }));
+  const out = applySendHooks({ threadId: "t1", runId: "r1", messages: [], forwardedProps: {}, state: {} });
+  assert.deepEqual(out.state, { activeDomain: "pay", pendingAction: null });
+  assert.equal(out.threadId, "t1");
+});
