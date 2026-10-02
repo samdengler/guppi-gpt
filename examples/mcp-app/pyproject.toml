@@ -1,0 +1,26 @@
+[project]
+name = "guppi-mcp-app"
+version = "0.1.0"
+description = "guppi-mcp-app: an MCP server on AgentCore Runtime behind the GuppiGPT tools gateway"
+requires-python = ">=3.12"
+
+[tool.uv.workspace]
+members = ["infra", "server"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.6",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["server/tests", "infra/tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

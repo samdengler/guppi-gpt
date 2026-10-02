@@ -1,0 +1,55 @@
+{
+  "name": "mcp-app",
+  "label": "MCP App Lab",
+  "assistant": "Guppi",
+  "agent": "platform",
+  "capabilities": [
+    "mcp-apps"
+  ],
+  "theme": {
+    "light": {
+      "bg": "#f5f9ff",
+      "fg": "#12263f",
+      "muted": "#587089",
+      "border": "#cfe0f5",
+      "surface": "#e9f1fc",
+      "bubbleUser": "#dceafd",
+      "accent": "#2d7ff9",
+      "accentContrast": "#ffffff",
+      "brand": "#1a5ea8"
+    },
+    "dark": {
+      "bg": "#0b1626",
+      "fg": "#e8f0fb",
+      "muted": "#9db3cc",
+      "border": "#233a58",
+      "surface": "#12223a",
+      "bubbleUser": "#1a2f4d",
+      "accent": "#6fb0ff",
+      "accentContrast": "#0b1626",
+      "brand": "#7fb4ff"
+    }
+  },
+  "suggestions": [
+    {
+      "label": "Show a card",
+      "prompt": "Show me a card titled Hello with the body It works"
+    },
+    {
+      "label": "Show a card, then update it",
+      "prompt": "Show me a card titled Draft with the body First version, then change its body to Second version"
+    },
+    {
+      "label": "Ask for my preferences",
+      "prompt": "Ask me for my preferences"
+    },
+    {
+      "label": "Show a chart (not rendered yet)",
+      "prompt": "Show me a bar chart of the values 3, 1, 4"
+    },
+    {
+      "label": "Ask the docs",
+      "prompt": "In one sentence, what is the AG-UI protocol?"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+cdk.out/
+
+cdk-outputs.json
+web/dist/
+web/vendor/
+web/node_modules/
+node_modules/
+.env
+.DS_Store
+.deploy/
+.claude/worktrees/

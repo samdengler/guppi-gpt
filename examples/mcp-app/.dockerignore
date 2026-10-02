@@ -1,0 +1,11 @@
+# Build context for server/Dockerfile is the repository root; keep it to what the image
+# needs so the CDK asset hash and the context upload stay small.
+*
+!pyproject.toml
+!uv.lock
+!server/pyproject.toml
+!server/README.md
+!server/Dockerfile
+!server/src
+!infra/pyproject.toml
+**/__pycache__
