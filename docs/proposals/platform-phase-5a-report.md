@@ -11,7 +11,7 @@ following `platform-phase-5a.md` step by step.
 | 2 | `3a31ef4` | `list_all_tools` follows `tools/list` pagination to the last page, at most 50 |
 | 3 | `317161c` | `toolStatus` and `toolDisplayName` in `web/src/copy.js`; the page's status line names the tool, `docs___*` keeps the knowledge base wording |
 | 4 | `358109c` | `TOOL_CALL_START` and `TOOL_CALL_END` in `EXTENSION_EVENT_TYPES` (a renderer that takes one leaves that call's status line to the extension); `setLabel` on the render context (`addTurn` returns the label); `guppi.onThread`; an `onSend` hook's `state` reaches the wire through the `HttpAgent` initial state |
-| 5 | `92f3f0f`, tag `kit-v0.2.0` | `agent/README.md` shows a project's `app.py` and Dockerfile line; tag pushed |
+| 5 | `763fe42`, tag `kit-v0.2.0` | `agent/README.md` shows a project's `app.py` and Dockerfile line; tag pushed |
 | 6 | `5344e76` | AGENTS.md, platform.md's extension API table, decision log revision 21, `guppigpt-design.html` section 13 "Platform" with later sections renumbered and the architecture paragraph naming the project targets |
 
 Also on the branch the same morning, before this phase: `06140c8`, Sky as the page's
