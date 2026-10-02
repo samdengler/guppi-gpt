@@ -19,3 +19,23 @@ export function emptyStateText(history, logging) {
   const sentence = noticeSentence(history, logging);
   return sentence ? `Ask anything. ${sentence}` : "Ask anything. This conversation is not saved.";
 }
+
+// The status line while a tool runs and after it ends, chosen by the tool's name. The
+// knowledge base search keeps its own wording; any other tool is named after its gateway
+// target prefix (`<target>___`) is removed, with underscores read as spaces. An
+// extension's guppi.status(text) still replaces either line.
+const KNOWLEDGE_BASE_PREFIX = "docs___";
+
+export function toolDisplayName(name) {
+  const text = String(name || "");
+  const bare = text.includes("___") ? text.slice(text.indexOf("___") + 3) : text;
+  return bare.replace(/_+/g, " ").trim() || "a tool";
+}
+
+export function toolStatus(name, done) {
+  if (String(name || "").startsWith(KNOWLEDGE_BASE_PREFIX)) {
+    return done ? "Searched the knowledge base" : "Searching the knowledge base…";
+  }
+  const label = toolDisplayName(name);
+  return done ? `Used ${label}` : `Using ${label}…`;
+}

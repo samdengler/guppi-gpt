@@ -40,3 +40,19 @@ test("both switches on name both", () => {
     "Ask anything. Chats are saved on this device and logged for troubleshooting.",
   );
 });
+
+test("the knowledge base search keeps its own status wording", async () => {
+  const { toolStatus } = await import("../src/copy.js");
+  assert.equal(toolStatus("docs___Retrieve", false), "Searching the knowledge base…");
+  assert.equal(toolStatus("docs___AgenticRetrieveStream", true), "Searched the knowledge base");
+});
+
+test("any other tool is named without its target prefix, underscores as spaces", async () => {
+  const { toolStatus, toolDisplayName } = await import("../src/copy.js");
+  assert.equal(toolStatus("mcp-app___show_card", false), "Using show card…");
+  assert.equal(toolStatus("mcp-app___show_card", true), "Used show card");
+  assert.equal(toolStatus("hr___propose_address_change", true), "Used propose address change");
+  assert.equal(toolDisplayName("plain_tool"), "plain tool");
+  assert.equal(toolDisplayName(""), "a tool");
+  assert.equal(toolStatus(undefined, false), "Using a tool…");
+});

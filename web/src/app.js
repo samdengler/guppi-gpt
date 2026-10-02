@@ -3,7 +3,7 @@ import { initFeatures, isEnabled } from "./features.js";
 import { enabledFlagNames } from "./flags-core.js";
 import * as chatHistory from "./history.js";
 import { renderFeedbackControls, initFeedbackSink, FEEDBACK_EVENT } from "./feedback.js";
-import { hintText, emptyStateText } from "./copy.js";
+import { hintText, emptyStateText, toolStatus } from "./copy.js";
 import { initRum, identifyRumUser } from "./rum.js";
 import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideOnLoad, newestRefreshToken } from "./session.js";
 import { createExtensionHost, EXTENSION_EVENT_TYPES } from "./extensions.js";
@@ -814,7 +814,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
         draft = "";
         schedulePaint();
         if (!extensions.claimsTool(event.toolCallName)) {
-          setStatusLine("Searching the knowledge base\u2026");
+          setStatusLine(toolStatus(event.toolCallName, false));
         }
       },
       onToolCallEndEvent: ({ event, toolCallName, toolCallArgs }) => {
@@ -822,7 +822,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
         toolCall.args = toolCallArgs;
         toolCalls.set(event.toolCallId, toolCall);
         if (!extensions.renderTool(toolCall, refs.attachments, renderContext(event))) {
-          setStatusLine("Searched the knowledge base");
+          setStatusLine(toolStatus(toolCall.name, true));
         }
       },
       onToolCallResultEvent: ({ event }) => {
