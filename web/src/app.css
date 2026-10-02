@@ -1,26 +1,31 @@
+/* The default palette is Sky, chosen in guppi-mcp-app (its manifest theme, 58b3ef6): blue
+   actions on cool white with a navy brand. A project's manifest theme still replaces
+   these for its own page (web/src/project.js themeFor). */
 :root {
   color-scheme: light dark;
-  --bg: #faf7f2;
-  --fg: #241f19;
-  --muted: #6b6259;
-  --border: #e4dcd0;
-  --surface: #f1e9dc;
-  --bubble-user: #efe2cf;
-  --accent: #a8461c;
-  --accent-contrast: #fff8f2;
+  --bg: #f5f9ff;
+  --fg: #12263f;
+  --muted: #587089;
+  --border: #cfe0f5;
+  --surface: #e9f1fc;
+  --bubble-user: #dceafd;
+  --accent: #2d7ff9;
+  --accent-contrast: #ffffff;
+  --brand: #1a5ea8;
   --danger: #b3261e;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #1b1712;
-    --fg: #f3ece1;
-    --muted: #b7aa98;
-    --border: #3a332a;
-    --surface: #2a241d;
-    --bubble-user: #3a2f22;
-    --accent: #ff9a5c;
-    --accent-contrast: #1b1712;
+    --bg: #0b1626;
+    --fg: #e8f0fb;
+    --muted: #9db3cc;
+    --border: #233a58;
+    --surface: #12223a;
+    --bubble-user: #1a2f4d;
+    --accent: #6fb0ff;
+    --accent-contrast: #0b1626;
+    --brand: #7fb4ff;
     --danger: #ff8a80;
   }
 }
