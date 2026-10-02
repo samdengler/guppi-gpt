@@ -176,7 +176,17 @@ gateway URL, the user pool client id, the JWT discovery URL, the conversation lo
 and key secret, the alarm topic); their names are the `PARAM_*` constants in `stack.py`,
 and a project reads them with `ssm.StringParameter.value_for_string_parameter`. No project
 changes this stack or the Google OAuth client. The `guppi-agent` package installs by git
-URL (`agent/README.md`).
+URL (`agent/README.md`). A project agent's whole HTTP surface is `create_app(build_agent)`
+from `guppi_agent` (tag `kit-v0.2.0`): `build_agent(token)` returns an object whose `run`
+yields AG-UI events, Strands or not. The platform agent reads every `tools/list` page.
+
+A project's extension (`web/src/extensions.js`) gets tool and event renderers, `TOOL_CALL_START`
+and `TOOL_CALL_END` among the event types (a renderer that takes one leaves that call's
+status line to the extension), `setLabel` on the render context, `onSend` hooks that may
+set `forwardedProps` and AG-UI `state`, `onThread` for a new or switched thread, `status`
+and `token`. The page's own status line names the tool (`toolStatus` in `web/src/copy.js`),
+keeping the knowledge base wording for `docs___*`. The page's default palette is Sky; a
+manifest `theme` replaces it for that project.
 
 MCP Apps are hosted by the page itself (`docs/proposals/platform-phase-3.md`), for a
 project whose manifest lists `"mcp-apps"` in `capabilities`. When a tool result from the

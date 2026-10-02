@@ -133,10 +133,12 @@ the page as a built-in.
 | --- | --- | --- |
 | `guppi.project` | manifest object | The manifest as loaded |
 | `guppi.renderers.tool(name, fn)` | `fn(toolCall, slot, ctx)` | Render a tool call's arguments or result into the reply's attachment slot; called on `TOOL_CALL_END` and again when the result arrives |
-| `guppi.renderers.event(type, fn)` | `fn(event, slot, ctx)` | Handle an AG-UI event type the page does not render itself: `CUSTOM`, `STEP_STARTED`, `STEP_FINISHED`, `STATE_SNAPSHOT`, `STATE_DELTA` |
+| `guppi.renderers.event(type, fn)` | `fn(event, slot, ctx)` | Handle `TOOL_CALL_START`, `TOOL_CALL_END`, `CUSTOM`, `STEP_STARTED`, `STEP_FINISHED`, `STATE_SNAPSHOT` or `STATE_DELTA`; taking a tool call event leaves that call's status line to the extension |
 | `guppi.onSend(fn)` | `fn(runInput) -> runInput` | Add `forwardedProps` or `state` to the run before it is posted |
 | `guppi.status(text)` | | Set the reply's status line |
 | `guppi.token()` | `-> string` | The current access token, for a renderer that calls the tools gateway directly |
+| `guppi.onThread(fn)` | `fn({ threadId })` | Called on the first load, a new chat and a resumed or switched thread, so an extension can drop per-thread state |
+| `ctx.setLabel(text)` | in a renderer's context | Replaces the running reply's label, for example an agent name per delegation; history keeps text only |
 | `guppi.mcp` | client or `null` | A browser-side MCP client bound to `manifest.mcp`, when configured |
 
 Each reply gains a `reply-attachments` element after `reply-text`. Renderers write into
