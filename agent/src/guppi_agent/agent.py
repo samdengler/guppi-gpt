@@ -91,6 +91,28 @@ def project_tool_prefix(project: str) -> str:
     return f"{project.replace('-', '_')}___"
 
 
+#: A gateway with more pages than this is listed only this far, with a warning.
+MAX_TOOL_PAGES = 50
+
+
+def list_all_tools(client: Any) -> list[Any]:
+    """Every tool on the gateway, following `tools/list` pagination to the last page.
+
+    The first page alone hid `mcp-app___show_card` behind the `docs` target's tools on a
+    `DYNAMIC` target (guppi-mcp-app phase 2 report). Blocking, like the client itself.
+    """
+    tools: list[Any] = []
+    token = None
+    for _ in range(MAX_TOOL_PAGES):
+        page = client.list_tools_sync(pagination_token=token)
+        tools.extend(page)
+        token = getattr(page, "pagination_token", None)
+        if not token:
+            return tools
+    log.warning("tools/list still paginating after %d pages; using what was listed", MAX_TOOL_PAGES)
+    return tools
+
+
 def select_tools(tools: list[Any], retrieve_tool: str, project: str | None = None) -> list[Any]:
     """The retrieve tool, plus the project's own tools when the run names a project. The
     name as given is accepted as a prefix too, in case the gateway keeps a hyphen in a
@@ -223,7 +245,7 @@ class StrandsRun:
         # kept off the loop that streams the response.
         await asyncio.to_thread(client.start)
         try:
-            listed = await asyncio.to_thread(client.list_tools_sync)
+            listed = await asyncio.to_thread(list_all_tools, client)
             project = run_project(run_input)
             tools = select_tools(listed, settings.retrieve_tool, project)
             if not any(tool.tool_name == settings.retrieve_tool for tool in tools):

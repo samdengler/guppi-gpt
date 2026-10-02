@@ -172,7 +172,7 @@ class FakeMCPClient:
     def stop(self, *args):
         pass
 
-    def list_tools_sync(self):
+    def list_tools_sync(self, pagination_token=None):
         return [SimpleNamespace(tool_name="docs___Retrieve")]
 
     def _handle_tool_result(self, tool_use_id, call_tool_result):

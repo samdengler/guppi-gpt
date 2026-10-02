@@ -106,7 +106,7 @@ class FakeMCPClient:
     def stop(self, *args):
         pass
 
-    def list_tools_sync(self):
+    def list_tools_sync(self, pagination_token=None):
         return LISTED
 
 
@@ -155,3 +155,58 @@ async def test_a_default_run_builds_the_agent_with_retrieve_only(strands_fakes):
     built = await run_once({})
     assert names(built["tools"]) == [RETRIEVE]
     assert built["system_prompt"] == agent_module.system_prompt()
+
+
+class PagedClient:
+    """A fake MCP client whose tools/list answers in pages, like a DYNAMIC gateway target."""
+
+    def __init__(self, pages: list[list[str]]) -> None:
+        self.pages = pages
+        self.tokens_seen: list[str | None] = []
+
+    def list_tools_sync(self, pagination_token=None):
+        from strands.types.collections import PaginatedList
+
+        self.tokens_seen.append(pagination_token)
+        index = 0 if pagination_token is None else int(pagination_token)
+        next_token = str(index + 1) if index + 1 < len(self.pages) else None
+        tools = [SimpleNamespace(tool_name=n) for n in self.pages[index]]
+        return PaginatedList(tools, token=next_token)
+
+
+def test_every_tools_list_page_is_read():
+    client = PagedClient(
+        [
+            ["docs___Retrieve", "docs___AgenticRetrieveStream"],
+            ["mcp-app___show_card"],
+            ["mcp-app___card_clicked"],
+        ]
+    )
+    listed = agent_module.list_all_tools(client)
+    assert names(listed) == [
+        "docs___Retrieve",
+        "docs___AgenticRetrieveStream",
+        "mcp-app___show_card",
+        "mcp-app___card_clicked",
+    ]
+    assert client.tokens_seen == [None, "1", "2"]
+    selected = agent_module.select_tools(listed, RETRIEVE, "mcp-app")
+    assert names(selected) == [RETRIEVE, "mcp-app___show_card", "mcp-app___card_clicked"]
+
+
+def test_a_single_page_is_read_once():
+    client = PagedClient([["docs___Retrieve"]])
+    assert names(agent_module.list_all_tools(client)) == ["docs___Retrieve"]
+    assert client.tokens_seen == [None]
+
+
+def test_pagination_stops_at_the_page_limit(monkeypatch):
+    monkeypatch.setattr(agent_module, "MAX_TOOL_PAGES", 3)
+
+    class Endless:
+        def list_tools_sync(self, pagination_token=None):
+            from strands.types.collections import PaginatedList
+
+            return PaginatedList([SimpleNamespace(tool_name="x___y")], token="again")
+
+    assert len(agent_module.list_all_tools(Endless())) == 3
