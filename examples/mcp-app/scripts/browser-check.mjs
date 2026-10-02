@@ -11,7 +11,7 @@
 //   node scripts/browser-check.mjs E3 E6      only these
 //
 // Playwright and the platform's stack outputs are read from guppi-gpt (GUPPI_GPT_DIR,
-// default ../guppi-gpt); nothing there is written. The refresh token comes from
+// default ../.., the guppi-gpt repository root); nothing there is written. The refresh token comes from
 // $HOME/.config/guppi/test-session.json, as for guppi-gpt's test-token.sh. The user pool
 // client rotates refresh tokens on every use, so each rotation is written back to that
 // file, mode 600, under the same lock test-token.sh takes. No token is printed or logged.
@@ -23,7 +23,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const GUPPI_GPT = resolve(process.env.GUPPI_GPT_DIR || join(ROOT, "..", "guppi-gpt"));
+const GUPPI_GPT = resolve(process.env.GUPPI_GPT_DIR || join(ROOT, "..", ".."));
 const { chromium } = createRequire(join(GUPPI_GPT, "web", "package.json"))("playwright");
 
 const SITE = process.env.GUPPI_SITE_URL || "https://chat.dengler.io";

@@ -68,18 +68,21 @@ parameters. The contract, the routing, the manifest, and the extension API are i
 | Project | Repository | Page | What it is |
 | --- | --- | --- | --- |
 | GuppiGPT | this one | `https://chat.dengler.io/` | The platform's own agent: Strands on AgentCore, answering from the documentation knowledge base |
-| HR Assistant | [hr-super-agent](https://github.com/samdengler/hr-super-agent) | `https://chat.dengler.io/p/hr/` | An agent project: a Strands orchestrator routes each turn to Profile, Pay and Travel sub-agents over A2A and to HR tools over MCP, with every change confirmed before it commits |
-| HR Assistant (Connect) | [guppi-connect](https://github.com/samdengler/guppi-connect) | `https://chat.dengler.io/p/hr-connect/` | The same HR assistant with Amazon Connect's Agentic CX designer as the super-agent, over hr-super-agent's sub-agents and tools |
-| MCP App Lab | [guppi-mcp-app](https://github.com/samdengler/guppi-mcp-app) | `https://chat.dengler.io/p/mcp-app/` | A tools-only project: an MCP server whose tools return MCP Apps UI, offered by the platform agent |
+| HR Assistant | [guppi-hr](https://github.com/samdengler/guppi-hr) | `https://chat.dengler.io/p/hr/` | An agent project: a Strands orchestrator routes each turn to Profile, Pay and Travel sub-agents over A2A and to HR tools over MCP, with every change confirmed before it commits |
+| HR Assistant (Connect) | [guppi-hr](https://github.com/samdengler/guppi-hr), `connect/` | `https://chat.dengler.io/p/hr-connect/` | The same HR assistant with Amazon Connect's Agentic CX designer as the super-agent, over the same sub-agents and tools |
+| MCP App Lab | this one, [`examples/mcp-app/`](examples/mcp-app/) | `https://chat.dengler.io/p/mcp-app/` | A tools-only project: an MCP server whose tools return MCP Apps UI, offered by the platform agent |
 
-The two HR projects are two choices of super-agent over one set of sub-agents and tools.
-In hr-super-agent the super-agent is code: a Strands orchestrator on AgentCore Runtime,
-where one model call routes each turn and the routing policy, the clarifying question and
-the confirmation step are Python. In guppi-connect
-it is an Agentic CX designer canvas in Amazon Connect Customer, built from code with the
-designer SDK, where routing and confirmation are canvas nodes and Connect adds voice,
-messaging channels and escalation to a person. Both pages run the same four scenarios
-(hr-super-agent's `docs/demo.md`), so they can be compared turn by turn.
+The two HR projects are two choices of super-agent over one set of sub-agents and tools,
+both in guppi-hr. In its main stack the super-agent is code: a Strands orchestrator on
+AgentCore Runtime, where one model call routes each turn and the routing policy, the
+clarifying question and the confirmation step are Python. In `connect/` it is an Agentic
+CX designer canvas in Amazon Connect Customer, built from code with the designer SDK,
+where routing and confirmation are canvas nodes and Connect adds voice, messaging
+channels and escalation to a person. Both pages run the same four scenarios
+(guppi-hr's `docs/demo.md`), so they can be compared turn by turn.
+
+MCP App Lab lives here as an example: it touches nothing outside its folder and deploys its
+own stack, the way a project in another repository would.
 
 ## Documentation
 
@@ -103,6 +106,7 @@ disagree, fix one of them in the same change.
 | `infra/` | AWS CDK app (Python), one stack named `GuppiGpt` |
 | `agent/` | The agent container: FastAPI serving AG-UI over SSE on the AgentCore Runtime contract |
 | `web/` | The static page: sources in `src/`, esbuild bundle in `dist/` |
+| `examples/mcp-app/` | MCP App Lab, a tools-only project with its own workspace, stack and `AGENTS.md` |
 | `scripts/` | `deploy.sh`, `seed-content.sh` (refresh the knowledge base corpus), `ingest.sh` (index it), `test-token.sh` (an access token for scripted checks) |
 
 ## Prerequisites

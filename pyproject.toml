@@ -6,6 +6,8 @@ requires-python = ">=3.12"
 
 [tool.uv.workspace]
 members = ["infra", "agent"]
+# examples/ hold projects with their own workspace and lockfile.
+exclude = ["examples/*"]
 
 [dependency-groups]
 dev = [

@@ -2,7 +2,7 @@
 """Probe an MCP endpoint over streamable HTTP and print what comes back.
 
     uv run -- python scripts/probe.py http://localhost:8000/mcp
-    ../guppi-gpt/scripts/test-token.sh | uv run -- python scripts/probe.py <url> --token -
+    ../../scripts/test-token.sh | uv run -- python scripts/probe.py <url> --token -
 
 Runs the initialize handshake, then tools/list, tools/call on the show_card tool (the
 first tool whose name ends in `show_card`, so a gateway prefix is found), any further

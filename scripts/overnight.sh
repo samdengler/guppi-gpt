@@ -4,7 +4,7 @@
 # runs phases 1 to 4; with arguments, each `<repo dir>=<brief path>` in order, for example
 #   caffeinate -i scripts/overnight.sh \
 #     ~/src/github.com/samdengler/guppi-gpt=docs/proposals/platform-phase-5a.md \
-#     ~/src/github.com/samdengler/hr-super-agent=docs/phase-8.md A phase that exits
+#     ~/src/github.com/samdengler/guppi-hr=docs/phase-8.md A phase that exits
 # non-zero (a usage-limit pause is the usual cause) is retried after thirty minutes, up
 # to four attempts; the briefs are written to resume from their reports. Phases 2 to 4
 # depend on the one before, so a phase that fails every attempt ends the run.
@@ -20,7 +20,7 @@ set -uo pipefail
 
 SRC="$HOME/src/github.com/samdengler"
 GUPPI="$SRC/guppi-gpt"
-MCPAPP="$SRC/guppi-mcp-app"
+MCPAPP="$SRC/guppi-gpt/examples/mcp-app"
 LOG_DIR="$GUPPI/.deploy"
 mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/overnight-$(date +%Y%m%d-%H%M%S).log"

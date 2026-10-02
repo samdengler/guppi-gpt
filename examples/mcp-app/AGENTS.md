@@ -2,13 +2,15 @@
 
 ## Project Overview
 
-guppi-mcp-app is a tools-only project on the GuppiGPT platform (`chat.dengler.io`). It
+guppi-mcp-app is a tools-only project on the GuppiGPT platform (`chat.dengler.io`), kept
+in guppi-gpt as `examples/mcp-app/` (it was its own repository until 2 October 2026). It
 deploys one MCP server to AgentCore Runtime and registers it as a target on the platform's
 tools gateway, so the platform's Guppi agent offers its tools on the project page
 `https://chat.dengler.io/p/mcp-app/`. The page, sign-in, CloudFront, the gateways and the
-agent belong to the guppi-gpt repository; this repository never changes them. The contract
-between the two is the set of SSM parameters under `/guppi/platform/` and the project
-manifest, both described in guppi-gpt's `docs/proposals/platform.md`.
+agent belong to the rest of guppi-gpt; work in this folder never changes them, so it stays
+an honest example of a project in its own repository. The contract between the two is the
+set of SSM parameters under `/guppi/platform/` and the project manifest, both described in
+`../../docs/proposals/platform.md`. Commands below run from this folder.
 
 `show_card` returns an MCP Apps UI resource (`ui://mcp-app/card`), which the platform
 page renders in a sandboxed frame (guppi-gpt phase 3). Phase 4 added one tool per way an
@@ -117,7 +119,7 @@ line:
 
 ```sh
 url="$(aws ssm get-parameter --name /guppi/platform/tools-gateway-url --query Parameter.Value --output text)"
-../guppi-gpt/scripts/test-token.sh | uv run -- python scripts/probe.py "$url" --token -
+../../scripts/test-token.sh | uv run -- python scripts/probe.py "$url" --token -
 ```
 
 The container runs the same way:
@@ -141,7 +143,7 @@ final `deploy exit=<code>` line.
 
 The browser check runs every experiment on the live page with the test session (the same
 `$HOME/.config/guppi/test-session.json` guppi-gpt's `test-token.sh` uses), reading
-Playwright from `../guppi-gpt/web`:
+Playwright from `../../web` (the guppi-gpt page):
 
 ```sh
 node scripts/browser-check.mjs            # E1 to E6, screenshots in .deploy/phase-4-E<n>.png
