@@ -177,7 +177,9 @@ that day. The stack now keeps the token in the secret `DynatraceTokenSecret` (it
 the `no_echo` parameter `DynatraceApiToken`, or "unset" while the parameters are blank),
 grants only the runtime role read on it, and gives the runtime `DYNATRACE_TOKEN_SECRET_ARN`
 in place of the header. The image starts `python /app/otel_headers.py`, which reads the
-secret, sets the header in its own environment, and execs the usual
+secret, sets the header in its own environment (replacing the value AgentCore injects into
+the container, as the runtime variable did; keeping it gave 401 on every batch), and execs
+the usual
 `opentelemetry-instrument uvicorn ...`. The exporter reads its header once at startup, so
 the value has to be in the environment before `opentelemetry-instrument` runs. Without the
 ARN the launcher execs the command unchanged; a secret it cannot read is reported without
