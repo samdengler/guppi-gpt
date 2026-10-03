@@ -129,6 +129,27 @@ export function agentUrlFor(manifest) {
   return manifest.agent;
 }
 
+/** True when the manifest asks for a warm start ("warm-start" in `capabilities`). */
+export function wantsWarmStart(manifest) {
+  return Boolean(manifest) && Array.isArray(manifest.capabilities) && manifest.capabilities.includes("warm-start");
+}
+
+/**
+ * The AG-UI run input of a warm start: no messages and `forwardedProps.warm`, which the
+ * agent kit answers without a model call (docs/proposals/platform.md, "Warm start").
+ */
+export function warmRunInput({ threadId, runId, manifest }) {
+  return {
+    threadId,
+    runId,
+    messages: [],
+    tools: [],
+    context: [],
+    state: {},
+    forwardedProps: { ...(manifest ? { project: manifest.name } : {}), warm: true },
+  };
+}
+
 export const MAX_SUGGESTIONS = 6;
 const MAX_SUGGESTION_LABEL = 48;
 const MAX_SUGGESTION_PROMPT = 500;

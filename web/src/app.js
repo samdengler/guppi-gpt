@@ -8,7 +8,7 @@ import { initRum, identifyRumUser } from "./rum.js";
 import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideOnLoad, newestRefreshToken } from "./session.js";
 import { createExtensionHost, EXTENSION_EVENT_TYPES } from "./extensions.js";
 import { inviteBody, inviteResult, signInRefusal } from "./invite-core.js";
-import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, manifestUrl, checkManifest, mergeFeatures, brandFor, agentUrlFor, suggestionsFor, themeFor, THEME_KEYS, PROJECTS_URL, projectNames, projectCard, switcherEntries } from "./project.js";
+import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, manifestUrl, checkManifest, mergeFeatures, brandFor, agentUrlFor, suggestionsFor, themeFor, wantsWarmStart, warmRunInput, THEME_KEYS, PROJECTS_URL, projectNames, projectCard, switcherEntries } from "./project.js";
 
 (async () => {
   const $ = (id) => document.getElementById(id);
@@ -597,8 +597,36 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
     render();
   }
 
+  // A project whose manifest lists `warm-start` gets a run with no messages when a new
+  // thread starts, on the runtime session its runs use, so the agent is running and has
+  // opened what the first message needs by the time it is sent (docs/proposals/platform.md,
+  // "Warm start"). Fire and forget: a failed warm start only means the first message does
+  // that work itself. A token near expiry skips it, so the send's refresh is the only one.
+  const warmStart = wantsWarmStart(manifest);
+  async function warmThread() {
+    if (!warmStart || auth !== "signed-in" || messages.length > 0) return;
+    if (Date.now() >= tokenExpiresAt - 5 * 60 * 1000) return;
+    try {
+      const response = await fetch(agentUrl, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "text/event-stream",
+          authorization: `Bearer ${tokens.access_token}`,
+          "x-amzn-bedrock-agentcore-runtime-session-id": sessionId,
+          traceparent: newTraceparent().traceparent,
+        },
+        body: JSON.stringify(warmRunInput({ threadId, runId: crypto.randomUUID(), manifest })),
+      });
+      await response.text();
+    } catch (error) {
+      console.warn("guppigpt: warm start failed", error);
+    }
+  }
+
   function resetThread() {
     clearThreadState();
+    warmThread();
     accountMenu.hidden = true;
     if (historyEnabled) historyPanel.hidden = true;
   }
@@ -1081,6 +1109,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
       showChat();
       await resumeHistory();
       render();
+      warmThread();
       return;
     } catch (error) {
       // The exchange failed; fall back to the sign-in screen, where it can be retried.
@@ -1092,6 +1121,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
       case "show-chat":
         showChat();
         render();
+        warmThread();
         return;
       case "clear-and-show-sign-in":
         await clearSession();

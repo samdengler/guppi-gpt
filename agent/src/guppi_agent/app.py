@@ -7,8 +7,16 @@ events while the model or a tool is silent.
 
 `create_app(build_agent)` is the factory a project agent uses (docs/proposals/platform.md):
 `build_agent(token)` returns an object whose `run(run_input)` is an async iterator of
-AG-UI events, and optionally a `usage()` returning fields for the run log. This
-repository's own app is `create_app()`, which builds the Strands agent in agent.py.
+AG-UI events, and optionally a `usage()` returning fields for the run log and a
+`warm(run_input)` coroutine for a warm start. This repository's own app is `create_app()`,
+which builds the Strands agent in agent.py.
+
+A warm start is a run with no messages and `forwardedProps.warm` true, which the page sends
+when a thread starts on a project whose manifest lists the `warm-start` capability
+(docs/proposals/platform.md, "Warm start"). It reaches the same runtime session as the
+thread's runs, so the session's microVM is running by the first message, and the agent's
+`warm` can open what the first run needs. The stream carries only RUN_STARTED and
+RUN_FINISHED, or a RUN_ERROR when `warm` fails, and no thread record is written.
 """
 
 from __future__ import annotations
@@ -29,6 +37,7 @@ from ag_ui.core import (
     EventType,
     RunAgentInput,
     RunErrorEvent,
+    RunFinishedEvent,
     RunStartedEvent,
 )
 from ag_ui.encoder import EventEncoder
@@ -100,6 +109,35 @@ def subject_hash(token: str) -> str:
     return hashlib.sha256(sub.encode()).hexdigest()[:12]
 
 
+def is_warm(run: RunAgentInput) -> bool:
+    """True for a warm start: no messages and `forwardedProps.warm` set."""
+    props = run.forwarded_props
+    return not run.messages and isinstance(props, dict) and props.get("warm") is True
+
+
+async def warm_run(
+    run: RunAgentInput, token: str, record: dict, build_agent: BuildAgent
+) -> AsyncIterator[BaseEvent]:
+    """The events of a warm start; the agent's `warm`, when it has one, runs in between."""
+    record["warm"] = True
+    yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run.thread_id, run_id=run.run_id)
+    runner = build_agent(token)
+    warm = getattr(runner, "warm", None)
+    try:
+        if callable(warm):
+            await warm(run)
+    except Exception:
+        log.exception("warm start failed thread=%s run=%s", run.thread_id, run.run_id)
+        record["outcome"] = "error"
+        yield RunErrorEvent(type=EventType.RUN_ERROR, message="warm start failed", code="WARM_FAILED")
+        return
+    finally:
+        usage = getattr(runner, "usage", None)
+        if callable(usage):
+            record.update(usage())
+    yield RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=run.thread_id, run_id=run.run_id)
+
+
 def started_then_error(run: RunAgentInput, message: str, code: str) -> list[BaseEvent]:
     return [
         RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run.thread_id, run_id=run.run_id),
@@ -116,6 +154,10 @@ async def run_agent(
     run: RunAgentInput, token: str, record: dict, build_agent: BuildAgent = default_build_agent
 ) -> AsyncIterator[BaseEvent]:
     """Produce the AG-UI events for one run and fill in the log record as they pass."""
+    if is_warm(run):
+        async for event in warm_run(run, token, record, build_agent):
+            yield event
+        return
     reason = validate_run(run)
     if reason is not None:
         record["outcome"] = "error"
@@ -190,11 +232,15 @@ async def event_stream(
     finally:
         record["total_ms"] = elapsed_ms(record)
         record.pop("_t0", None)
-        if conversation_log.enabled():
+        if conversation_log.enabled() and not record.get("warm"):
             # The task writes the run line once it holds the pseudonym, then merges the run
             # into the thread record. Nothing on the stream waits for it.
             conversation_log.schedule_write(run, record, token)
         else:
+            if conversation_log.enabled():
+                # A warm start's line skips the pseudonym task, so it carries no subject
+                # at all rather than the plain hash the task would have replaced.
+                record.pop("sub", None)
             log.info(json.dumps(conversation_log.loggable(record), sort_keys=True))
 
 

@@ -358,3 +358,77 @@ def test_kit_exports_what_a_project_needs():
         "with_app_resources",
     ):
         assert hasattr(guppi_agent, name), name
+
+
+def warm_body() -> dict:
+    body = run_body()
+    body["forwardedProps"] = {"project": "hr", "warm": True}
+    return body
+
+
+async def test_a_warm_start_calls_the_agents_warm_and_skips_validation(caplog):
+    import guppi_agent
+
+    warmed: list[str] = []
+
+    class ProjectAgent:
+        def __init__(self, token: str) -> None:
+            pass
+
+        async def warm(self, run_input: RunAgentInput) -> None:
+            warmed.append(run_input.thread_id)
+
+        async def run(self, run_input: RunAgentInput):  # pragma: no cover - never called
+            raise AssertionError("a warm start is not a run")
+            yield
+
+        def usage(self) -> dict:
+            return {"connect_warm": True}
+
+    project_app = guppi_agent.create_app(ProjectAgent)
+    caplog.set_level("INFO", logger="guppi_agent")
+    async with AsyncClient(transport=ASGITransport(app=project_app), base_url="http://t") as c:
+        response = await c.post("/invocations", json=warm_body(), headers=HEADERS)
+    assert [e["type"] for e in parse_sse(response.text)] == ["RUN_STARTED", "RUN_FINISHED"]
+    assert warmed == ["t1"]
+    line = json.loads(caplog.records[-1].getMessage())
+    assert line["warm"] is True and line["connect_warm"] is True and line["messages"] == 0
+
+
+async def test_a_warm_start_without_a_warm_method_only_answers(client, fake_agent):
+    response = await post(client, warm_body())
+    assert [e["type"] for e in parse_sse(response.text)] == ["RUN_STARTED", "RUN_FINISHED"]
+    assert fake_agent.seen == []
+
+
+async def test_a_failed_warm_start_is_a_run_error():
+    import guppi_agent
+
+    class ProjectAgent:
+        def __init__(self, token: str) -> None:
+            pass
+
+        async def warm(self, run_input: RunAgentInput) -> None:
+            raise RuntimeError("no contact")
+
+        async def run(self, run_input: RunAgentInput):  # pragma: no cover
+            yield
+
+    project_app = guppi_agent.create_app(ProjectAgent)
+    async with AsyncClient(transport=ASGITransport(app=project_app), base_url="http://t") as c:
+        response = await c.post("/invocations", json=warm_body(), headers=HEADERS)
+    events = parse_sse(response.text)
+    assert [e["type"] for e in events] == ["RUN_STARTED", "RUN_ERROR"]
+    assert events[1]["code"] == "WARM_FAILED"
+
+
+async def test_warm_needs_no_messages_so_a_message_makes_it_a_normal_run(client, fake_agent):
+    body = run_body("hello")
+    body["forwardedProps"] = {"warm": True}
+    response = await post(client, body)
+    assert "TEXT_MESSAGE_CONTENT" in [e["type"] for e in parse_sse(response.text)]
+
+
+async def test_an_empty_run_without_warm_is_still_rejected(client, fake_agent):
+    response = await post(client, run_body())
+    assert parse_sse(response.text)[-1]["type"] == "RUN_ERROR"

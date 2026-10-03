@@ -12,6 +12,8 @@ import {
   resolveProject,
   suggestionsFor,
   themeFor,
+  wantsWarmStart,
+  warmRunInput,
   MAX_SUGGESTIONS,
 } from "../src/project.js";
 
@@ -216,4 +218,24 @@ test("themeFor takes a flat object as the light scheme and falls back to it for 
   assert.equal(themeFor(null), null);
   assert.equal(themeFor({ theme: "#c8102e" }), null);
   assert.equal(themeFor({ theme: { light: { bg: "url(x)" } } }), null);
+});
+
+test("wantsWarmStart reads the warm-start capability", () => {
+  assert.equal(wantsWarmStart({ ...DEMO, capabilities: ["warm-start"] }), true);
+  assert.equal(wantsWarmStart({ ...DEMO, capabilities: ["mcp-apps"] }), false);
+  assert.equal(wantsWarmStart({ ...DEMO, capabilities: "warm-start" }), false);
+  assert.equal(wantsWarmStart(null), false);
+});
+
+test("warmRunInput has no messages and marks the run warm", () => {
+  assert.deepEqual(warmRunInput({ threadId: "t1", runId: "r1", manifest: { name: "hr" } }), {
+    threadId: "t1",
+    runId: "r1",
+    messages: [],
+    tools: [],
+    context: [],
+    state: {},
+    forwardedProps: { project: "hr", warm: true },
+  });
+  assert.deepEqual(warmRunInput({ threadId: "t1", runId: "r1", manifest: null }).forwardedProps, { warm: true });
 });

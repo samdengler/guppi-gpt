@@ -12,7 +12,9 @@ git URL, pinned to a tag:
 A project's whole HTTP surface is the factory. `build_agent(token)` returns an object
 whose `run(run_input)` is an async iterator of AG-UI events (a Strands agent behind the
 `ag_ui_strands` adapter, or anything else that yields them), and optionally `usage()` with
-fields for the run log:
+fields for the run log and `warm(run_input)`, a coroutine the kit awaits for a warm start (a
+run with no messages and `forwardedProps.warm`, sent by the page when a thread starts on a
+project with the `warm-start` capability; kit-v0.3.0):
 
 ```python
 # my_project/app.py

@@ -116,7 +116,7 @@ fetched with `cache: "no-store"` at load, like `config.json`.
 | `agent` | yes | Path the AG-UI client posts to; `"platform"` means `/api/invocations`, the Guppi agent, for tools-only projects |
 | `features` | no | Booleans merged over `config.features` before `initFeatures` runs; browser overrides from `/flags.html` still win |
 | `extension` | no | Same-origin ES module the page imports after the manifest; absent means built-in behavior only |
-| `capabilities` | no | Built-in host renderers to enable, `mcp-apps` first |
+| `capabilities` | no | Built-in page behaviors to enable: `mcp-apps` (the MCP Apps host renderer) and `warm-start` ("Warm start" below) |
 | `mcp` | no | For a browser-side MCP connection: the CloudFront path to the tools gateway and the tool-name prefix this project owns |
 | `theme` | no | `{ light: {...}, dark: {...} }` of hex colors for the page's custom properties (`bg`, `fg`, `muted`, `border`, `surface`, `bubbleUser`, `accent`, `accentContrast`, `brand`); applied for the scheme in effect. Without one a project gets the page's default palette, Sky (blue actions on cool white, navy brand, from guppi-mcp-app). The page passes its palette to MCP Apps as the extension's style variables in `hostContext.styles` |
 | `suggestions` | no | Up to six `{ "label", "prompt" }` entries shown as pills under the empty state; a click sends the prompt. Plain text; the default project has none |
@@ -133,7 +133,7 @@ project highlighted, so switching projects is one click from anywhere.
 `web/src/projects.json` in this repository names the projects, in display order:
 
 ```json
-{ "projects": ["hr", "hr-connect", "mcp-app"] }
+{ "projects": ["hr", "hr-diy", "mcp-app"] }
 ```
 
 A card's text comes from that project's own manifest, fetched at load like the project
@@ -142,6 +142,24 @@ manifest is missing or unusable is left out, and any failure leaves the row hidd
 Adding a project to the row is one line here and a site deploy. A generated index was
 considered: keeping it current without touching every project's deploy takes a function
 on each manifest upload, which AGENTS.md asks to avoid, and projects are added rarely.
+
+## Warm start
+
+A project whose agent needs time before its first answer (a microVM to start, a contact to
+open, a session to set up) lists `warm-start` in `capabilities`. When a new thread starts,
+on sign-in or a new chat but not on a resumed thread, the page posts a run with no
+messages and `forwardedProps.warm: true` to the project's agent path, with the bearer, the
+runtime session id and a traceparent its runs use. The kit (kit-v0.3.0) answers it with
+`RUN_STARTED` and `RUN_FINISHED` and, when the agent built for the token has a
+`warm(run_input)` coroutine, awaits it in between; a failure is a `RUN_ERROR` with the code
+`WARM_FAILED`. No thread record is written, and the run log line carries `"warm": true`.
+
+The page does not wait for it, and the first message never depends on it: an agent's
+`warm` prepares what its runs would otherwise do on the first message, and a run that
+arrives while a warm start is still working shares or waits for that work. A token within
+five minutes of expiry skips the warm start, so a send's token refresh is never raced.
+The cost is the work for a thread nobody writes in; for the Connect project
+(guppi-hr `connect/`) that is one chat contact per new chat.
 
 ## Page extension API
 
