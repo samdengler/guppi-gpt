@@ -7,6 +7,7 @@ import { hintText, emptyStateText, toolStatus } from "./copy.js";
 import { initRum, identifyRumUser } from "./rum.js";
 import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideOnLoad, newestRefreshToken } from "./session.js";
 import { createExtensionHost, EXTENSION_EVENT_TYPES } from "./extensions.js";
+import { inviteBody, inviteResult, signInRefusal } from "./invite-core.js";
 import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, manifestUrl, checkManifest, mergeFeatures, brandFor, agentUrlFor, suggestionsFor, themeFor, THEME_KEYS } from "./project.js";
 
 (async () => {
@@ -29,6 +30,12 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
   const signinTitle = $("signin-title");
   const signinScreen = $("signin-screen");
   const googleBtn = $("google-signin-btn");
+  const signinNotice = $("signin-notice");
+  const inviteForm = $("invite-form");
+  const inviteError = $("invite-error");
+  const inviteBtn = $("invite-btn");
+  const inviteSent = $("invite-sent");
+  const inviteSentCopy = $("invite-sent-copy");
 
   const chatScreen = $("chat-screen");
   const threadWrap = $("thread-wrap");
@@ -690,6 +697,45 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
 
   googleBtn.addEventListener("click", startSignIn);
 
+  // ---- Invite requests (docs/proposals/invites.md) ----
+  // A visitor without access asks for an invite; the request goes to /api/invite, which
+  // mails Sam. Every value shown back is set with textContent.
+  inviteForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(inviteForm));
+    const checked = inviteBody(values);
+    if (!checked.ok) {
+      inviteError.textContent = checked.error;
+      inviteError.hidden = false;
+      return;
+    }
+    inviteError.hidden = true;
+    inviteBtn.disabled = true;
+    let status = 0;
+    try {
+      const response = await fetch("/api/invite", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(checked.body),
+      });
+      status = response.status;
+    } catch {
+      status = 0;
+    }
+    const result = inviteResult(status);
+    inviteBtn.disabled = false;
+    if (!result.ok) {
+      inviteError.textContent = result.text;
+      inviteError.hidden = false;
+      return;
+    }
+    inviteSentCopy.textContent =
+      `Thanks, ${checked.body.name}. Sam will look at your request and email ` +
+      `${checked.body.email} when you're in. Then sign in with that Google account.`;
+    inviteForm.hidden = true;
+    inviteSent.hidden = false;
+  });
+
   // ---- Send / retry ----
 
   async function send(text) {
@@ -907,6 +953,19 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
   // way. No stored session is the plain no-session case, unchanged.
 
   const code = new URLSearchParams(location.search).get("code");
+  // Cognito sends the browser back with an error instead of a code when the pre sign-up
+  // gate refuses a Google account, or when a sign-in fails some other way.
+  const refusal = code ? null : signInRefusal(location.search);
+  if (refusal) {
+    signinNotice.textContent =
+      refusal === "not-invited"
+        ? "This Google account doesn't have access yet. Request an invite below, and sign in again once Sam approves it."
+        : "Sign-in didn't complete. Try again.";
+    signinNotice.hidden = false;
+    history.replaceState(null, "", location.pathname);
+    signinScreen.hidden = false;
+    return;
+  }
   if (code) {
     try {
       await finishSignIn(code);

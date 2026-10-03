@@ -286,3 +286,32 @@ body {
 .approve-message { margin: 0; }
 .approve-message.ok { color: var(--accent); font-weight: 600; }
 .approve-message.error { color: var(--danger); }
+
+/* The sign-in screen's invite request (docs/proposals/invites.md). */
+.signin-card { width: min(25rem, 100%); }
+.signin-notice {
+  margin: 0 0 1rem; padding: .65rem .9rem; border-radius: .6rem; text-align: left; font-size: .9rem;
+  background: var(--surface); border: 1px solid var(--accent);
+}
+.invite-divider { display: flex; align-items: center; gap: .75rem; margin: 1.75rem 0 1.25rem; color: var(--muted); font-size: .82rem; }
+.invite-divider::before, .invite-divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.invite-form { display: flex; flex-direction: column; gap: .3rem; text-align: left; }
+.invite-form label { font-size: .82rem; font-weight: 600; margin-top: .5rem; }
+.invite-form input, .invite-form textarea {
+  font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--border);
+  border-radius: .5rem; padding: .55rem .75rem; resize: vertical;
+}
+.invite-form input:focus, .invite-form textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.invite-optional, .invite-hint { color: var(--muted); font-weight: 400; font-size: .78rem; }
+.invite-error { color: var(--danger); font-size: .85rem; margin: .5rem 0 0; }
+.secondary-btn {
+  margin-top: .9rem; background: var(--surface); color: var(--fg); border: 1px solid var(--border);
+  border-radius: .5rem; padding: .65rem 1.25rem; font: inherit; font-weight: 600; cursor: pointer;
+}
+.secondary-btn:hover { border-color: var(--accent); }
+.secondary-btn:disabled { opacity: .5; cursor: default; }
+.invite-sent {
+  margin-top: 1.75rem; padding: 1rem 1.15rem; border-radius: .75rem; text-align: left;
+  border: 1px solid var(--border); background: var(--surface); display: flex; flex-direction: column; gap: .25rem;
+}
+.invite-sent span { color: var(--muted); font-size: .9rem; }

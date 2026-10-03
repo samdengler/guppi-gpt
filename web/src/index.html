@@ -38,8 +38,27 @@
   <section id="signin-screen" class="signin-screen" hidden>
     <div class="signin-card">
       <h1 id="signin-title" class="signin-title">GuppiGPT</h1>
+      <p id="signin-notice" class="signin-notice" role="status" hidden></p>
       <p class="signin-copy">Sign in to start a conversation.</p>
       <button id="google-signin-btn" type="button" class="primary-btn">Continue with Google</button>
+
+      <div class="invite-divider"><span>No access yet?</span></div>
+      <form id="invite-form" class="invite-form" novalidate>
+        <label for="invite-name">Name</label>
+        <input id="invite-name" name="name" type="text" autocomplete="name" maxlength="100" required>
+        <label for="invite-email">Google account email</label>
+        <input id="invite-email" name="email" type="email" autocomplete="email" maxlength="254" required aria-describedby="invite-email-hint">
+        <span id="invite-email-hint" class="invite-hint">The address you'll sign in with.</span>
+        <label for="invite-note">Note <span class="invite-optional">(optional)</span></label>
+        <textarea id="invite-note" name="note" rows="3" maxlength="500"></textarea>
+        <p id="invite-error" class="invite-error" role="alert" hidden></p>
+        <button id="invite-btn" type="submit" class="secondary-btn">Request an invite</button>
+      </form>
+      <div id="invite-sent" class="invite-sent" role="status" hidden>
+        <strong>Request sent</strong>
+        <span id="invite-sent-copy"></span>
+      </div>
+
       <p class="legal-links"><a href="/privacy.html">Privacy</a> &middot; <a href="/terms.html">Terms</a></p>
     </div>
   </section>
