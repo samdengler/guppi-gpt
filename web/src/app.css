@@ -270,3 +270,19 @@ body {
 .flags-operational-note { color: var(--muted); font-size: .82rem; margin: 0 0 1rem; }
 
 [hidden] { display: none !important; }
+
+/* The invite approval page (approve.html, docs/proposals/invites.md). */
+.approve { max-width: 30rem; margin: 2rem auto 0; display: flex; flex-direction: column; gap: 1rem; }
+.approve-title { font-size: 1.4rem; margin: 0; color: var(--brand, inherit); }
+.approve-details {
+  display: grid; grid-template-columns: 6.5rem minmax(0, 1fr); gap: .6rem .75rem; margin: 0;
+  padding: 1rem 1.25rem; border: 1px solid var(--border); border-radius: .75rem; background: var(--surface);
+}
+.approve-details dt { color: var(--muted); font-size: .9rem; }
+.approve-details dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.approve-actions { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
+.approve-hint, .approve-note { color: var(--muted); font-size: .9rem; }
+.approve-note { margin: 0; font-size: .82rem; }
+.approve-message { margin: 0; }
+.approve-message.ok { color: var(--accent); font-weight: 600; }
+.approve-message.error { color: var(--danger); }

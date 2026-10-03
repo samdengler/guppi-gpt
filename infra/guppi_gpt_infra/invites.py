@@ -37,6 +37,10 @@ NOTE_MAX_LENGTH = 500
 REQUEST_RATE_PER_SECOND = 0.1
 REQUEST_BURST = 3
 EMAIL_PATTERN = "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+UUID_PATTERN = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+# The approval page's two calls are Sam's alone; a handful a minute is generous.
+APPROVAL_RATE_PER_SECOND = 0.5
+APPROVAL_BURST = 5
 
 # The PutItem body. Every value comes from the request the validator already accepted,
 # escaped for JSON with escapeJavaScript, whose \' JSON does not accept, so replaceAll puts
@@ -73,6 +77,61 @@ _REJECTED_TEMPLATE = r"""
 {"status":"requested"}
 #else
 {"message":"The request was rejected."}
+#end
+""".strip()
+
+
+# The approval page's lookup. The address and token come from the link's query string; the
+# details come back only when the stored token is the link's, so a guessed address alone
+# reveals nothing, and a miss looks the same whether or not the address asked.
+_LOOKUP_TEMPLATE = r"""
+{
+  "TableName": "TABLE",
+  "Key": {"email": {"S": "$util.escapeJavaScript($input.params('email').trim().toLowerCase()).replaceAll("\\'", "'")"}},
+  "ConsistentRead": true
+}
+""".strip().replace("TABLE", TABLE_NAME)
+
+_LOOKUP_RESPONSE = r"""
+#set($stored = $input.path('$.Item.token.S'))
+#if($stored && $stored == $input.params('token'))
+#set($note = $input.path('$.Item.note.S'))
+#if(!$note)#set($note = "")#end
+{"name":"$util.escapeJavaScript($input.path('$.Item.name.S')).replaceAll("\\'", "'")","email":"$util.escapeJavaScript($input.path('$.Item.email.S')).replaceAll("\\'", "'")","note":"$util.escapeJavaScript($note).replaceAll("\\'", "'")","requestedAt":$input.path('$.Item.requestedAt.N'),"status":"$input.path('$.Item.status.S')"}
+#else
+#set($context.responseOverride.status = 404)
+{"message":"No request matches this link."}
+#end
+""".strip()
+
+# Approval flips a pending request to approved, and only with the token the request was
+# created with: a wrong token, an approved or revoked request, or a missing one all fail
+# the condition, and the page says the link can't approve.
+_APPROVE_TEMPLATE = r"""
+#set($email = $util.escapeJavaScript($input.path('$.email').trim().toLowerCase()).replaceAll("\\'", "'"))
+#set($token = $util.escapeJavaScript($input.path('$.token')).replaceAll("\\'", "'"))
+{
+  "TableName": "TABLE",
+  "Key": {"email": {"S": "$email"}},
+  "UpdateExpression": "SET #s = :approved, decidedAt = :now",
+  "ConditionExpression": "#s = :pending AND #t = :token",
+  "ExpressionAttributeNames": {"#s": "status", "#t": "token"},
+  "ExpressionAttributeValues": {
+    ":approved":{"S":"approved"},
+    ":pending": {"S": "pending"},
+    ":token": {"S": "$token"},
+    ":now": {"N": "$context.requestTimeEpoch"}
+  }
+}
+""".strip().replace("TABLE", TABLE_NAME)
+
+_APPROVE_REJECTED = r"""
+#set($type = $input.path('$.__type'))
+#if($type && $type.contains("ConditionalCheckFailedException"))
+#set($context.responseOverride.status = 409)
+{"message":"This link can't approve: the request was already decided, or the link is wrong."}
+#else
+{"message":"The approval was rejected."}
 #end
 """.strip()
 
@@ -248,7 +307,10 @@ class Invites(Construct):
             description="Lets the invites REST API write a request into the invites table",
         )
         api_role.add_to_policy(
-            iam.PolicyStatement(actions=["dynamodb:PutItem"], resources=[self.table.table_arn])
+            iam.PolicyStatement(
+                actions=["dynamodb:PutItem", "dynamodb:GetItem", "dynamodb:UpdateItem"],
+                resources=[self.table.table_arn],
+            )
         )
         self.api = apigateway.RestApi(
             self,
@@ -262,7 +324,15 @@ class Invites(Construct):
                     "/api/invite/POST": apigateway.MethodDeploymentOptions(
                         throttling_rate_limit=REQUEST_RATE_PER_SECOND,
                         throttling_burst_limit=REQUEST_BURST,
-                    )
+                    ),
+                    "/api/invite/request/GET": apigateway.MethodDeploymentOptions(
+                        throttling_rate_limit=APPROVAL_RATE_PER_SECOND,
+                        throttling_burst_limit=APPROVAL_BURST,
+                    ),
+                    "/api/invite/approve/POST": apigateway.MethodDeploymentOptions(
+                        throttling_rate_limit=APPROVAL_RATE_PER_SECOND,
+                        throttling_burst_limit=APPROVAL_BURST,
+                    ),
                 },
             ),
             # The account-level API Gateway CloudWatch role is not this stack's; execution
@@ -338,6 +408,113 @@ class Invites(Construct):
                 apigateway.MethodResponse(status_code="202"),
                 apigateway.MethodResponse(status_code="400"),
             ],
+        )
+
+        # ---- The approval page's calls ------------------------------------------------
+        params_validator = self.api.add_request_validator(
+            "InviteParamsValidator",
+            request_validator_name="invite-params",
+            validate_request_body=False,
+            validate_request_parameters=True,
+        )
+        invite.add_resource("request").add_method(
+            "GET",
+            apigateway.AwsIntegration(
+                service="dynamodb",
+                action="GetItem",
+                integration_http_method="POST",
+                options=apigateway.IntegrationOptions(
+                    credentials_role=api_role,
+                    passthrough_behavior=apigateway.PassthroughBehavior.NEVER,
+                    request_templates={"application/json": _LOOKUP_TEMPLATE},
+                    integration_responses=[
+                        apigateway.IntegrationResponse(
+                            status_code="200",
+                            selection_pattern="200",
+                            response_templates={"application/json": _LOOKUP_RESPONSE},
+                        ),
+                        apigateway.IntegrationResponse(
+                            status_code="400",
+                            selection_pattern="4\\d{2}",
+                            response_templates={
+                                "application/json": '{"message":"The lookup was rejected."}'
+                            },
+                        ),
+                    ],
+                ),
+            ),
+            authorization_type=apigateway.AuthorizationType.NONE,
+            request_validator=params_validator,
+            request_parameters={
+                "method.request.querystring.email": True,
+                "method.request.querystring.token": True,
+            },
+            method_responses=[
+                apigateway.MethodResponse(status_code="200"),
+                apigateway.MethodResponse(status_code="400"),
+                apigateway.MethodResponse(status_code="404"),
+            ],
+        )
+        approval_model = self.api.add_model(
+            "InviteApprovalModel",
+            model_name="InviteApproval",
+            content_type="application/json",
+            description="Sam's approval of one request, with the token from its email",
+            schema=apigateway.JsonSchema(
+                schema=apigateway.JsonSchemaVersion.DRAFT4,
+                title="InviteApproval",
+                type=apigateway.JsonSchemaType.OBJECT,
+                required=["email", "token"],
+                additional_properties=False,
+                properties={
+                    "email": apigateway.JsonSchema(
+                        type=apigateway.JsonSchemaType.STRING,
+                        max_length=EMAIL_MAX_LENGTH,
+                        pattern=EMAIL_PATTERN,
+                    ),
+                    "token": apigateway.JsonSchema(
+                        type=apigateway.JsonSchemaType.STRING, pattern=UUID_PATTERN
+                    ),
+                },
+            ),
+        )
+        invite.add_resource("approve").add_method(
+            "POST",
+            apigateway.AwsIntegration(
+                service="dynamodb",
+                action="UpdateItem",
+                integration_http_method="POST",
+                options=apigateway.IntegrationOptions(
+                    credentials_role=api_role,
+                    passthrough_behavior=apigateway.PassthroughBehavior.NEVER,
+                    request_templates={"application/json": _APPROVE_TEMPLATE},
+                    integration_responses=[
+                        apigateway.IntegrationResponse(
+                            status_code="200",
+                            selection_pattern="200",
+                            response_templates={"application/json": '{"status":"approved"}'},
+                        ),
+                        apigateway.IntegrationResponse(
+                            status_code="400",
+                            selection_pattern="4\\d{2}",
+                            response_templates={"application/json": _APPROVE_REJECTED},
+                        ),
+                    ],
+                ),
+            ),
+            authorization_type=apigateway.AuthorizationType.NONE,
+            request_validator=validator,
+            request_models={"application/json": approval_model},
+            method_responses=[
+                apigateway.MethodResponse(status_code="200"),
+                apigateway.MethodResponse(status_code="400"),
+                apigateway.MethodResponse(status_code="409"),
+            ],
+        )
+        self.api.add_gateway_response(
+            "InviteBadRequestParametersResponse",
+            type=apigateway.ResponseType.BAD_REQUEST_PARAMETERS,
+            templates={"application/json": '{"message":$context.error.messageString}'},
         )
         self.api.add_gateway_response(
             "InviteBadRequestBodyResponse",

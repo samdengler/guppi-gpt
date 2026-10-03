@@ -46,11 +46,7 @@ def test_invites_table_is_keyed_by_email_streams_and_is_retained(template):
 
 
 def test_request_api_takes_an_unauthenticated_validated_post(template):
-    method = only(
-        template,
-        "AWS::ApiGateway::Method",
-        Properties={"HttpMethod": "POST", "RestApiId": {"Ref": Match.string_like_regexp("InvitesApi")}},
-    )
+    method = _method(template, "POST", "invite")
     props = method["Properties"]
     assert props["AuthorizationType"] == "NONE"
     assert "RequestValidatorId" in props
@@ -77,11 +73,7 @@ def test_request_model_bounds_every_field(template):
 
 
 def test_a_repeat_request_answers_like_the_first(template):
-    method = only(
-        template,
-        "AWS::ApiGateway::Method",
-        Properties={"HttpMethod": "POST", "RestApiId": {"Ref": Match.string_like_regexp("InvitesApi")}},
-    )
+    method = _method(template, "POST", "invite")
     responses = method["Properties"]["Integration"]["IntegrationResponses"]
     rejected = [r for r in responses if r.get("SelectionPattern") == "4\\d{2}"]
     assert len(rejected) == 1
@@ -148,3 +140,82 @@ def test_only_no_reply_may_send(template):
     policies = json.dumps(template.find_resources("AWS::IAM::Policy"))
     assert '"ses:SendEmail"' in policies
     assert '"ses:FromAddress": "no-reply@dengler.io"' in policies
+
+
+# ---- Phase 2: the approval page's two calls -------------------------------------------
+
+
+def _method(template: Template, http_method: str, path_part: str) -> dict:
+    resources = template.find_resources(
+        "AWS::ApiGateway::Resource", {"Properties": {"PathPart": path_part}}
+    )
+    (resource_id,) = [
+        rid for rid, r in resources.items() if "InvitesApi" in json.dumps(r["Properties"]["RestApiId"])
+    ]
+    return only(
+        template,
+        "AWS::ApiGateway::Method",
+        Properties={"HttpMethod": http_method, "ResourceId": {"Ref": resource_id}},
+    )
+
+
+def test_request_details_need_the_links_email_and_token(template):
+    props = _method(template, "GET", "request")["Properties"]
+    assert props["AuthorizationType"] == "NONE"
+    assert props["RequestParameters"] == {
+        "method.request.querystring.email": True,
+        "method.request.querystring.token": True,
+    }
+    integration = props["Integration"]
+    assert integration["Uri"]["Fn::Join"][1][-1].endswith(":dynamodb:action/GetItem")
+    (ok,) = [r for r in integration["IntegrationResponses"] if r.get("SelectionPattern") == "200"]
+    body = ok["ResponseTemplates"]["application/json"]
+    # The details come back only when the stored token matches the link's.
+    assert "$input.params('token')" in body
+    assert "responseOverride.status = 404" in body
+
+
+def test_approval_is_a_conditional_update_on_a_pending_request_with_its_token(template):
+    props = _method(template, "POST", "approve")["Properties"]
+    assert props["AuthorizationType"] == "NONE"
+    assert "RequestValidatorId" in props
+    integration = props["Integration"]
+    assert integration["Uri"]["Fn::Join"][1][-1].endswith(":dynamodb:action/UpdateItem")
+    text = integration["RequestTemplates"]["application/json"]
+    assert "#s = :pending AND #t = :token" in text
+    assert '":approved":{"S":"approved"}' in text
+    (rejected,) = [r for r in integration["IntegrationResponses"] if r.get("SelectionPattern") == "4\\d{2}"]
+    assert "responseOverride.status = 409" in rejected["ResponseTemplates"]["application/json"]
+
+
+def test_approval_model_takes_only_an_email_and_a_uuid_token(template):
+    schema = only(template, "AWS::ApiGateway::Model", Properties={"Name": "InviteApproval"})[
+        "Properties"
+    ]["Schema"]
+    assert schema["required"] == ["email", "token"]
+    assert schema["additionalProperties"] is False
+    assert "pattern" in schema["properties"]["token"]
+
+
+def test_the_api_role_may_read_and_update_but_not_delete(template):
+    roles = template.find_resources("AWS::IAM::Policy")
+    (policy,) = [p for k, p in roles.items() if k.startswith("InvitesApiRoleDefaultPolicy")]
+    actions = set()
+    for statement in policy["Properties"]["PolicyDocument"]["Statement"]:
+        listed = statement["Action"]
+        actions.update([listed] if isinstance(listed, str) else listed)
+    assert actions == {"dynamodb:PutItem", "dynamodb:GetItem", "dynamodb:UpdateItem"}
+
+
+def test_every_invite_method_is_throttled(template):
+    stage = only(
+        template,
+        "AWS::ApiGateway::Stage",
+        Properties={"StageName": "prod", "RestApiId": {"Ref": Match.string_like_regexp("InvitesApi")}},
+    )
+    throttled = {(s["ResourcePath"], s["HttpMethod"]) for s in stage["Properties"]["MethodSettings"]}
+    assert throttled >= {
+        ("/~1api~1invite", "POST"),
+        ("/~1api~1invite~1request", "GET"),
+        ("/~1api~1invite~1approve", "POST"),
+    }

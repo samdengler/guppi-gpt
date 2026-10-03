@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>GuppiGPT invite request</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="page">
+
+  <header class="app-header">
+    <span class="brand">GuppiGPT</span>
+  </header>
+
+  <main class="approve">
+    <h1 class="approve-title">Invite request</h1>
+    <dl id="approve-details" class="approve-details" hidden></dl>
+    <div id="approve-actions" class="approve-actions" hidden>
+      <button id="approve-btn" type="button" class="primary-btn">Approve</button>
+      <span class="approve-hint"><span id="approve-email"></span> can then sign in with Google.</span>
+    </div>
+    <p id="approve-message" class="approve-message" role="status" hidden></p>
+    <p class="approve-note">To decline, do nothing. A request stays pending until approved or revoked with scripts/invite.sh.</p>
+  </main>
+
+</div>
+<script src="approve.js"></script>
+</body>
+</html>
