@@ -267,6 +267,9 @@ PARAM_TOOLS_GATEWAY_URL = f"{PLATFORM_PARAMETER_PREFIX}/tools-gateway-url"
 # A project's MCP server Runtime grants InvokeAgentRuntime to this role.
 PARAM_TOOLS_GATEWAY_ROLE_ARN = f"{PLATFORM_PARAMETER_PREFIX}/tools-gateway-role-arn"
 PARAM_USER_POOL_CLIENT_ID = f"{PLATFORM_PARAMETER_PREFIX}/user-pool-client-id"
+PARAM_JWT_AUDIENCE = f"{PLATFORM_PARAMETER_PREFIX}/jwt-audience"
+# What scripts/okta.py publishes about the Okta issuer.
+OKTA_PARAMS = "/guppi/okta"
 PARAM_JWT_DISCOVERY_URL = f"{PLATFORM_PARAMETER_PREFIX}/jwt-discovery-url"
 PARAM_CONVERSATION_LOG_BUCKET_NAME = f"{PLATFORM_PARAMETER_PREFIX}/conversation-log-bucket-name"
 PARAM_CONVERSATION_LOG_KEY_SECRET_ARN = (
@@ -708,11 +711,16 @@ class GuppiGptStack(cdk.Stack):
             target=route53.RecordTarget.from_alias(CognitoDomainAlias(domain)),
         )
 
-        discovery_url = (
-            f"https://cognito-idp.{self.region}.amazonaws.com/"
-            f"{user_pool.user_pool_id}/.well-known/openid-configuration"
-        )
-        jwt_allowed_clients = [client.user_pool_client_id]
+        # Sign-in moved from Cognito to Okta (guppi-hr D46). scripts/okta.py configures the
+        # Okta org and publishes its issuer under /guppi/okta/*; every authorizer checks the
+        # issuer's signature and the audience `api://guppi`, which the `guppi` authorization
+        # server issues only to the chat.dengler.io app for members of chat-users. Okta's
+        # access tokens carry no client_id claim (it is cid), so audience replaces clients.
+        # The Cognito pool stays until the switch is proven, then goes.
+        discovery_url = ssm.StringParameter.value_for_string_parameter(self, f"{OKTA_PARAMS}/discovery-url")
+        jwt_audience = ssm.StringParameter.value_for_string_parameter(self, f"{OKTA_PARAMS}/audience")
+        okta_client_id = ssm.StringParameter.value_for_string_parameter(self, f"{OKTA_PARAMS}/client-id")
+        okta_host = cdk.Fn.select(2, cdk.Fn.split("/", discovery_url))
 
         # ---- Agent image ---------------------------------------------------------------
         image_uri = self.node.try_get_context("image_uri")
@@ -757,7 +765,7 @@ class GuppiGptStack(cdk.Stack):
             authorizer_configuration=agentcore.CfnGateway.AuthorizerConfigurationProperty(
                 custom_jwt_authorizer=agentcore.CfnGateway.CustomJWTAuthorizerConfigurationProperty(
                     discovery_url=discovery_url,
-                    allowed_clients=jwt_allowed_clients,
+                    allowed_audience=[jwt_audience],
                 )
             ),
             # protocol_type is left unset on purpose: runtime targets cannot be added to
@@ -946,7 +954,7 @@ class GuppiGptStack(cdk.Stack):
             authorizer_configuration=agentcore.CfnRuntime.AuthorizerConfigurationProperty(
                 custom_jwt_authorizer=agentcore.CfnRuntime.CustomJWTAuthorizerConfigurationProperty(
                     discovery_url=discovery_url,
-                    allowed_clients=jwt_allowed_clients,
+                    allowed_audience=[jwt_audience],
                     # Binding the runtime to the gateway is off by default. With it on, the
                     # runtime demands a transaction token, and the gateway only supplies
                     # one when it signs the request itself (GATEWAY_IAM_ROLE), which a JWT
@@ -1340,7 +1348,7 @@ class GuppiGptStack(cdk.Stack):
         # renders to the exact CSP the stack already had.
         csp_without_dynatrace = (
             "default-src 'self'; "
-            f"connect-src 'self' https://{AUTH_HOST}; "
+            f"connect-src 'self' https://{AUTH_HOST} https://{okta_host}; "
             "img-src 'self' data:; "
             "style-src 'self'; "
             "script-src 'self'; "
@@ -1351,7 +1359,7 @@ class GuppiGptStack(cdk.Stack):
         )
         csp_with_dynatrace = (
             "default-src 'self'; "
-            f"connect-src 'self' https://{AUTH_HOST} {dynatrace_beacon_origin.value_as_string}; "
+            f"connect-src 'self' https://{AUTH_HOST} https://{okta_host} {dynatrace_beacon_origin.value_as_string}; "
             "img-src 'self' data:; "
             "style-src 'self'; "
             "script-src 'self'; "
@@ -1816,7 +1824,7 @@ class GuppiGptStack(cdk.Stack):
             authorizer_configuration=agentcore.CfnGateway.AuthorizerConfigurationProperty(
                 custom_jwt_authorizer=agentcore.CfnGateway.CustomJWTAuthorizerConfigurationProperty(
                     discovery_url=discovery_url,
-                    allowed_clients=jwt_allowed_clients,
+                    allowed_audience=[jwt_audience],
                 )
             ),
             exception_level="DEBUG",
@@ -2330,8 +2338,11 @@ class GuppiGptStack(cdk.Stack):
             ("ToolsGatewayId", PARAM_TOOLS_GATEWAY_ID, tools_gateway.attr_gateway_identifier),
             ("ToolsGatewayUrl", PARAM_TOOLS_GATEWAY_URL, tools_gateway.attr_gateway_url),
             ("ToolsGatewayRoleArn", PARAM_TOOLS_GATEWAY_ROLE_ARN, tools_gateway_role.role_arn),
-            ("UserPoolClientId", PARAM_USER_POOL_CLIENT_ID, client.user_pool_client_id),
+            # The sign-in client (Okta's app since D46; the name predates it), the issuer's
+            # discovery URL, and the audience every authorizer checks.
+            ("UserPoolClientId", PARAM_USER_POOL_CLIENT_ID, okta_client_id),
             ("JwtDiscoveryUrl", PARAM_JWT_DISCOVERY_URL, discovery_url),
+            ("JwtAudience", PARAM_JWT_AUDIENCE, jwt_audience),
             (
                 "ConversationLogBucketName",
                 PARAM_CONVERSATION_LOG_BUCKET_NAME,

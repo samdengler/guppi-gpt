@@ -113,8 +113,17 @@ cd "$ROOT"
 bucket="$(jq -r '.GuppiGpt.SiteBucketName' "$OUTPUTS")"
 distribution="$(jq -r '.GuppiGpt.DistributionId' "$OUTPUTS")"
 
-jq --slurpfile features web/features.json '{
+# Sign-in is Okta's since guppi-hr D46: the issuer's endpoints come from what
+# scripts/okta.py published, and the page uses them in place of Cognito's (web/src/oidc.js).
+okta() { aws ssm get-parameter --name "/guppi/okta/$1" --query Parameter.Value --output text; }
+oidc="$(jq -n --arg issuer "$(okta issuer)" --arg clientId "$(okta client-id)" \
+  --arg authorizeUrl "$(okta authorize-url)" --arg tokenUrl "$(okta token-url)" \
+  --arg logoutUrl "$(okta logout-url)" \
+  '{issuer: $issuer, clientId: $clientId, authorizeUrl: $authorizeUrl, tokenUrl: $tokenUrl, logoutUrl: $logoutUrl}')"
+
+jq --slurpfile features web/features.json --argjson oidc "$oidc" '{
   region: "'"$AWS_REGION"'",
+  oidc: $oidc,
   userPoolClientId: .GuppiGpt.UserPoolClientId,
   authDomain: .GuppiGpt.AuthDomain,
   siteUrl: .GuppiGpt.SiteUrl,

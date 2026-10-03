@@ -6,8 +6,9 @@
 # user pool client rotates refresh tokens on every use, so the rotated token is written
 # back to that file before the access token is printed; the next call uses it.
 #
-# GUPPI_AUTH_DOMAIN and GUPPI_USER_POOL_CLIENT_ID come from the environment
-# (scripts/overnight.sh exports both), else from cdk-outputs.json.
+# The issuer is Okta's since guppi-hr D46: the token URL and the app's client id come from
+# GUPPI_TOKEN_URL and GUPPI_CLIENT_ID, else from what scripts/okta.py published to SSM
+# (/guppi/okta/token-url, /guppi/okta/client-id).
 #
 # No token is ever passed as a command argument (curl reads the form from stdin) or
 # written anywhere but that file and stdout. Errors name the OAuth error code only.
@@ -24,10 +25,10 @@ fail() { echo "test-token: $*" >&2; exit 1; }
 command -v jq >/dev/null || fail "jq is required"
 [[ -f "$SESSION_FILE" ]] || fail "no test session at $SESSION_FILE (run scripts/overnight.sh to seed it)"
 
-if [[ -z "${GUPPI_AUTH_DOMAIN:-}" || -z "${GUPPI_USER_POOL_CLIENT_ID:-}" ]]; then
-  [[ -f "$OUTPUTS" ]] || fail "set GUPPI_AUTH_DOMAIN and GUPPI_USER_POOL_CLIENT_ID, or deploy to write $OUTPUTS"
-  GUPPI_AUTH_DOMAIN="${GUPPI_AUTH_DOMAIN:-$(jq -r '.GuppiGpt.AuthDomain' "$OUTPUTS")}"
-  GUPPI_USER_POOL_CLIENT_ID="${GUPPI_USER_POOL_CLIENT_ID:-$(jq -r '.GuppiGpt.UserPoolClientId' "$OUTPUTS")}"
+if [[ -z "${GUPPI_TOKEN_URL:-}" || -z "${GUPPI_CLIENT_ID:-}" ]]; then
+  command -v aws >/dev/null || fail "set GUPPI_TOKEN_URL and GUPPI_CLIENT_ID, or install the AWS CLI"
+  GUPPI_TOKEN_URL="${GUPPI_TOKEN_URL:-$(aws ssm get-parameter --name /guppi/okta/token-url --query Parameter.Value --output text --region us-east-1)}"
+  GUPPI_CLIENT_ID="${GUPPI_CLIENT_ID:-$(aws ssm get-parameter --name /guppi/okta/client-id --query Parameter.Value --output text --region us-east-1)}"
 fi
 
 # One caller at a time: two concurrent refreshes of the same rotating token would leave
@@ -45,12 +46,12 @@ jq -e '.refreshToken | strings' "$SESSION_FILE" >/dev/null || fail "$SESSION_FIL
 # The form is built by jq from the file and piped to curl; printf is a shell builtin, so
 # no token reaches a process argument list.
 response="$(
-  jq -r --arg client "$GUPPI_USER_POOL_CLIENT_ID" \
+  jq -r --arg client "$GUPPI_CLIENT_ID" \
     '"grant_type=refresh_token&client_id=\($client | @uri)&refresh_token=\(.refreshToken | @uri)"' \
     "$SESSION_FILE" |
-    curl -sS --max-time 30 -X POST "https://$GUPPI_AUTH_DOMAIN/oauth2/token" \
+    curl -sS --max-time 30 -X POST "$GUPPI_TOKEN_URL" \
       -H "content-type: application/x-www-form-urlencoded" --data-binary @-
-)" || fail "token request to $GUPPI_AUTH_DOMAIN failed"
+)" || fail "token request to $GUPPI_TOKEN_URL failed"
 
 access_token="$(printf '%s' "$response" | jq -r '.access_token // empty' 2>/dev/null || true)"
 if [[ -z "$access_token" ]]; then

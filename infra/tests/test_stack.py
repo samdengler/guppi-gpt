@@ -72,10 +72,11 @@ def test_runtime_is_agui_and_not_bound_to_gateway_by_default(template):
             "ProtocolConfiguration": "AGUI",
             "NetworkConfiguration": {"NetworkMode": "PUBLIC"},
             "AuthorizerConfiguration": {
+                # Okta since guppi-hr D46: the issuer's discovery URL and the audience.
                 "CustomJWTAuthorizer": Match.object_equals(
                     {
                         "DiscoveryUrl": Match.any_value(),
-                        "AllowedClients": Match.any_value(),
+                        "AllowedAudience": Match.any_value(),
                     }
                 )
             },
@@ -267,6 +268,27 @@ def headers_policy(template, comment_prefix: str) -> tuple[str, dict]:
     return policy_id, policy
 
 
+def render(value) -> str:
+    """A CloudFormation string with each token shown as a placeholder: the Okta host
+    (from the SSM discovery URL) as <okta>, a parameter reference as <Name>."""
+    if isinstance(value, str):
+        return value
+    if "Fn::Join" in value:
+        return "".join(render(part) for part in value["Fn::Join"][1])
+    if "Fn::Select" in value:
+        return "<okta>"
+    if "Ref" in value:
+        return f"<{value['Ref']}>"
+    return "<token>"
+
+
+CSP_WITHOUT_BEACON = (
+    "default-src 'self'; connect-src 'self' https://auth.dengler.io https://<okta>; "
+    "img-src 'self' data:; style-src 'self'; script-src 'self'; "
+    "frame-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+)
+
+
 def test_response_headers_policy_has_the_csp_and_is_on_the_default_behavior(template):
     (policy_id, policy) = headers_policy(template, "CSP and security headers for the static page")
     csp = policy["Properties"]["ResponseHeadersPolicyConfig"]["SecurityHeadersConfig"][
@@ -275,11 +297,7 @@ def test_response_headers_policy_has_the_csp_and_is_on_the_default_behavior(temp
     # DynatraceBeaconOrigin defaults blank, so the CSP the stack renders without that
     # parameter set is the false branch of the Fn::If (test_csp_adds_the_beacon_origin_
     # only_when_the_parameter_is_set below checks both branches).
-    assert csp["Fn::If"][2] == (
-        "default-src 'self'; connect-src 'self' https://auth.dengler.io; "
-        "img-src 'self' data:; style-src 'self'; script-src 'self'; "
-        "frame-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
-    )
+    assert render(csp["Fn::If"][2]) == CSP_WITHOUT_BEACON
     template.has_resource_properties(
         "AWS::CloudFront::Distribution",
         {
@@ -471,20 +489,10 @@ def test_csp_adds_the_beacon_origin_only_when_the_parameter_is_set(template):
     assert if_branches[0] == "HasDynatraceBeaconOrigin"
     # Rendering with the parameter unset (the default): the same CSP the stack had
     # before Dynatrace, with no beacon origin appended.
-    without_beacon = if_branches[2]
-    assert without_beacon == (
-        "default-src 'self'; connect-src 'self' https://auth.dengler.io; "
-        "img-src 'self' data:; style-src 'self'; script-src 'self'; "
-        "frame-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
-    )
+    assert render(if_branches[2]) == CSP_WITHOUT_BEACON
     # Rendering with the parameter set: the beacon origin joined into connect-src.
-    with_beacon = if_branches[1]
-    joined = with_beacon["Fn::Join"][1]
-    rendered = "".join(
-        part if isinstance(part, str) else "<DynatraceBeaconOrigin>" for part in joined
-    )
-    assert rendered == (
-        "default-src 'self'; connect-src 'self' https://auth.dengler.io "
+    assert render(if_branches[1]) == (
+        "default-src 'self'; connect-src 'self' https://auth.dengler.io https://<okta> "
         "<DynatraceBeaconOrigin>; img-src 'self' data:; style-src 'self'; "
         "script-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'self'; "
         "form-action 'self'"
@@ -1065,7 +1073,6 @@ PLATFORM_PARAMETERS_FROM_OUTPUTS = {
     "/guppi/platform/site-url": "SiteUrl",
     "/guppi/platform/edge-gateway-arn": "GatewayArn",
     "/guppi/platform/tools-gateway-url": "ToolsGatewayUrl",
-    "/guppi/platform/user-pool-client-id": "UserPoolClientId",
     "/guppi/platform/conversation-log-bucket-name": "ConversationLogBucketName",
     "/guppi/platform/conversation-log-key-secret-arn": "ConversationLogKeySecretArn",
     "/guppi/platform/alarm-topic-arn": "AlarmTopicArn",
@@ -1096,6 +1103,8 @@ def test_platform_parameters_are_the_contract_names(template):
         "/guppi/platform/tools-gateway-id",
         "/guppi/platform/tools-gateway-role-arn",
         "/guppi/platform/jwt-discovery-url",
+        "/guppi/platform/jwt-audience",
+        "/guppi/platform/user-pool-client-id",
         "/guppi/platform/dynatrace-traces-endpoint",
         "/guppi/platform/dynatrace-token-secret-arn",
     }
@@ -1131,7 +1140,7 @@ def test_platform_jwt_parameters_match_the_edge_gateway_authorizer(template):
     _, gateway = gateway_by_name(template, "guppi-gpt-edge")
     authorizer = gateway["Properties"]["AuthorizerConfiguration"]["CustomJWTAuthorizer"]
     assert parameters["/guppi/platform/jwt-discovery-url"] == authorizer["DiscoveryUrl"]
-    assert [parameters["/guppi/platform/user-pool-client-id"]] == authorizer["AllowedClients"]
+    assert [parameters["/guppi/platform/jwt-audience"]] == authorizer["AllowedAudience"]
 
 
 def function_code(template, comment_prefix: str) -> tuple[str, dict]:
