@@ -101,7 +101,8 @@ def subject_hash(token: str) -> str:
         payload = token.split(".")[1]
         padded = payload + "=" * (-len(payload) % 4)
         claims = json.loads(base64.urlsafe_b64decode(padded))
-        sub = str(claims.get("sub", ""))
+        # Okta access tokens carry the stable user id in uid; their sub is the login (email).
+        sub = str(claims.get("uid") or claims.get("sub", ""))
     except Exception:
         sub = ""
     if not sub:

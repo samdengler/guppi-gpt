@@ -96,7 +96,9 @@ def claims(token: str) -> dict:
 
 def subject_from_token(token: str, key: bytes) -> str:
     """The pseudonym for a token's sub claim: the HMAC of the sub, truncated to 128 bits."""
-    sub = str(claims(token).get("sub", ""))
+    found = claims(token)
+    # Okta access tokens carry the stable user id in uid; their sub is the login (email).
+    sub = str(found.get("uid") or found.get("sub", ""))
     if not sub:
         return "unknown"
     return hmac.new(key, sub.encode(), hashlib.sha256).hexdigest()[:SUBJECT_HEX_CHARS]

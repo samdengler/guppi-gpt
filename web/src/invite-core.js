@@ -11,13 +11,20 @@ export const NAME_MAX = 100;
 export const EMAIL_MAX = 254;
 export const NOTE_MAX = 500;
 
-/** "not-invited" when the gate refused this Google account, "failed" for any other sign-in
- * error Cognito sent back, or null when the URL carries none. */
+// Okta sends an employee who is not assigned to the app back with access_denied and this
+// description ("User is not assigned to the client application.").
+const NOT_ASSIGNED = /not assigned/i;
+
+/** "not-invited" when the issuer refused this account (Cognito's pre sign-up gate, or an
+ * Okta user not assigned to the app), "failed" for any other sign-in error, or null when
+ * the URL carries none. */
 export function signInRefusal(search) {
   const params = new URLSearchParams(search);
   if (!params.has("error")) return null;
   const description = params.get("error_description") || "";
-  return description.includes(NOT_INVITED_MARKER) ? "not-invited" : "failed";
+  if (description.includes(NOT_INVITED_MARKER)) return "not-invited";
+  if (params.get("error") === "access_denied" && NOT_ASSIGNED.test(description)) return "not-invited";
+  return "failed";
 }
 
 /** The JSON body for /api/invite from the form's values, or the first problem with them. */

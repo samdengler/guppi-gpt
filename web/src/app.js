@@ -8,6 +8,7 @@ import { initRum, identifyRumUser } from "./rum.js";
 import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideOnLoad, newestRefreshToken } from "./session.js";
 import { createExtensionHost, EXTENSION_EVENT_TYPES } from "./extensions.js";
 import { inviteBody, inviteResult, signInRefusal } from "./invite-core.js";
+import { oidcEndpoints, logoutUrl } from "./oidc.js";
 import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, manifestUrl, checkManifest, mergeFeatures, brandFor, agentUrlFor, suggestionsFor, themeFor, wantsWarmStart, warmRunInput, THEME_KEYS, PROJECTS_URL, projectNames, projectCard, switcherEntries } from "./project.js";
 
 (async () => {
@@ -239,7 +240,8 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
       if (message) message.feedback = event.detail.vote;
     });
   }
-  const authBase = `https://${config.authDomain}`;
+  // Cognito's hosted UI, or a standard OIDC issuer (Okta) when config.json has `oidc`.
+  const signin = oidcEndpoints(config);
   const redirectUri = config.siteUrl;
 
   const tokens = {};        // access_token, id_token, refresh_token; access/id token: memory only
@@ -420,23 +422,23 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
   const sha256 = async (text) => crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   const decodeJwt = (jwt) => JSON.parse(atob(jwt.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
 
-  // ---- Sign-in: PKCE authorization code flow against Cognito, identity_provider=Google ----
+  // ---- Sign-in: PKCE authorization code flow against the issuer in config.json ----
 
   async function startSignIn() {
     const verifier = randomString();
     sessionStorage.setItem("pkce_verifier", verifier);
     const params = new URLSearchParams({
-      client_id: config.userPoolClientId,
+      client_id: signin.clientId,
       response_type: "code",
-      scope: "openid email profile",
+      scope: signin.scope,
       redirect_uri: redirectUri,
-      identity_provider: "Google",
+      ...signin.authorizeExtra,
       code_challenge_method: "S256",
       code_challenge: b64url(await sha256(verifier)),
       // Where to come back to; finishSignIn accepts only / and /p/<name>/ from it.
       state: projectPath(project),
     });
-    location.assign(`${authBase}/oauth2/authorize?${params}`);
+    location.assign(`${signin.authorize}?${params}`);
   }
 
   async function finishSignIn(code) {
@@ -444,12 +446,12 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
     sessionStorage.removeItem("pkce_verifier");
     const body = new URLSearchParams({
       grant_type: "authorization_code",
-      client_id: config.userPoolClientId,
+      client_id: signin.clientId,
       code,
       redirect_uri: redirectUri,
       code_verifier: verifier,
     });
-    const response = await fetch(`${authBase}/oauth2/token`, {
+    const response = await fetch(signin.token, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body,
@@ -485,10 +487,10 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
     if (!tokens.refresh_token) return;
     const body = new URLSearchParams({
       grant_type: "refresh_token",
-      client_id: config.userPoolClientId,
+      client_id: signin.clientId,
       refresh_token: tokens.refresh_token,
     });
-    const response = await fetch(`${authBase}/oauth2/token`, {
+    const response = await fetch(signin.token, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body,
@@ -505,12 +507,12 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
   async function silentRefresh(session) {
     const body = new URLSearchParams({
       grant_type: "refresh_token",
-      client_id: config.userPoolClientId,
+      client_id: signin.clientId,
       refresh_token: session.refreshToken,
     });
     let response;
     try {
-      response = await fetch(`${authBase}/oauth2/token`, {
+      response = await fetch(signin.token, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },
         body,
@@ -558,6 +560,8 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
   }
 
   async function signOut() {
+    // An OIDC issuer's logout takes the id token as a hint, so it is kept until the URL is built.
+    const idToken = tokens.id_token;
     Object.keys(tokens).forEach((key) => delete tokens[key]);
     tokenExpiresAt = 0;
     auth = "anonymous";
@@ -569,11 +573,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
       // Storage was unavailable to begin with; there is nothing to clear.
     }
     await clearSession();
-    const params = new URLSearchParams({
-      client_id: config.userPoolClientId,
-      logout_uri: config.siteUrl,
-    });
-    location.assign(`${authBase}/logout?${params}`);
+    location.assign(logoutUrl(signin, { siteUrl: config.siteUrl, idToken }));
   }
 
   // ---- Render / state ----
