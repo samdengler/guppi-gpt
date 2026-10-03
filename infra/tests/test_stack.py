@@ -762,6 +762,7 @@ def test_vended_log_groups_have_30_day_retention_under_the_shared_prefix(templat
         "/aws/vendedlogs/bedrock-agentcore/guppi-gpt-edge",
         "/aws/vendedlogs/bedrock-agentcore/guppi-gpt-tools",
         "/aws/vendedlogs/bedrock-agentcore/guppi_gpt",
+        "/aws/vendedlogs/states/guppi-gpt-invite-mailer",
     }
     for group in groups.values():
         assert group["Properties"]["RetentionInDays"] == 30
@@ -893,18 +894,26 @@ def test_dynatrace_subscription_filters_target_the_three_vended_log_groups(templ
         props = f["Properties"]
         assert props["DestinationArn"] == {"Fn::GetAtt": [stream_logical_id, "Arn"]}
         log_group_refs.add(props["LogGroupName"]["Ref"])
-    vended_log_group_ids = set(
-        template.find_resources(
+    # The AgentCore groups only; the invite mailer's error log stays out of Dynatrace.
+    vended_log_group_ids = {
+        logical_id
+        for logical_id, group in template.find_resources(
             "AWS::Logs::LogGroup",
             Match.object_like({"Properties": {"LogGroupName": Match.any_value()}}),
-        ).keys()
-    )
+        ).items()
+        if group["Properties"]["LogGroupName"].startswith("/aws/vendedlogs/bedrock-agentcore/")
+    }
     assert log_group_refs == vended_log_group_ids
 
 
 def test_feedback_method_needs_a_cognito_token_and_a_validated_body(template):
     methods = template.find_resources("AWS::ApiGateway::Method")
-    (method,) = [m for m in methods.values() if m["Properties"]["HttpMethod"] == "POST"]
+    (method,) = [
+        m
+        for m in methods.values()
+        if m["Properties"]["HttpMethod"] == "POST"
+        and "FeedbackApi" in json.dumps(m["Properties"]["RestApiId"])
+    ]
     props = method["Properties"]
     assert props["AuthorizationType"] == "COGNITO_USER_POOLS"
     assert "AuthorizerId" in props
@@ -913,9 +922,13 @@ def test_feedback_method_needs_a_cognito_token_and_a_validated_body(template):
     assert props["AuthorizationScopes"] == ["openid"]
     assert "RequestValidatorId" in props
     assert props["MethodResponses"] == [{"StatusCode": "202"}, {"StatusCode": "400"}]
-    (validator,) = template.find_resources("AWS::ApiGateway::RequestValidator").values()
+    (validator,) = template.find_resources(
+        "AWS::ApiGateway::RequestValidator", {"Properties": {"Name": "feedback-body"}}
+    ).values()
     assert validator["Properties"]["ValidateRequestBody"] is True
-    (model,) = template.find_resources("AWS::ApiGateway::Model").values()
+    (model,) = template.find_resources(
+        "AWS::ApiGateway::Model", {"Properties": {"Name": "FeedbackVote"}}
+    ).values()
     schema = model["Properties"]["Schema"]
     assert schema["additionalProperties"] is False
     assert set(schema["required"]) == {"vote", "runId", "threadId"}
@@ -924,7 +937,12 @@ def test_feedback_method_needs_a_cognito_token_and_a_validated_body(template):
 
 def test_feedback_integration_puts_one_event_on_the_bus_with_no_compute(template):
     methods = template.find_resources("AWS::ApiGateway::Method")
-    (method,) = [m for m in methods.values() if m["Properties"]["HttpMethod"] == "POST"]
+    (method,) = [
+        m
+        for m in methods.values()
+        if m["Properties"]["HttpMethod"] == "POST"
+        and "FeedbackApi" in json.dumps(m["Properties"]["RestApiId"])
+    ]
     integration = method["Properties"]["Integration"]
     assert integration["Type"] == "AWS"
     assert integration["IntegrationHttpMethod"] == "POST"
@@ -953,6 +971,7 @@ def test_feedback_behavior_is_matched_before_the_api_wildcard(template):
     # a vote reaches the feedback API rather than the edge gateway only while this holds.
     assert [b["PathPattern"] for b in config["CacheBehaviors"]] == [
         "/api/feedback",
+        "/api/invite*",
         "/api/*",
         "/sandbox/*",
     ]
@@ -1152,7 +1171,7 @@ def test_agent_path_function_is_on_the_api_wildcard_only(template):
     assert viewer_request_function(behaviors["/api/*"]) == agent_id
     # The feedback behavior keeps its path and is still matched first.
     assert "FunctionAssociations" not in behaviors["/api/feedback"]
-    assert list(behaviors) == ["/api/feedback", "/api/*", "/sandbox/*"]
+    assert list(behaviors) == ["/api/feedback", "/api/invite*", "/api/*", "/sandbox/*"]
 
 
 def test_sandbox_behavior_serves_the_site_bucket_with_the_sandbox_headers(template):

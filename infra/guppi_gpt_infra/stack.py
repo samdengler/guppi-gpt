@@ -116,6 +116,8 @@ from aws_cdk import (
 )
 from constructs import Construct
 
+from guppi_gpt_infra.invites import Invites
+
 ZONE_NAME = "dengler.io"
 CHAT_HOST = f"chat.{ZONE_NAME}"
 AUTH_HOST = f"auth.{ZONE_NAME}"
@@ -412,6 +414,22 @@ class GuppiGptStack(cdk.Stack):
             "HasAlarmEmail",
             expression=cdk.Fn.condition_not(
                 cdk.Fn.condition_equals(alarm_email.value_as_string, "")
+            ),
+        )
+        # Invite requests mail this address (docs/proposals/invites.md); scripts/deploy.sh
+        # passes GUPPI_INVITE_EMAIL, so the address never sits in the repository.
+        invite_email = cdk.CfnParameter(
+            self,
+            "InviteEmail",
+            type="String",
+            default="",
+            description="Address invite requests are sent to; blank sends them nowhere",
+        )
+        has_invite_email = cdk.CfnCondition(
+            self,
+            "HasInviteEmail",
+            expression=cdk.Fn.condition_not(
+                cdk.Fn.condition_equals(invite_email.value_as_string, "")
             ),
         )
         investigator_principal_arn = cdk.CfnParameter(
@@ -990,6 +1008,18 @@ class GuppiGptStack(cdk.Stack):
         )
         target.node.add_dependency(invoke_policy)
 
+        # ---- Invite requests ------------------------------------------------------------
+        # Requests from the sign-in screen, the table of who may sign in, and the email
+        # to Sam (docs/proposals/invites.md).
+        invites = Invites(
+            self,
+            "Invites",
+            zone=zone,
+            site_url=SITE_URL,
+            invite_email=invite_email,
+            has_invite_email=has_invite_email,
+        )
+
         # ---- Reply feedback --------------------------------------------------------------
         # A vote on a reply is a business event, not part of the chat, so it does not go
         # through the chat runtime and it is not attached to the turn's trace. The page
@@ -1266,6 +1296,16 @@ class GuppiGptStack(cdk.Stack):
             protocol_policy=cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
         )
 
+        # The origin for /api/invite and /api/invite/approve: the invites API's regional
+        # endpoint under its stage, as for the feedback API. These calls come from people
+        # who are not signed in, so the API has no authorizer; its validator, throttling and
+        # the table's conditions are what it has.
+        invites_api_origin = origins.HttpOrigin(
+            invites.origin_domain,
+            origin_path=invites.origin_path,
+            protocol_policy=cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+        )
+
         # ---- Site and CloudFront -------------------------------------------------------
         site_bucket = s3.Bucket(
             self,
@@ -1406,11 +1446,18 @@ class GuppiGptStack(cdk.Stack):
                 ],
             ),
             # CloudFront compares the request path against these patterns in the order
-            # they are listed, so the exact feedback path comes before the wildcard that
-            # would otherwise swallow it and send a vote to the edge gateway.
+            # they are listed, so the feedback and invite paths come before the wildcard that
+            # would otherwise swallow them and send them to the edge gateway.
             additional_behaviors={
                 "/api/feedback": cloudfront.BehaviorOptions(
                     origin=feedback_api_origin,
+                    viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
+                    allowed_methods=cloudfront.AllowedMethods.ALLOW_ALL,
+                    cache_policy=cloudfront.CachePolicy.CACHING_DISABLED,
+                    origin_request_policy=cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+                ),
+                "/api/invite*": cloudfront.BehaviorOptions(
+                    origin=invites_api_origin,
                     viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
                     allowed_methods=cloudfront.AllowedMethods.ALLOW_ALL,
                     cache_policy=cloudfront.CachePolicy.CACHING_DISABLED,

@@ -146,6 +146,8 @@ CloudFormation reuses the stack's existing values; `scripts/deploy.sh --reuse-pa
 skips the 1Password reads on purpose for the same effect, so a code-only redeploy never
 prompts for the vault (not for a first deploy, which has no previous values). `GUPPI_ALARM_EMAIL`, when set, becomes
 the `AlarmEmail` parameter and subscribes that address to the alarm topic.
+`GUPPI_INVITE_EMAIL`, when set, becomes the `InviteEmail` parameter: invite requests are
+mailed there, and SES verifies it (docs/proposals/invites.md). Later deploys reuse it.
 `GUPPI_INVESTIGATOR_ARN`, when set, becomes the `InvestigatorPrincipalArn` parameter and
 narrows the conversation investigator role's trust to that one ARN; left unset, the role
 trusts the account root. `scripts/deploy.sh --site-only` skips `cdk deploy` (so no image build or push) and
