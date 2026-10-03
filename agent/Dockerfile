@@ -25,6 +25,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY agent/src agent/src
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --package guppi-agent --no-dev --no-editable
+# The launcher that puts the Dynatrace trace header in place from Secrets Manager before
+# the command starts (agent/otel_headers.py).
+COPY agent/otel_headers.py otel_headers.py
 
 EXPOSE 8080
 # opentelemetry-instrument (from aws-opentelemetry-distro, a guppi-agent dependency) is
@@ -34,4 +37,4 @@ EXPOSE 8080
 # Bedrock call. The runtime supplies the exporter settings as environment variables
 # (AGENT_OBSERVABILITY_ENABLED and OTEL_*). Local development starts uvicorn directly
 # (AGENTS.md) and needs none of this. See docs/proposals/traceability.md.
-CMD ["opentelemetry-instrument", "uvicorn", "guppi_agent.app:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["python", "/app/otel_headers.py", "opentelemetry-instrument", "uvicorn", "guppi_agent.app:app", "--host", "0.0.0.0", "--port", "8080"]

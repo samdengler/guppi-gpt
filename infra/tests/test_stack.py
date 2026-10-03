@@ -520,20 +520,10 @@ def test_runtime_env_omits_dynatrace_otlp_vars_until_both_parameters_are_set(tem
                             {"Ref": "AWS::NoValue"},
                         ]
                     },
-                    "OTEL_EXPORTER_OTLP_TRACES_HEADERS": {
+                    "DYNATRACE_TOKEN_SECRET_ARN": {
                         "Fn::If": [
                             "HasDynatraceOtlp",
-                            Match.object_like(
-                                {
-                                    "Fn::Join": [
-                                        "",
-                                        [
-                                            "Authorization=Api-Token ",
-                                            {"Ref": "DynatraceApiToken"},
-                                        ],
-                                    ]
-                                }
-                            ),
+                            {"Ref": Match.string_like_regexp("DynatraceTokenSecret")},
                             {"Ref": "AWS::NoValue"},
                         ]
                     },
@@ -541,6 +531,25 @@ def test_runtime_env_omits_dynatrace_otlp_vars_until_both_parameters_are_set(tem
             )
         },
     )
+
+
+def test_dynatrace_token_reaches_the_runtime_only_through_secrets_manager(template):
+    # docs/proposals/dynatrace.md, "The token in Secrets Manager": the token sits in a secret; no runtime environment variable carries it.
+    secrets = {
+        logical_id: resource
+        for logical_id, resource in template.find_resources("AWS::SecretsManager::Secret").items()
+        if logical_id.startswith("DynatraceTokenSecret")
+    }
+    assert len(secrets) == 1
+    (logical_id, secret), = secrets.items()
+    assert secret["Properties"]["SecretString"]["Fn::If"][0] == "HasDynatraceOtlp"
+    assert secret["Properties"]["SecretString"]["Fn::If"][1] == {"Ref": "DynatraceApiToken"}
+    for runtime in template.find_resources("AWS::BedrockAgentCore::Runtime").values():
+        rendered = json.dumps(runtime["Properties"].get("EnvironmentVariables", {}))
+        assert "DynatraceApiToken" not in rendered
+        assert "OTEL_EXPORTER_OTLP_TRACES_HEADERS" not in rendered
+    policies = json.dumps(template.find_resources("AWS::IAM::Policy"))
+    assert f'"Ref": "{logical_id}"' in policies
 
 
 def test_transaction_search_is_enabled_with_the_span_log_policy(template):

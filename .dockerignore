@@ -7,5 +7,6 @@
 !agent/README.md
 !agent/Dockerfile
 !agent/src
+!agent/otel_headers.py
 !infra/pyproject.toml
 **/__pycache__

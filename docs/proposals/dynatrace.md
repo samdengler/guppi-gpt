@@ -168,6 +168,24 @@ None of this exists yet; the parameters above stay empty until it does.
    follow-up, since a CloudFormation subscription filter cannot target a log group the
    service creates lazily rather than the stack.
 
+## The token in Secrets Manager
+
+Added 2 October 2026. The runtime's environment carried the API token as
+`OTEL_EXPORTER_OTLP_TRACES_HEADERS`, and `GetAgentRuntime` returns environment variables in
+plain text, so anyone allowed to describe the runtime could read it; a session printed it
+that day. The stack now keeps the token in the secret `DynatraceTokenSecret` (its value is
+the `no_echo` parameter `DynatraceApiToken`, or "unset" while the parameters are blank),
+grants only the runtime role read on it, and gives the runtime `DYNATRACE_TOKEN_SECRET_ARN`
+in place of the header. The image starts `python /app/otel_headers.py`, which reads the
+secret, sets the header in its own environment, and execs the usual
+`opentelemetry-instrument uvicorn ...`. The exporter reads its header once at startup, so
+the value has to be in the environment before `opentelemetry-instrument` runs. Without the
+ARN the launcher execs the command unchanged; a secret it cannot read is reported without
+the token and the agent still starts. The launcher is a file beside the package, not part
+of `guppi_agent`, because importing the package loads the whole kit. The Firehose
+destination's access key and the EventBridge connection stay as they were: neither API
+returns the value. guppi-hr made the same change for its orchestrator (its D35).
+
 ## The AWS connection as Dynatrace builds it now
 
 The role-based connection this proposal first described (a settings object holding a
