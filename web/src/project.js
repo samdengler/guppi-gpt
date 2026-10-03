@@ -36,6 +36,36 @@ export function manifestUrl(name) {
   return `/projects/${name}/manifest.json`;
 }
 
+// The home page's "Try a project" cards (docs/proposals/platform.md, "Project list").
+// /projects.json names the projects; each card's text comes from that project's own
+// manifest, so a project owns its label and description.
+export const PROJECTS_URL = "/projects.json";
+export const MAX_PROJECT_CARDS = 12;
+const MAX_DESCRIPTION = 200;
+const PROJECT_NAME = /^[a-z0-9-]+$/;
+
+/** The project names in /projects.json, valid and unique, in the file's order. */
+export function projectNames(list) {
+  const raw = list && !Array.isArray(list) && typeof list === "object" ? list.projects : null;
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const name of raw) {
+    if (out.length === MAX_PROJECT_CARDS) break;
+    if (typeof name === "string" && PROJECT_NAME.test(name) && !out.includes(name)) out.push(name);
+  }
+  return out;
+}
+
+/** One card for the project `name` from its manifest, or null when the page would not
+ * use that manifest. The description is optional plain text, trimmed and capped. */
+export function projectCard(manifest, name) {
+  const usable = checkManifest(manifest, name);
+  if (!usable) return null;
+  const description =
+    typeof usable.description === "string" ? usable.description.trim().slice(0, MAX_DESCRIPTION) : "";
+  return { name, label: usable.label.trim(), description, href: projectPath(name) };
+}
+
 /**
  * The manifest when it is usable for the project `name`, else null. Usable means an
  * object whose `name` matches, with a non-empty string `label` and an `agent` that is

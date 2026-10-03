@@ -8,7 +8,7 @@ import { initRum, identifyRumUser } from "./rum.js";
 import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideOnLoad, newestRefreshToken } from "./session.js";
 import { createExtensionHost, EXTENSION_EVENT_TYPES } from "./extensions.js";
 import { inviteBody, inviteResult, signInRefusal } from "./invite-core.js";
-import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, manifestUrl, checkManifest, mergeFeatures, brandFor, agentUrlFor, suggestionsFor, themeFor, THEME_KEYS } from "./project.js";
+import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, manifestUrl, checkManifest, mergeFeatures, brandFor, agentUrlFor, suggestionsFor, themeFor, THEME_KEYS, PROJECTS_URL, projectNames, projectCard } from "./project.js";
 
 (async () => {
   const $ = (id) => document.getElementById(id);
@@ -48,6 +48,8 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
   const sendBtn = $("send-btn");
   const emptyCopy = $("empty-copy");
   const suggestionsEl = $("suggestions");
+  const projectCardsEl = $("project-cards");
+  const projectCardsList = $("project-cards-list");
   const composerHint = $("composer-hint");
 
   // ---- Project: /p/<name>/ selects a project by its manifest; / is the default ----
@@ -141,6 +143,47 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
     });
     suggestionsEl.appendChild(pill);
   }
+  // The home page lists the projects under its empty state ("Try a project"), so they go
+  // with it once the thread has a message. Each card's text comes from the project's own
+  // manifest; a project whose manifest is missing or unusable is left out, and any
+  // failure leaves the section hidden. Plain text only.
+  async function loadProjectCards() {
+    try {
+      const listResponse = await fetch(PROJECTS_URL, { cache: "no-store" });
+      if (!listResponse.ok) return;
+      const names = projectNames(await listResponse.json());
+      const cards = await Promise.all(
+        names.map(async (name) => {
+          try {
+            const response = await fetch(manifestUrl(name), { cache: "no-store" });
+            return response.ok ? projectCard(await response.json(), name) : null;
+          } catch {
+            return null;
+          }
+        }),
+      );
+      for (const card of cards.filter(Boolean)) {
+        const link = document.createElement("a");
+        link.className = "project-card";
+        link.href = card.href;
+        const label = document.createElement("span");
+        label.className = "project-card-label";
+        label.textContent = card.label;
+        const description = document.createElement("span");
+        description.className = "project-card-description";
+        description.textContent = card.description;
+        const open = document.createElement("span");
+        open.className = "project-card-open";
+        open.textContent = `Open ${card.href}`;
+        link.append(label, description, open);
+        projectCardsList.appendChild(link);
+      }
+      projectCardsEl.hidden = projectCardsList.childElementCount === 0;
+    } catch {
+      // The cards are a convenience; the page works without them.
+    }
+  }
+  if (!project) loadProjectCards();
   composerHint.textContent = hintText(historyEnabled, loggingEnabled);
   if (feedbackEnabled) {
     // Keeps the in-memory thread in sync with a vote so a later persistCurrentThread

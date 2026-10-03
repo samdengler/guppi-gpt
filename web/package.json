@@ -5,7 +5,7 @@
   "type": "module",
   "description": "The GuppiGPT page: bundled once with esbuild into dist/",
   "scripts": {
-    "build": "esbuild src/app.js --bundle --minify --format=iife --target=es2022 --outfile=dist/app.js && esbuild src/flags.js --bundle --minify --format=iife --target=es2022 --outfile=dist/flags.js && esbuild src/approve.js --bundle --minify --format=iife --target=es2022 --outfile=dist/approve.js && esbuild src/sandbox/frame.js --bundle --minify --format=iife --target=es2022 --outfile=dist/sandbox/frame.js && cp src/index.html src/app.css src/privacy.html src/terms.html src/flags.html src/approve.html dist/ && cp src/sandbox/frame.html dist/sandbox/",
+    "build": "esbuild src/app.js --bundle --minify --format=iife --target=es2022 --outfile=dist/app.js && esbuild src/flags.js --bundle --minify --format=iife --target=es2022 --outfile=dist/flags.js && esbuild src/approve.js --bundle --minify --format=iife --target=es2022 --outfile=dist/approve.js && esbuild src/sandbox/frame.js --bundle --minify --format=iife --target=es2022 --outfile=dist/sandbox/frame.js && cp src/index.html src/app.css src/privacy.html src/terms.html src/flags.html src/approve.html src/projects.json dist/ && cp src/sandbox/frame.html dist/sandbox/",
     "test": "node --test"
   },
   "dependencies": {

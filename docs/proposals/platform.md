@@ -120,8 +120,26 @@ fetched with `cache: "no-store"` at load, like `config.json`.
 | `mcp` | no | For a browser-side MCP connection: the CloudFront path to the tools gateway and the tool-name prefix this project owns |
 | `theme` | no | `{ light: {...}, dark: {...} }` of hex colors for the page's custom properties (`bg`, `fg`, `muted`, `border`, `surface`, `bubbleUser`, `accent`, `accentContrast`, `brand`); applied for the scheme in effect. Without one a project gets the page's default palette, Sky (blue actions on cool white, navy brand, from guppi-mcp-app). The page passes its palette to MCP Apps as the extension's style variables in `hostContext.styles` |
 | `suggestions` | no | Up to six `{ "label", "prompt" }` entries shown as pills under the empty state; a click sends the prompt. Plain text; the default project has none |
+| `description` | no | One or two plain-text sentences for the project's card on the home page ("Project list" below); trimmed and cut at 200 characters |
 
 The page tolerates unknown fields so a project can carry its own settings for `ext.js`.
+
+## Project list
+
+The home page (`/`) shows a "Try a project" row of cards under its empty state, one per
+project, each with the manifest's `label` and `description` and a link to `/p/<name>/`.
+`web/src/projects.json` in this repository names the projects, in display order:
+
+```json
+{ "projects": ["hr", "hr-connect", "mcp-app"] }
+```
+
+A card's text comes from that project's own manifest, fetched at load like the project
+page does, so a project changes its card by publishing its manifest. A name whose
+manifest is missing or unusable is left out, and any failure leaves the row hidden.
+Adding a project to the row is one line here and a site deploy. A generated index was
+considered: keeping it current without touching every project's deploy takes a function
+on each manifest upload, which AGENTS.md asks to avoid, and projects are added rarely.
 
 ## Page extension API
 

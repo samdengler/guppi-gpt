@@ -1,6 +1,7 @@
 {
   "name": "mcp-app",
   "label": "MCP App Lab",
+  "description": "Tools that answer with interactive MCP Apps inside the reply.",
   "assistant": "Guppi",
   "agent": "platform",
   "capabilities": [

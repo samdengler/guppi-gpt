@@ -315,3 +315,20 @@ body {
   border: 1px solid var(--border); background: var(--surface); display: flex; flex-direction: column; gap: .25rem;
 }
 .invite-sent span { color: var(--muted); font-size: .9rem; }
+
+/* The home page's "Try a project" cards (docs/proposals/platform.md, "Project list"). */
+.project-cards { margin-top: 3rem; text-align: left; }
+.project-cards-title {
+  font-size: .78rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--muted); margin: 0 0 .65rem;
+}
+.project-cards-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); gap: .75rem; }
+.project-card {
+  display: flex; flex-direction: column; gap: .35rem; padding: .9rem 1rem; min-height: 7.5rem;
+  border: 1px solid var(--border); border-radius: .75rem; background: var(--surface);
+  color: var(--fg); text-decoration: none;
+}
+.project-card:hover, .project-card:focus-visible { border-color: var(--accent); }
+.project-card-label { font-weight: 600; }
+.project-card-description { flex: 1; color: var(--muted); font-size: .85rem; }
+.project-card-open { color: var(--accent); font-size: .85rem; font-weight: 600; }
