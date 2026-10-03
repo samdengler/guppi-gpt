@@ -138,7 +138,7 @@ export function wantsWarmStart(manifest) {
  * The AG-UI run input of a warm start: no messages and `forwardedProps.warm`, which the
  * agent kit answers without a model call (docs/proposals/platform.md, "Warm start").
  */
-export function warmRunInput({ threadId, runId, manifest }) {
+export function warmRunInput({ threadId, runId, manifest, previousThreadId = null }) {
   return {
     threadId,
     runId,
@@ -146,7 +146,11 @@ export function warmRunInput({ threadId, runId, manifest }) {
     tools: [],
     context: [],
     state: {},
-    forwardedProps: { ...(manifest ? { project: manifest.name } : {}), warm: true },
+    forwardedProps: {
+      ...(manifest ? { project: manifest.name } : {}),
+      warm: true,
+      ...(previousThreadId ? { previousThreadId } : {}),
+    },
   };
 }
 

@@ -239,3 +239,8 @@ test("warmRunInput has no messages and marks the run warm", () => {
   });
   assert.deepEqual(warmRunInput({ threadId: "t1", runId: "r1", manifest: null }).forwardedProps, { warm: true });
 });
+
+test("warmRunInput names the thread the page left, when there is one", () => {
+  const input = warmRunInput({ threadId: "t2", runId: "r1", manifest: { name: "hr" }, previousThreadId: "t1" });
+  assert.deepEqual(input.forwardedProps, { project: "hr", warm: true, previousThreadId: "t1" });
+});

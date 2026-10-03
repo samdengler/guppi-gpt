@@ -138,6 +138,8 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
     pill.type = "button";
     pill.className = "suggestion";
     pill.textContent = suggestion.label;
+    // Pressing a pill starts the warm start a moment before its click sends.
+    pill.addEventListener("pointerdown", () => engage());
     pill.addEventListener("click", () => {
       if (status !== "idle-empty" && status !== "idle") return;
       input.value = "";
@@ -587,6 +589,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
     messages = [];
     threadId = crypto.randomUUID();
     extensions.notifyThread(threadId);
+    armWarmStart();
     threadCreatedAt = Date.now();
     threadTitle = null;
     status = "idle-empty";
@@ -597,15 +600,33 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
     render();
   }
 
-  // A project whose manifest lists `warm-start` gets a run with no messages when a new
-  // thread starts, on the runtime session its runs use, so the agent is running and has
+  // A project whose manifest lists `warm-start` gets a run with no messages once the
+  // employee engages with a new thread (focus on the composer, a first keystroke, or a
+  // suggestion), on the runtime session its runs use, so the agent is running and has
   // opened what the first message needs by the time it is sent (docs/proposals/platform.md,
-  // "Warm start"). Fire and forget: a failed warm start only means the first message does
-  // that work itself. A token near expiry skips it, so the send's refresh is the only one.
+  // "Warm start"). Engagement rather than page load, so a reader who never writes opens
+  // nothing (guppi-hr critique findings 1 and 2). The run names the thread the page left,
+  // when that one may hold something open, so the agent can release it. Fire and forget: a
+  // failed warm start only means the first message does that work itself. A token near
+  // expiry skips it, so the send's refresh is the only one.
   const warmStart = wantsWarmStart(manifest);
+  let warmArmed = false;     // the current thread has not been warmed yet
+  let warmedThreadId = null; // the last thread a warm start went out for
+  let leftThreadId = null;   // a thread the page left that may still hold something open
+  function armWarmStart() {
+    warmArmed = warmStart;
+  }
+  function engage() {
+    if (!warmArmed || auth !== "signed-in" || messages.length > 0) return;
+    warmArmed = false;
+    warmThread();
+  }
   async function warmThread() {
     if (!warmStart || auth !== "signed-in" || messages.length > 0) return;
     if (Date.now() >= tokenExpiresAt - 5 * 60 * 1000) return;
+    warmedThreadId = threadId;
+    const previousThreadId = leftThreadId;
+    leftThreadId = null;
     try {
       const response = await fetch(agentUrl, {
         method: "POST",
@@ -616,7 +637,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
           "x-amzn-bedrock-agentcore-runtime-session-id": sessionId,
           traceparent: newTraceparent().traceparent,
         },
-        body: JSON.stringify(warmRunInput({ threadId, runId: crypto.randomUUID(), manifest })),
+        body: JSON.stringify(warmRunInput({ threadId, runId: crypto.randomUUID(), manifest, previousThreadId })),
       });
       await response.text();
     } catch (error) {
@@ -625,8 +646,8 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
   }
 
   function resetThread() {
+    if (warmedThreadId === threadId || messages.length > 0) leftThreadId = threadId;
     clearThreadState();
-    warmThread();
     accountMenu.hidden = true;
     if (historyEnabled) historyPanel.hidden = true;
   }
@@ -727,7 +748,9 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
     input.style.height = `${input.scrollHeight}px`;
   }
 
+  input.addEventListener("focus", () => engage());
   input.addEventListener("input", () => {
+    engage();
     autosize();
     render();
   });
@@ -945,14 +968,16 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
         refs.label.textContent = String(text);
       },
     });
-    const showError = (refused) => {
+    const showError = (refused, empty = false) => {
       status = "error";
       // A 403 comes from the gateway's front door, which rejects any body containing a
       // localhost or loopback URL; resending the same thread cannot succeed.
       lastFailedTurn = refused ? null : { messageList, refs };
       refs.errorText.textContent = refused
         ? "The gateway refused this message. Messages that contain a localhost or loopback address are rejected; start a new chat."
-        : "The reply was interrupted.";
+        : empty
+          ? "No answer came back."
+          : "The reply was interrupted.";
       refs.retryLink.hidden = Boolean(refused);
       refs.errorLine.hidden = false;
       render();
@@ -1063,6 +1088,13 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
       showError(refused);
       return;
     }
+    // A run that finished without text is kept out of the thread: an empty assistant turn
+    // makes every later run of the thread fail the agent's validation (guppi-hr critique
+    // finding 3). It shows as an error with Retry instead.
+    if (!draft.trim()) {
+      showError(false, true);
+      return;
+    }
     refs.text.textContent = draft;
     const assistantMessage = { id: crypto.randomUUID(), role: "assistant", content: draft };
     messages.push(assistantMessage);
@@ -1109,7 +1141,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
       showChat();
       await resumeHistory();
       render();
-      warmThread();
+      armWarmStart();
       return;
     } catch (error) {
       // The exchange failed; fall back to the sign-in screen, where it can be retried.
@@ -1121,7 +1153,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
       case "show-chat":
         showChat();
         render();
-        warmThread();
+        armWarmStart();
         return;
       case "clear-and-show-sign-in":
         await clearSession();

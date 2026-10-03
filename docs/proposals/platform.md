@@ -146,20 +146,25 @@ on each manifest upload, which AGENTS.md asks to avoid, and projects are added r
 ## Warm start
 
 A project whose agent needs time before its first answer (a microVM to start, a contact to
-open, a session to set up) lists `warm-start` in `capabilities`. When a new thread starts,
-on sign-in or a new chat but not on a resumed thread, the page posts a run with no
-messages and `forwardedProps.warm: true` to the project's agent path, with the bearer, the
-runtime session id and a traceparent its runs use. The kit (kit-v0.3.0) answers it with
-`RUN_STARTED` and `RUN_FINISHED` and, when the agent built for the token has a
-`warm(run_input)` coroutine, awaits it in between; a failure is a `RUN_ERROR` with the code
-`WARM_FAILED`. No thread record is written, and the run log line carries `"warm": true`.
+open, a session to set up) lists `warm-start` in `capabilities`. Once the employee engages
+with a new thread (the first focus on the composer, a first keystroke, or pressing a
+suggestion; not page load, not a resumed thread), the page posts a run with no messages and
+`forwardedProps.warm: true` to the project's agent path, with the bearer, the runtime
+session id and a traceparent its runs use. When the page has just left a thread that may
+hold something open (one that was warmed or has messages), the run also carries
+`forwardedProps.previousThreadId`, so the agent can release what it held for it. The kit
+(kit-v0.3.0) answers the run with `RUN_STARTED` and `RUN_FINISHED` and, when the agent
+built for the token has a `warm(run_input)` coroutine, awaits it in between; a failure is a
+`RUN_ERROR` with the code `WARM_FAILED`. No thread record is written, and the run log line
+carries `"warm": true`.
 
-The page does not wait for it, and the first message never depends on it: an agent's
-`warm` prepares what its runs would otherwise do on the first message, and a run that
-arrives while a warm start is still working shares or waits for that work. A token within
-five minutes of expiry skips the warm start, so a send's token refresh is never raced.
-The cost is the work for a thread nobody writes in; for the Connect project
-(guppi-hr `connect/`) that is one chat contact per new chat.
+The page does not wait for it. An agent's `warm` prepares what its runs would otherwise do
+on the first message, and a run that arrives while a warm start is still working shares or
+waits for that work, so a first message sent at once can wait up to the warm start's
+length. A token within five minutes of expiry skips the warm start, so a send's token
+refresh is never raced. Warming on engagement instead of page load came from the guppi-hr
+critique of 3 October: on page load every reader opened a Connect contact, which held a
+chat and, until the bridge cleared it, the employee's token.
 
 ## Page extension API
 
