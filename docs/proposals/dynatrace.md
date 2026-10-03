@@ -411,6 +411,26 @@ CloudWatch logs are untouched.
     memory notes; commit and push. Delete the old tenant's token from nowhere: it
     expires with the tenant.
 
+### The move to zfr04910, 2 October 2026
+
+Tenant `wfd05358` expired; its OTLP path answered 404 even without a token, and every
+span batch from the runtime and guppi-hr's orchestrator was refused. Sam started tenant
+`zfr04910` (signed up as `samdengler+dt4@gmail.com`). Done: step 3 (the `GuppiGPT-Dynatrace`
+stack deleted, its log ingest StackSet with it), a new ingest token `guppigpt-ingest`
+with the four scopes, step 9 (the 1Password item now names
+`https://zfr04910.live.dynatrace.com/api/v2/otlp`; the OTLP endpoint answered 200 to the
+token), and step 10 for this repository and guppi-hr. Both runtimes export to
+`zfr04910`, and guppi-hr's orchestrator turns since show no export errors.
+
+Not done: RUM (steps 5 and 6; `web/vendor/ruxitagentjs.js` and the beacon origin still
+name the old tenant, so RUM beacons go nowhere), the dashboard (step 8) and the AWS
+connection (steps 11 to 15). This tenant breaks the runbook's method: each app runs in a
+cross-origin frame, so the Chrome extension's clicks, element search and scripts do not
+reach it, and calls from the outer page carry the shell's OAuth scopes (the token API
+answered 403 "missing required scope"; the classic config API answered "404 Api Gateway
+error" and put the shell on its error page). Sam made the token by hand. The remaining
+steps need the same, or an API path that takes a platform token with the right scopes.
+
 ## What was not possible to confirm
 
 **Observed on 5 Sep 2026.** With the Dynatrace parameters set, the container's environment won: the turn's 19 spans (invocation, agent loop, model call, MCP retrieval, Secrets Manager and S3 calls) appeared in Dynatrace and none reached CloudWatch Transaction Search. The export is redirected, as the paragraph below predicted; dual export needs the second exporter in code.
