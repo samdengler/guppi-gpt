@@ -1,6 +1,8 @@
 # Invite-only sign-in
 
-Status: design approved by Sam, 3 October 2026, with the decisions below. Being built.
+Status: built and deployed, 3 October 2026 (phases 1 to 5 below). Two things wait: AWS's
+review of SES production access, and a sign-in check with a Google account that has no
+invite.
 
 Today any Google account can sign in to chat.dengler.io: Cognito creates a user on the
 first Google sign-in, and the only limit on a stranger is the edge gateway's per-user rate
@@ -117,8 +119,27 @@ the gate land last, so nobody is locked out while the request path is being buil
    from Cognito's error, tests for both, and this document's status. Check in a browser:
    both states, a request from the page reaching Sam's inbox.
 
+## What the checks showed
+
+| Phase | Commit | Check |
+| --- | --- | --- |
+| 1 | `4866667` | A request through CloudFront wrote one item (address lower-cased, the note's apostrophe kept, a 36 character token) and mailed Sam from `no-reply@dengler.io`, into the inbox; a repeat answered 202 and mailed nothing; a bad address and an extra `status` field answered 400 |
+| 2 | `fd7bdea` | The email's link opened the approval page; Approve approved; a second approval answered 409 from the page and failed from the script; a reload said "Already approved." A wrong token answered 404 on the lookup and 409 on approve |
+| 3 | `405aebb` | Approving a request to a verified address sent "You're in: chat.dengler.io" with replies to Sam. The first try sent nothing: the approval came within a minute of the Pipe's update, before its new filter applied |
+| 4 | `def08ee` | With the trigger live, creating a user for an address with no invite failed with "PreSignUp failed with error not-invited."; a granted address was created (then removed). The 4 existing users were granted first and kept signing in |
+| 5 | `b5b8990` | The not-invited return URL showed the notice and the form; a request from the form showed "Request sent" and mailed Sam. Sam's own signed-in session was untouched |
+
+Test requests and the test address's SES identity were removed afterwards; the table holds
+the 4 existing users.
+
 ## What is not settled
 
-- The exact error Cognito returns to the callback when the trigger refuses a federated
-  sign-up, and whether it carries the email. Phase 4 records it and phase 5 reads it.
-- Throttle numbers for `/api/invite`; the first values are a guess.
+- A real refused Google sign-in. Phase 4 checked the trigger through `AdminCreateUser`,
+  which gave the message above; the page looks for `not-invited` in `error_description`,
+  on the assumption that a federated refusal carries the same text. A sign-in with a
+  Google account that has no invite confirms it.
+- SES production access, requested on 3 October 2026 and pending AWS's review. Until it
+  is granted, the "you're in" email reaches only verified addresses; approval works either
+  way.
+- Throttle numbers for `/api/invite` (one request every 10 seconds, bursts of 3); the first
+  values are a guess.
