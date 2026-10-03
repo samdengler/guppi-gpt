@@ -38,9 +38,13 @@ def test_without_the_arn_the_environment_is_unchanged():
     assert environment({"KEEP": "1"}, never) == {"KEEP": "1"}
 
 
-def test_a_header_already_set_is_kept():
-    env = {SECRET_ENV: "arn:secret", HEADERS_ENV: "Authorization=Api-Token set"}
-    assert environment(env, never) == env
+def test_the_secret_replaces_a_header_the_platform_set():
+    # AgentCore injects its own OTEL_* settings into the container; with the secret named,
+    # Dynatrace's Authorization header has to win, as the runtime variable did before.
+    env = environment(
+        {SECRET_ENV: "arn:secret", HEADERS_ENV: "x-aws-something=1"}, lambda arn: "tok"
+    )
+    assert env[HEADERS_ENV] == "Authorization=Api-Token tok"
 
 
 def test_a_secret_that_cannot_be_read_still_starts_the_command(capsys):

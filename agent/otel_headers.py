@@ -29,9 +29,11 @@ def headers(token: str) -> str:
 
 
 def environment(env: Mapping[str, str], fetch: Callable[[str], str]) -> dict[str, str]:
-    """`env` with the trace export header added from the secret `env` names, if any."""
+    """`env` with the trace export header from the secret `env` names, if any. The header
+    replaces any value already set: AgentCore injects OTEL_* settings of its own, and the
+    runtime variable this replaces used to override them the same way."""
     arn = env.get(SECRET_ENV)
-    if not arn or env.get(HEADERS_ENV):
+    if not arn:
         return dict(env)
     try:
         token = fetch(arn)
