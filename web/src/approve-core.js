@@ -50,7 +50,7 @@ export function decidedText(status) {
 /** The page's message after the approve call answers with `status`. */
 export function outcome(status, email) {
   if (status === 200) {
-    return { ok: true, text: `Approved. ${email} can sign in with Google now.` };
+    return { ok: true, text: `Approved. Add ${email} to Okta's chat-users group so they can sign in.` };
   }
   if (status === 409) {
     return { ok: false, text: "This link can't approve: the request was already decided, or the link is wrong." };

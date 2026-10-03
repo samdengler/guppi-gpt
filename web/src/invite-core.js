@@ -1,5 +1,5 @@
 // Pure functions behind the sign-in screen's invite request (docs/proposals/invites.md):
-// reading Cognito's refusal when the pre sign-up gate turns a Google account away,
+// reading the issuer's refusal when an account has no access,
 // checking and shaping the form, and what each answer from /api/invite means. No DOM
 // here, so this file runs under node:test (web/test/invite.test.mjs).
 
@@ -35,7 +35,7 @@ export function inviteBody({ name = "", email = "", note = "" }) {
   if (!cleanName) return { ok: false, error: "Add your name." };
   if (cleanName.length > NAME_MAX) return { ok: false, error: `Keep the name under ${NAME_MAX} characters.` };
   if (!EMAIL.test(cleanEmail) || cleanEmail.length > EMAIL_MAX) {
-    return { ok: false, error: "Enter the email address of your Google account." };
+    return { ok: false, error: "Enter your email address." };
   }
   if (cleanNote.length > NOTE_MAX) return { ok: false, error: `Keep the note under ${NOTE_MAX} characters.` };
   const body = { name: cleanName, email: cleanEmail };

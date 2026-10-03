@@ -538,7 +538,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
     const given = (claims.given_name || "").trim();
     const family = (claims.family_name || "").trim();
     if (given || family) return `${given.slice(0, 1)}${family.slice(0, 1)}`.toUpperCase();
-    // Cognito maps the Google name to the name claim; take the first and last words.
+    // An issuer may give only the full name claim; take the first and last words.
     const words = (claims.name || "").trim().split(/\s+/).filter(Boolean);
     if (words.length) return `${words[0].slice(0, 1)}${words.length > 1 ? words[words.length - 1].slice(0, 1) : ""}`.toUpperCase();
     return (claims.email || "").slice(0, 2).toUpperCase();
@@ -891,7 +891,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
     }
     inviteSentCopy.textContent =
       `Thanks, ${checked.body.name}. Sam will look at your request and email ` +
-      `${checked.body.email} when you're in. Then sign in with that Google account.`;
+      `${checked.body.email} when you're in.`;
     inviteForm.hidden = true;
     inviteSent.hidden = false;
   });
@@ -1123,12 +1123,12 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
 
   const code = new URLSearchParams(location.search).get("code");
   // Cognito sends the browser back with an error instead of a code when the pre sign-up
-  // gate refuses a Google account, or when a sign-in fails some other way.
+  // gate refuses an account (Okta: not assigned to the app), or a sign-in fails some other way.
   const refusal = code ? null : signInRefusal(location.search);
   if (refusal) {
     signinNotice.textContent =
       refusal === "not-invited"
-        ? "This Google account doesn't have access yet. Request an invite below, and sign in again once Sam approves it."
+        ? "This account doesn't have access yet. Request an invite below, and sign in again once Sam approves it."
         : "Sign-in didn't complete. Try again.";
     signinNotice.hidden = false;
     history.replaceState(null, "", location.pathname);

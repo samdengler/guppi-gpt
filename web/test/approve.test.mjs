@@ -60,7 +60,7 @@ test("a decided request replaces the button with a sentence", () => {
 test("each approve answer has its own message", () => {
   assert.deepEqual(outcome(200, "pat@example.com"), {
     ok: true,
-    text: "Approved. pat@example.com can sign in with Google now.",
+    text: "Approved. Add pat@example.com to Okta's chat-users group so they can sign in.",
   });
   assert.equal(outcome(409, "pat@example.com").ok, false);
   assert.match(outcome(409, "x").text, /already decided/);
