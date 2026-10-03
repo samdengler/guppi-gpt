@@ -1018,6 +1018,7 @@ class GuppiGptStack(cdk.Stack):
             site_url=SITE_URL,
             invite_email=invite_email,
             has_invite_email=has_invite_email,
+            user_pool=user_pool,
         )
 
         # ---- Reply feedback --------------------------------------------------------------

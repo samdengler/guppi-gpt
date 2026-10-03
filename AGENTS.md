@@ -96,7 +96,9 @@ scripts/
   a preference, not a ban: when a function is the right tool, propose it and get Sam's
   approval before building it. Approved so far: the Lambda functions inside Dynatrace's
   own AWS activation stack (`GuppiGPT-Dynatrace`, 7 Sep 2026), which sits outside
-  `GuppiGpt`.
+  `GuppiGpt`; and the Cognito pre sign-up trigger `guppi-gpt-pre-sign-up` that makes
+  sign-in invite only (docs/proposals/invites.md, 3 Oct 2026), which runs once per new
+  user, never on a chat request.
 - Secrets never enter files, `cdk.context.json`, or `-c` context values. Values the stack
   cannot produce (the Google OAuth client) are CloudFormation parameters with `no_echo`
   supplied by `scripts/deploy.sh` from 1Password; values it can produce (the

@@ -5,18 +5,23 @@ straight into the `invites` table, one item per lower-cased address, with no Lam
 between, as the feedback API does. The table's stream feeds an EventBridge Pipe, and the
 Pipe starts an Express state machine that emails Sam through SES: from
 no-reply@dengler.io, with the requester as Reply-To and a link to the approval page. The
-approval API, the requester's email and the sign-up gate come in later phases.
+approval page approves with a conditional update, an approval mails the requester, and a
+Cognito pre sign-up trigger, the one Lambda function here, refuses a sign-up whose address
+is not approved.
 """
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import aws_cdk as cdk
 from aws_cdk import Duration, RemovalPolicy
 from aws_cdk import aws_apigateway as apigateway
+from aws_cdk import aws_cognito as cognito
 from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_iam as iam
+from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_logs as logs
 from aws_cdk import aws_pipes as pipes
 from aws_cdk import aws_route53 as route53
@@ -24,6 +29,7 @@ from aws_cdk import aws_ses as ses
 from aws_cdk import aws_stepfunctions as sfn
 from constructs import Construct
 
+PRE_SIGN_UP_DIR = Path(__file__).resolve().parent / "lambdas" / "pre_sign_up"
 TABLE_NAME = "guppi-gpt-invites"
 API_NAME = "guppi-gpt-invites"
 STAGE_NAME = "prod"
@@ -229,6 +235,7 @@ class Invites(Construct):
         site_url: str,
         invite_email: cdk.CfnParameter,
         has_invite_email: cdk.CfnCondition,
+        user_pool: cognito.UserPool,
     ) -> None:
         super().__init__(scope, construct_id)
         stack = cdk.Stack.of(self)
@@ -246,6 +253,35 @@ class Invites(Construct):
             # The table is who may sign in once the gate is on; it outlives the stack.
             removal_policy=RemovalPolicy.RETAIN,
         )
+
+        # ---- The gate ---------------------------------------------------------------
+        # Cognito runs this when it is about to create a user, so it runs once per person,
+        # at their first sign-in, and never on a chat request. Sam approved it (AGENTS.md).
+        gate_logs = logs.LogGroup(
+            self,
+            "PreSignUpLogs",
+            log_group_name="/aws/lambda/guppi-gpt-pre-sign-up",
+            retention=logs.RetentionDays.ONE_MONTH,
+            removal_policy=RemovalPolicy.DESTROY,
+        )
+        gate = lambda_.Function(
+            self,
+            "PreSignUp",
+            function_name="guppi-gpt-pre-sign-up",
+            description="Refuses a Cognito sign-up whose address has no approved invite",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            architecture=lambda_.Architecture.ARM_64,
+            handler="index.handler",
+            code=lambda_.Code.from_asset(str(PRE_SIGN_UP_DIR)),
+            memory_size=128,
+            timeout=Duration.seconds(5),
+            environment={"TABLE_NAME": self.table.table_name},
+            log_group=gate_logs,
+        )
+        gate.add_to_role_policy(
+            iam.PolicyStatement(actions=["dynamodb:GetItem"], resources=[self.table.table_arn])
+        )
+        user_pool.add_trigger(cognito.UserPoolOperation.PRE_SIGN_UP, gate)
 
         # ---- SES ------------------------------------------------------------------------
         # The domain verifies itself through the DKIM records CDK writes into the zone.

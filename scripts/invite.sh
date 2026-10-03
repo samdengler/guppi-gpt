@@ -3,6 +3,7 @@
 #
 #   scripts/invite.sh list              every request: status, address, name, when
 #   scripts/invite.sh approve <email>   a pending request becomes approved (the email's button does the same)
+#   scripts/invite.sh grant <email>     approves an address directly, with or without a request
 #   scripts/invite.sh revoke <email>    marks it revoked and deletes the Cognito user, so no new sign-in
 #                                       works and the current session ends when its token expires (an hour)
 set -euo pipefail
@@ -10,7 +11,7 @@ set -euo pipefail
 export AWS_REGION="${AWS_REGION:-us-east-1}"
 TABLE="guppi-gpt-invites"
 
-usage() { sed -n '3,8p' "$0" | sed -e '/^set /d' -e 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '3,9p' "$0" | sed -e '/^set /d' -e 's/^# \{0,1\}//' >&2; exit 2; }
 
 now_ms() { python3 -c 'import time; print(int(time.time() * 1000))'; }
 
@@ -46,6 +47,20 @@ print(f"{len(items)} request(s)")
       >/dev/null 2>&1 \
       || { echo "not approved: $email has no pending request" >&2; exit 1; }
     echo "approved $email"
+    ;;
+  grant)
+    [[ $# -eq 2 ]] || usage
+    email="$(lower "$2")"
+    # Approves whatever is there (a pending or revoked request) or creates the item. A new
+    # item has no request token, so the approval page never matches it. A pending request
+    # granted this way gets the "you're in" email, as from the approval page; a new item
+    # gets nothing, since the Pipe passes only new pending items and pending-to-approved.
+    aws dynamodb update-item --table-name "$TABLE" --key "$(key "$email")" \
+      --update-expression "SET #s = :approved, decidedAt = :now, requestedAt = if_not_exists(requestedAt, :now), #n = if_not_exists(#n, :granted)" \
+      --expression-attribute-names '{"#s":"status","#n":"name"}' \
+      --expression-attribute-values "{\":approved\":{\"S\":\"approved\"},\":now\":{\"N\":\"$(now_ms)\"},\":granted\":{\"S\":\"(granted)\"}}" \
+      >/dev/null
+    echo "granted $email"
     ;;
   revoke)
     [[ $# -eq 2 ]] || usage

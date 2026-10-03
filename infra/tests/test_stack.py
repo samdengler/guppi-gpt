@@ -148,8 +148,12 @@ def test_api_behavior_streams_through_cloudfront(template):
     )
 
 
-def test_no_lambda_functions(template):
-    assert template.find_resources("AWS::Lambda::Function") == {}
+def test_the_only_lambda_function_is_the_approved_sign_up_gate(template):
+    # AGENTS.md: no Lambda functions without Sam's approval. Approved: the Cognito pre
+    # sign-up trigger (docs/proposals/invites.md, 3 Oct 2026).
+    functions = template.find_resources("AWS::Lambda::Function")
+    names = sorted(f["Properties"].get("FunctionName") for f in functions.values())
+    assert names == ["guppi-gpt-pre-sign-up"]
 
 
 def test_managed_knowledge_base_reads_the_content_bucket(template):
@@ -763,6 +767,7 @@ def test_vended_log_groups_have_30_day_retention_under_the_shared_prefix(templat
         "/aws/vendedlogs/bedrock-agentcore/guppi-gpt-tools",
         "/aws/vendedlogs/bedrock-agentcore/guppi_gpt",
         "/aws/vendedlogs/states/guppi-gpt-invite-mailer",
+        "/aws/lambda/guppi-gpt-pre-sign-up",
     }
     for group in groups.values():
         assert group["Properties"]["RetentionInDays"] == 30

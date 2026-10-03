@@ -251,3 +251,36 @@ def test_the_requester_hears_from_no_reply_with_replies_to_sam(template):
     assert mail["Destination"]["ToAddresses"] == ["{% $states.input[0].dynamodb.NewImage.email.S %}"]
     assert mail["ReplyToAddresses"] == ["${InviteEmail}"]
     assert "https://chat.dengler.io/" in mail["Content"]["Simple"]["Body"]["Text"]["Data"]
+
+
+# ---- Phase 4: the gate ----------------------------------------------------------------
+
+
+def test_the_user_pool_runs_the_pre_sign_up_trigger(template):
+    pool = only(template, "AWS::Cognito::UserPool")
+    trigger = pool["Properties"]["LambdaConfig"]["PreSignUp"]
+    (function_id,) = [
+        k
+        for k in template.find_resources("AWS::Lambda::Function")
+        if k.startswith("InvitesPreSignUp")
+    ]
+    assert trigger == {"Fn::GetAtt": [function_id, "Arn"]}
+
+
+def test_the_trigger_reads_the_table_and_nothing_else(template):
+    fn = only(
+        template,
+        "AWS::Lambda::Function",
+        Properties={"FunctionName": "guppi-gpt-pre-sign-up"},
+    )
+    props = fn["Properties"]
+    assert props["Runtime"].startswith("python3.")
+    assert props["Environment"]["Variables"]["TABLE_NAME"]["Ref"].startswith("InvitesTable")
+    policies = template.find_resources("AWS::IAM::Policy")
+    (policy,) = [p for k, p in policies.items() if k.startswith("InvitesPreSignUpServiceRoleDefaultPolicy")]
+    statements = policy["Properties"]["PolicyDocument"]["Statement"]
+    actions = set()
+    for statement in statements:
+        listed = statement["Action"]
+        actions.update([listed] if isinstance(listed, str) else listed)
+    assert actions == {"dynamodb:GetItem"}
