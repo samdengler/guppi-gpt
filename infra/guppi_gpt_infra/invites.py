@@ -137,7 +137,8 @@ _APPROVE_REJECTED = r"""
 
 
 def _email_definition(site_url: str) -> str:
-    """The state machine, in JSONata: a new pending item mails Sam."""
+    """The state machine, in JSONata: a new pending item mails Sam; an item that turns
+    approved mails the requester, with replies going to Sam."""
     image = "$states.input[0].dynamodb.NewImage"
     # \n is two characters here; JSONata reads the escape inside its string literals.
     body = (
@@ -150,6 +151,12 @@ def _email_definition(site_url: str) -> str:
         f" & '&token=' & {image}.token.S & '\\n\\n'"
         " & 'Reply to this email to write to them.' %}"
     )
+    welcome = (
+        f"{{% 'Hi ' & {image}.name.S & ',\\n\\n'"
+        " & 'Sam approved your request for chat.dengler.io. Sign in at'"
+        f" & ' {site_url} with the Google account ' & {image}.email.S & '.\\n\\n'"
+        " & 'Reply to this email to reach Sam.' %}"
+    )
     definition = {
         "Comment": "Invite request emails (docs/proposals/invites.md)",
         "QueryLanguage": "JSONata",
@@ -161,7 +168,14 @@ def _email_definition(site_url: str) -> str:
                     {
                         "Condition": "{% $states.input[0].eventName = 'INSERT' %}",
                         "Next": "MailSam",
-                    }
+                    },
+                    {
+                        "Condition": (
+                            "{% $states.input[0].eventName = 'MODIFY'"
+                            f" and {image}.status.S = 'approved' %}}"
+                        ),
+                        "Next": "MailRequester",
+                    },
                 ],
                 "Default": "Done",
             },
@@ -176,6 +190,22 @@ def _email_definition(site_url: str) -> str:
                         "Simple": {
                             "Subject": {"Data": f"{{% 'Invite request: ' & {image}.name.S %}}"},
                             "Body": {"Text": {"Data": body}},
+                        }
+                    },
+                },
+                "End": True,
+            },
+            "MailRequester": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::aws-sdk:sesv2:sendEmail",
+                "Arguments": {
+                    "FromEmailAddress": f"GuppiGPT <{SENDER}>",
+                    "Destination": {"ToAddresses": [f"{{% {image}.email.S %}}"]},
+                    "ReplyToAddresses": ["${InviteEmail}"],
+                    "Content": {
+                        "Simple": {
+                            "Subject": {"Data": "You're in: chat.dengler.io"},
+                            "Body": {"Text": {"Data": welcome}},
                         }
                     },
                 },
@@ -287,7 +317,18 @@ class Invites(Construct):
                                     "dynamodb": {"NewImage": {"status": {"S": ["pending"]}}},
                                 }
                             )
-                        )
+                        ),
+                        pipes.CfnPipe.FilterProperty(
+                            pattern=json.dumps(
+                                {
+                                    "eventName": ["MODIFY"],
+                                    "dynamodb": {
+                                        "OldImage": {"status": {"S": ["pending"]}},
+                                        "NewImage": {"status": {"S": ["approved"]}},
+                                    },
+                                }
+                            )
+                        ),
                     ]
                 ),
             ),

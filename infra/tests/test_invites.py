@@ -219,3 +219,35 @@ def test_every_invite_method_is_throttled(template):
         ("/~1api~1invite~1request", "GET"),
         ("/~1api~1invite~1approve", "POST"),
     }
+
+
+# ---- Phase 3: the requester's email ---------------------------------------------------
+
+
+def test_an_approval_reaches_the_mailer_too(template):
+    pipe = only(template, "AWS::Pipes::Pipe")
+    filters = [
+        json.loads(f["Pattern"])
+        for f in pipe["Properties"]["SourceParameters"]["FilterCriteria"]["Filters"]
+    ]
+    assert {
+        "eventName": ["MODIFY"],
+        "dynamodb": {
+            "OldImage": {"status": {"S": ["pending"]}},
+            "NewImage": {"status": {"S": ["approved"]}},
+        },
+    } in filters
+
+
+def test_the_requester_hears_from_no_reply_with_replies_to_sam(template):
+    machine = only(template, "AWS::StepFunctions::StateMachine", Properties={"StateMachineType": "EXPRESS"})
+    definition = machine["Properties"]["DefinitionString"]
+    text = definition if isinstance(definition, str) else json.dumps(definition)
+    parsed = json.loads(text if isinstance(definition, str) else definition["Fn::Join"][1][0])
+    states = parsed["States"]
+    route = states["Route"]["Choices"]
+    assert any("MODIFY" in c["Condition"] and c["Next"] == "MailRequester" for c in route)
+    mail = states["MailRequester"]["Arguments"]
+    assert mail["Destination"]["ToAddresses"] == ["{% $states.input[0].dynamodb.NewImage.email.S %}"]
+    assert mail["ReplyToAddresses"] == ["${InviteEmail}"]
+    assert "https://chat.dengler.io/" in mail["Content"]["Simple"]["Body"]["Text"]["Data"]

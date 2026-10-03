@@ -43,7 +43,7 @@ print(f"{len(items)} request(s)")
       --condition-expression "#s = :pending" \
       --expression-attribute-names '{"#s":"status"}' \
       --expression-attribute-values "{\":approved\":{\"S\":\"approved\"},\":pending\":{\"S\":\"pending\"},\":now\":{\"N\":\"$(now_ms)\"}}" \
-      >/dev/null \
+      >/dev/null 2>&1 \
       || { echo "not approved: $email has no pending request" >&2; exit 1; }
     echo "approved $email"
     ;;
@@ -55,7 +55,7 @@ print(f"{len(items)} request(s)")
       --condition-expression "attribute_exists(email)" \
       --expression-attribute-names '{"#s":"status"}' \
       --expression-attribute-values "{\":revoked\":{\"S\":\"revoked\"},\":now\":{\"N\":\"$(now_ms)\"}}" \
-      >/dev/null \
+      >/dev/null 2>&1 \
       || { echo "no request for $email" >&2; exit 1; }
     pool="$(aws cloudformation describe-stacks --stack-name GuppiGpt \
       --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text)"
