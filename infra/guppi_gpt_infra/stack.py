@@ -273,6 +273,11 @@ PARAM_CONVERSATION_LOG_KEY_SECRET_ARN = (
     f"{PLATFORM_PARAMETER_PREFIX}/conversation-log-key-secret-arn"
 )
 PARAM_ALARM_TOPIC_ARN = f"{PLATFORM_PARAMETER_PREFIX}/alarm-topic-arn"
+# Where a project runtime sends its traces and which secret holds the token, so every
+# runtime on the platform reports to the same Dynatrace tenant without a copy of the token.
+# The endpoint is "none" while the Dynatrace parameters are blank (SSM takes no empty value).
+PARAM_DYNATRACE_TRACES_ENDPOINT = f"{PLATFORM_PARAMETER_PREFIX}/dynatrace-traces-endpoint"
+PARAM_DYNATRACE_TOKEN_SECRET_ARN = f"{PLATFORM_PARAMETER_PREFIX}/dynatrace-token-secret-arn"
 
 FEEDBACK_API_NAME = "guppi-gpt-feedback"
 FEEDBACK_STAGE_NAME = "prod"
@@ -2338,6 +2343,22 @@ class GuppiGptStack(cdk.Stack):
                 conversation_secret.secret_arn,
             ),
             ("AlarmTopicArn", PARAM_ALARM_TOPIC_ARN, alarm_topic.topic_arn),
+            (
+                "DynatraceTracesEndpoint",
+                PARAM_DYNATRACE_TRACES_ENDPOINT,
+                cdk.Token.as_string(
+                    cdk.Fn.condition_if(
+                        has_dynatrace_otlp.logical_id,
+                        f"{dynatrace_otlp_endpoint.value_as_string}/v1/traces",
+                        "none",
+                    )
+                ),
+            ),
+            (
+                "DynatraceTokenSecretArn",
+                PARAM_DYNATRACE_TOKEN_SECRET_ARN,
+                dynatrace_token_secret.secret_arn,
+            ),
         ):
             ssm.StringParameter(
                 self,

@@ -1096,6 +1096,8 @@ def test_platform_parameters_are_the_contract_names(template):
         "/guppi/platform/tools-gateway-id",
         "/guppi/platform/tools-gateway-role-arn",
         "/guppi/platform/jwt-discovery-url",
+        "/guppi/platform/dynatrace-traces-endpoint",
+        "/guppi/platform/dynatrace-token-secret-arn",
     }
     for parameter in template.find_resources("AWS::SSM::Parameter").values():
         assert parameter["Properties"]["Type"] == "String"
@@ -1220,3 +1222,16 @@ def test_the_page_may_frame_only_its_own_origin(template):
         rendered = json.dumps(branch)
         assert "frame-src 'self';" in rendered
         assert "frame-ancestors 'none';" in rendered
+
+
+def test_projects_can_find_the_dynatrace_endpoint_and_token_secret(template):
+    # A project runtime exports to the platform's Dynatrace tenant with the platform's
+    # token, read through the secret, never copied (docs/proposals/dynatrace.md).
+    parameters = platform_parameters(template)
+    (secret_id,) = [
+        k for k in template.find_resources("AWS::SecretsManager::Secret") if k.startswith("DynatraceTokenSecret")
+    ]
+    assert parameters["/guppi/platform/dynatrace-token-secret-arn"] == {"Ref": secret_id}
+    endpoint = parameters["/guppi/platform/dynatrace-traces-endpoint"]["Fn::If"]
+    assert endpoint[0] == "HasDynatraceOtlp"
+    assert endpoint[2] == "none"
