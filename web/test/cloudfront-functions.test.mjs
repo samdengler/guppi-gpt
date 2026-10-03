@@ -60,3 +60,14 @@ test("agent path: the platform agent, feedback and reserved names are left alone
     assert.equal(rewrite(handler, uri), uri, uri);
   }
 });
+
+test("page path: a renamed project's old page redirects to its new one", () => {
+  const handler = load("page-path.js");
+  for (const uri of ["/p/hr-connect/", "/p/hr-connect/index.html"]) {
+    const response = handler({ request: { uri, method: "GET", headers: {} } });
+    assert.equal(response.statusCode, 301, uri);
+    assert.equal(response.headers.location.value, "/p/hr/", uri);
+  }
+  // The new name is served as any project is.
+  assert.equal(rewrite(handler, "/p/hr/"), "/index.html");
+});

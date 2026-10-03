@@ -68,8 +68,8 @@ parameters. The contract, the routing, the manifest, and the extension API are i
 | Project | Repository | Page | What it is |
 | --- | --- | --- | --- |
 | GuppiGPT | this one | `https://chat.dengler.io/` | The platform's own agent: Strands on AgentCore, answering from the documentation knowledge base |
-| HR Assistant | [guppi-hr](https://github.com/samdengler/guppi-hr) | `https://chat.dengler.io/p/hr/` | An agent project: a Strands orchestrator routes each turn to Profile, Pay and Travel sub-agents over A2A and to HR tools over MCP, with every change confirmed before it commits |
-| HR Assistant (Connect) | [guppi-hr](https://github.com/samdengler/guppi-hr), `connect/` | `https://chat.dengler.io/p/hr-connect/` | The same HR assistant with Amazon Connect's Agentic CX designer as the super-agent, over the same sub-agents and tools |
+| HR Assistant | [guppi-hr](https://github.com/samdengler/guppi-hr), `connect/` | `https://chat.dengler.io/p/hr/` | An agent project: Amazon Connect's Agentic CX designer as the super-agent, over the Profile, Pay and Travel sub-agents (A2A) and the HR tools (MCP). Until 3 Oct 2026 this was `/p/hr-connect/`, which now redirects here |
+| HR Assistant (DIY) | [guppi-hr](https://github.com/samdengler/guppi-hr) | `https://chat.dengler.io/p/hr-diy/` | The same HR assistant with a Strands orchestrator as the super-agent, with every change confirmed before it commits; it was `/p/hr/` until 3 Oct 2026 |
 | MCP App Lab | this one, [`examples/mcp-app/`](examples/mcp-app/) | `https://chat.dengler.io/p/mcp-app/` | A tools-only project: an MCP server whose tools return MCP Apps UI, offered by the platform agent |
 
 The two HR projects are two choices of super-agent over one set of sub-agents and tools,
