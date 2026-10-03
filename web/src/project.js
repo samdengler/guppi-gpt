@@ -56,6 +56,16 @@ export function projectNames(list) {
   return out;
 }
 
+// The header's project switcher lists the default project first.
+const HOME_DESCRIPTION = "Answers from the GuppiGPT documentation.";
+
+/** The switcher's entries: GuppiGPT, then each project card, with `current` set on the
+ * page's own project (null is the default project). */
+export function switcherEntries(cards, current) {
+  const home = { name: null, label: DEFAULT_LABEL, description: HOME_DESCRIPTION, href: "/" };
+  return [home, ...cards].map((entry) => ({ ...entry, current: entry.name === (current || null) }));
+}
+
 /** One card for the project `name` from its manifest, or null when the page would not
  * use that manifest. The description is optional plain text, trimmed and capped. */
 export function projectCard(manifest, name) {

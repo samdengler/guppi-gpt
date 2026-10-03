@@ -10,7 +10,13 @@
 <div class="page">
 
   <header class="app-header">
-    <span id="brand" class="brand">GuppiGPT</span>
+    <div class="switcher" id="switcher">
+      <button id="brand" type="button" class="brand brand-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="switcher-menu">GuppiGPT</button>
+      <div id="switcher-menu" class="switcher-menu" role="menu" aria-label="Projects" hidden>
+        <div class="switcher-title">Projects</div>
+        <div id="switcher-list" class="switcher-list"></div>
+      </div>
+    </div>
     <div class="header-actions">
       <div class="history" hidden id="history-wrap">
         <button id="history-btn" type="button" class="text-btn" aria-haspopup="true" aria-expanded="false">Chats</button>

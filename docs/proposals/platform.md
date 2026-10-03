@@ -128,6 +128,8 @@ The page tolerates unknown fields so a project can carry its own settings for `e
 
 The home page (`/`) shows a "Try a project" row of cards under its empty state, one per
 project, each with the manifest's `label` and `description` and a link to `/p/<name>/`.
+Every page's header name opens the same list as a menu, GuppiGPT first and the current
+project highlighted, so switching projects is one click from anywhere.
 `web/src/projects.json` in this repository names the projects, in display order:
 
 ```json

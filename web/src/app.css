@@ -332,3 +332,37 @@ body {
 .project-card-label { font-weight: 600; }
 .project-card-description { flex: 1; color: var(--muted); font-size: .85rem; }
 .project-card-open { color: var(--accent); font-size: .85rem; font-weight: 600; }
+
+/* The header's project switcher (docs/proposals/platform.md, "Project list"). */
+.switcher { position: relative; }
+.brand-btn {
+  display: inline-flex; align-items: center; gap: .4rem; background: none; border: 1px solid transparent;
+  border-radius: .5rem; padding: .3rem .55rem; margin-left: -.55rem; font: inherit; font-size: 1.05rem;
+  font-weight: 600; color: var(--brand, inherit); cursor: pointer;
+}
+.brand-btn::after {
+  content: ""; width: .4rem; height: .4rem; margin-top: -.2rem;
+  border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(45deg);
+}
+.brand-btn[aria-expanded="true"]::after { margin-top: .2rem; transform: rotate(-135deg); }
+.brand-btn:hover, .brand-btn[aria-expanded="true"] { background: var(--surface); border-color: var(--border); }
+.switcher-menu {
+  position: absolute; left: -.55rem; top: 2.6rem; z-index: 11; width: min(24rem, calc(100vw - 2rem));
+  background: var(--bg); border: 1px solid var(--border); border-radius: .75rem; padding: .4rem;
+  box-shadow: 0 .75rem 2rem rgba(0, 0, 0, .2);
+}
+.switcher-title {
+  font-size: .72rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--muted); padding: .4rem .6rem .25rem;
+}
+.switcher-item {
+  display: flex; align-items: flex-start; gap: .75rem; padding: .5rem .6rem; border-radius: .5rem;
+  color: var(--fg); text-decoration: none;
+}
+.switcher-item:hover, .switcher-item:focus-visible { background: var(--surface); outline: none; }
+.switcher-item[aria-current="page"] { background: var(--surface); }
+.switcher-item[aria-current="page"] .switcher-label { color: var(--accent); }
+.switcher-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.switcher-label { font-weight: 600; }
+.switcher-description { color: var(--muted); font-size: .82rem; }
+.switcher-path { color: var(--muted); font-size: .75rem; white-space: nowrap; padding-top: .15rem; }

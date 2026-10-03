@@ -58,3 +58,23 @@ test("the shipped list names the three projects", () => {
   const list = JSON.parse(readFileSync(new URL("../src/projects.json", import.meta.url), "utf8"));
   assert.deepEqual(projectNames(list), ["hr", "hr-connect", "mcp-app"]);
 });
+
+test("the switcher lists GuppiGPT first, then the projects, and marks the current one", async () => {
+  const { switcherEntries } = await import("../src/project.js");
+  const cards = [
+    { name: "hr", label: "HR Assistant", description: "d", href: "/p/hr/" },
+    { name: "mcp-app", label: "MCP App Lab", description: "", href: "/p/mcp-app/" },
+  ];
+  const onHr = switcherEntries(cards, "hr");
+  assert.deepEqual(
+    onHr.map((e) => [e.label, e.href, e.current]),
+    [
+      ["GuppiGPT", "/", false],
+      ["HR Assistant", "/p/hr/", true],
+      ["MCP App Lab", "/p/mcp-app/", false],
+    ],
+  );
+  assert.ok(onHr[0].description.length > 0);
+  assert.equal(switcherEntries(cards, null)[0].current, true);
+  assert.deepEqual(switcherEntries([], null).map((e) => e.href), ["/"]);
+});

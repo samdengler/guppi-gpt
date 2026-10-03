@@ -8,7 +8,7 @@ import { initRum, identifyRumUser } from "./rum.js";
 import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideOnLoad, newestRefreshToken } from "./session.js";
 import { createExtensionHost, EXTENSION_EVENT_TYPES } from "./extensions.js";
 import { inviteBody, inviteResult, signInRefusal } from "./invite-core.js";
-import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, manifestUrl, checkManifest, mergeFeatures, brandFor, agentUrlFor, suggestionsFor, themeFor, THEME_KEYS, PROJECTS_URL, projectNames, projectCard } from "./project.js";
+import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, manifestUrl, checkManifest, mergeFeatures, brandFor, agentUrlFor, suggestionsFor, themeFor, THEME_KEYS, PROJECTS_URL, projectNames, projectCard, switcherEntries } from "./project.js";
 
 (async () => {
   const $ = (id) => document.getElementById(id);
@@ -27,6 +27,9 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
   const signOutLink = $("sign-out-link");
 
   const brandEl = $("brand");
+  const switcherWrap = $("switcher");
+  const switcherMenu = $("switcher-menu");
+  const switcherList = $("switcher-list");
   const signinTitle = $("signin-title");
   const signinScreen = $("signin-screen");
   const googleBtn = $("google-signin-btn");
@@ -147,10 +150,11 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
   // with it once the thread has a message. Each card's text comes from the project's own
   // manifest; a project whose manifest is missing or unusable is left out, and any
   // failure leaves the section hidden. Plain text only.
-  async function loadProjectCards() {
+  // One fetch of the list and the manifests serves the cards and the header's switcher.
+  async function loadProjects() {
     try {
       const listResponse = await fetch(PROJECTS_URL, { cache: "no-store" });
-      if (!listResponse.ok) return;
+      if (!listResponse.ok) return [];
       const names = projectNames(await listResponse.json());
       const cards = await Promise.all(
         names.map(async (name) => {
@@ -162,28 +166,67 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
           }
         }),
       );
-      for (const card of cards.filter(Boolean)) {
-        const link = document.createElement("a");
-        link.className = "project-card";
-        link.href = card.href;
-        const label = document.createElement("span");
-        label.className = "project-card-label";
-        label.textContent = card.label;
-        const description = document.createElement("span");
-        description.className = "project-card-description";
-        description.textContent = card.description;
-        const open = document.createElement("span");
-        open.className = "project-card-open";
-        open.textContent = `Open ${card.href}`;
-        link.append(label, description, open);
-        projectCardsList.appendChild(link);
-      }
-      projectCardsEl.hidden = projectCardsList.childElementCount === 0;
+      return cards.filter(Boolean);
     } catch {
-      // The cards are a convenience; the page works without them.
+      return [];
     }
   }
-  if (!project) loadProjectCards();
+
+  function renderProjectCards(cards) {
+    for (const card of cards) {
+      const link = document.createElement("a");
+      link.className = "project-card";
+      link.href = card.href;
+      const label = document.createElement("span");
+      label.className = "project-card-label";
+      label.textContent = card.label;
+      const description = document.createElement("span");
+      description.className = "project-card-description";
+      description.textContent = card.description;
+      const open = document.createElement("span");
+      open.className = "project-card-open";
+      open.textContent = `Open ${card.href}`;
+      link.append(label, description, open);
+      projectCardsList.appendChild(link);
+    }
+    projectCardsEl.hidden = projectCardsList.childElementCount === 0;
+  }
+
+  // The header's project switcher: the brand opens a menu of every project, GuppiGPT
+  // first, the current one highlighted. A failed load still lists GuppiGPT.
+  function renderSwitcher(cards) {
+    switcherList.replaceChildren();
+    for (const entry of switcherEntries(cards, project)) {
+      const item = document.createElement("a");
+      item.className = "switcher-item";
+      item.href = entry.href;
+      item.setAttribute("role", "menuitem");
+      if (entry.current) item.setAttribute("aria-current", "page");
+      const text = document.createElement("span");
+      text.className = "switcher-text";
+      const label = document.createElement("span");
+      label.className = "switcher-label";
+      label.textContent = entry.label;
+      text.append(label);
+      if (entry.description) {
+        const description = document.createElement("span");
+        description.className = "switcher-description";
+        description.textContent = entry.description;
+        text.append(description);
+      }
+      const path = document.createElement("span");
+      path.className = "switcher-path";
+      path.textContent = entry.href;
+      item.append(text, path);
+      switcherList.appendChild(item);
+    }
+  }
+
+  const projectsLoaded = loadProjects();
+  projectsLoaded.then((cards) => {
+    if (!project) renderProjectCards(cards);
+    renderSwitcher(cards);
+  });
   composerHint.textContent = hintText(historyEnabled, loggingEnabled);
   if (feedbackEnabled) {
     // Keeps the in-memory thread in sync with a vote so a later persistCurrentThread
@@ -679,6 +722,28 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
 
   newChatBtn.addEventListener("click", resetThread);
 
+  function setSwitcher(open) {
+    switcherMenu.hidden = !open;
+    brandEl.setAttribute("aria-expanded", String(open));
+  }
+  brandEl.addEventListener("click", () => {
+    const open = switcherMenu.hidden;
+    setSwitcher(open);
+    if (open) switcherList.querySelector('[aria-current="page"], .switcher-item')?.focus();
+  });
+  switcherMenu.addEventListener("keydown", (event) => {
+    const items = [...switcherList.querySelectorAll(".switcher-item")];
+    const at = items.indexOf(document.activeElement);
+    if (event.key === "Escape") {
+      setSwitcher(false);
+      brandEl.focus();
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      items[(at + step + items.length) % items.length]?.focus();
+    }
+  });
+
   accountBtn.addEventListener("click", () => {
     const open = accountMenu.hidden;
     accountMenu.hidden = !open;
@@ -686,6 +751,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
   });
 
   document.addEventListener("click", (event) => {
+    if (!switcherWrap.contains(event.target)) setSwitcher(false);
     if (!accountWrap.contains(event.target)) {
       accountMenu.hidden = true;
       accountBtn.setAttribute("aria-expanded", "false");
