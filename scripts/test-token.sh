@@ -28,7 +28,9 @@ command -v jq >/dev/null || fail "jq is required"
 if [[ -z "${GUPPI_TOKEN_URL:-}" || -z "${GUPPI_CLIENT_ID:-}" ]]; then
   command -v aws >/dev/null || fail "set GUPPI_TOKEN_URL and GUPPI_CLIENT_ID, or install the AWS CLI"
   GUPPI_TOKEN_URL="${GUPPI_TOKEN_URL:-$(aws ssm get-parameter --name /guppi/okta/token-url --query Parameter.Value --output text --region us-east-1)}"
-  GUPPI_CLIENT_ID="${GUPPI_CLIENT_ID:-$(aws ssm get-parameter --name /guppi/okta/client-id --query Parameter.Value --output text --region us-east-1)}"
+  # The harness's own native app: Okta binds the page's refresh tokens to the browser
+  # (scripts/okta-harness-signin.py seeds the session file).
+  GUPPI_CLIENT_ID="${GUPPI_CLIENT_ID:-$(aws ssm get-parameter --name /guppi/okta/harness-client-id --query Parameter.Value --output text --region us-east-1)}"
 fi
 
 # One caller at a time: two concurrent refreshes of the same rotating token would leave
@@ -46,7 +48,8 @@ jq -e '.refreshToken | strings' "$SESSION_FILE" >/dev/null || fail "$SESSION_FIL
 # The form is built by jq from the file and piped to curl; printf is a shell builtin, so
 # no token reaches a process argument list.
 response="$(
-  jq -r --arg client "$GUPPI_CLIENT_ID" \
+  # -j, not -r: a trailing newline would end the refresh token, which Okta refuses.
+  jq -j --arg client "$GUPPI_CLIENT_ID" \
     '"grant_type=refresh_token&client_id=\($client | @uri)&refresh_token=\(.refreshToken | @uri)"' \
     "$SESSION_FILE" |
     curl -sS --max-time 30 -X POST "$GUPPI_TOKEN_URL" \

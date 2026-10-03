@@ -39,6 +39,11 @@ import boto3
 SITE = "https://chat.dengler.io"
 GROUP = "chat-users"
 APP_LABEL = "chat.dengler.io"
+# A native app for scripts (the latency harness, browser checks): Okta binds a browser
+# app's refresh tokens to the browser, so a script cannot use the page's. It signs in once
+# through a local callback (scripts/okta-harness-signin.py) and gets the same audience.
+HARNESS_LABEL = "guppi-harness"
+HARNESS_REDIRECT = "http://localhost:8765/callback"
 AUTH_SERVER = "guppi"
 AUDIENCE = "api://guppi"
 POLICY = "chat.dengler.io sign-in"
@@ -134,6 +139,37 @@ def ensure_app(okta: Okta, check: bool) -> dict | None:
     )
 
 
+def harness_settings() -> dict:
+    return {
+        "oauthClient": {
+            "redirect_uris": [HARNESS_REDIRECT],
+            "response_types": ["code"],
+            "grant_types": ["authorization_code", "refresh_token"],
+            "application_type": "native",
+            "consent_method": "TRUSTED",
+            "refresh_token": {"rotation_type": "ROTATE", "leeway": 30},
+        }
+    }
+
+
+def ensure_harness(okta: Okta, check: bool) -> dict | None:
+    q = urllib.parse.quote(HARNESS_LABEL)
+    app = okta.find(f"/api/v1/apps?q={q}", lambda a: a["label"] == HARNESS_LABEL and a["status"] == "ACTIVE")
+    if app or check:
+        return app
+    return okta.call(
+        "POST",
+        "/api/v1/apps",
+        {
+            "name": "oidc_client",
+            "label": HARNESS_LABEL,
+            "signOnMode": "OPENID_CONNECT",
+            "credentials": {"oauthClient": {"token_endpoint_auth_method": "none", "pkce_required": True}},
+            "settings": harness_settings(),
+        },
+    )
+
+
 def ensure_auth_server(okta: Okta, check: bool) -> dict | None:
     server = okta.find("/api/v1/authorizationServers", lambda s: s["name"] == AUTH_SERVER)
     if server or check:
@@ -145,7 +181,7 @@ def ensure_auth_server(okta: Okta, check: bool) -> dict | None:
     )
 
 
-def ensure_policy(okta: Okta, server_id: str, client_id: str, group_id: str, check: bool) -> None:
+def ensure_policy(okta: Okta, server_id: str, client_ids: list[str], group_id: str, check: bool) -> None:
     base = f"/api/v1/authorizationServers/{server_id}/policies"
     policy = okta.find(base, lambda p: p["name"] == POLICY)
     if not policy:
@@ -161,9 +197,12 @@ def ensure_policy(okta: Okta, server_id: str, client_id: str, group_id: str, che
                 "name": POLICY,
                 "description": "Tokens for the chat.dengler.io app, to chat-users only",
                 "priority": 1,
-                "conditions": {"clients": {"include": [client_id]}},
+                "conditions": {"clients": {"include": client_ids}},
             },
         )
+    elif not check and sorted(policy["conditions"]["clients"]["include"]) != sorted(client_ids):
+        policy["conditions"]["clients"]["include"] = client_ids
+        okta.call("PUT", f"{base}/{policy['id']}", policy)
     rules = f"{base}/{policy['id']}/rules"
     rule = okta.find(rules, lambda r: r["name"] == RULE)
     body = {
@@ -172,6 +211,7 @@ def ensure_policy(okta: Okta, server_id: str, client_id: str, group_id: str, che
         "priority": 1,
         "conditions": {
             "people": {"groups": {"include": [group_id]}},
+            # Refresh is not a separate grant here; the code grant covers it.
             "grantTypes": {"include": ["authorization_code"]},
             "scopes": {"include": ["*"]},
         },
@@ -204,12 +244,14 @@ def main() -> None:
     origin = ensure_origin(okta, args.check)
     app = ensure_app(okta, args.check)
     server = ensure_auth_server(okta, args.check)
+    harness = ensure_harness(okta, args.check)
     print(f"org {host}; admin {me['profile']['login']}")
     print(f"group {GROUP}: {group and group['id']}")
     print(f"trusted origin {SITE}: {'present' if origin else 'missing'}")
     print(f"app {APP_LABEL}: {app and app['id']}")
     print(f"authorization server {AUTH_SERVER}: {server and server['id']}")
-    if not (group and app and server):
+    print(f"app {HARNESS_LABEL}: {harness and harness['id']}")
+    if not (group and app and server and harness):
         if args.check:
             return
         sys.exit("something was not created")
@@ -223,14 +265,17 @@ def main() -> None:
         settings["oauthClient"] = {**settings.get("oauthClient", {}), **app_settings()["oauthClient"]}
         okta.call("PUT", f"/api/v1/apps/{app['id']}", {**{k: app[k] for k in ("name", "label", "signOnMode")}, "credentials": app["credentials"], "settings": settings})
         okta.call("PUT", f"/api/v1/apps/{app['id']}/groups/{group['id']}", {})
+        okta.call("PUT", f"/api/v1/apps/{harness['id']}/groups/{group['id']}", {})
         okta.call("PUT", f"/api/v1/groups/{group['id']}/users/{me['id']}", None)
-    ensure_policy(okta, server["id"], client_id, group["id"], args.check)
+    harness_client_id = harness["credentials"]["oauthClient"]["client_id"]
+    ensure_policy(okta, server["id"], [client_id, harness_client_id], group["id"], args.check)
 
     issuer = server["issuer"]
     discovery = okta.call("GET", f"/oauth2/{server['id']}/.well-known/openid-configuration")
     values = {
         "issuer": issuer,
         "client-id": client_id,
+        "harness-client-id": harness_client_id,
         "audience": AUDIENCE,
         "discovery-url": f"{issuer}/.well-known/openid-configuration",
         "authorize-url": discovery["authorization_endpoint"],
