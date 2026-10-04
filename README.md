@@ -242,3 +242,14 @@ Preference for anything on the backend: AWS native services, serverless where po
      calls.
    Keeping instances warm (provisioned concurrency or a schedule) was set aside (Sam,
    4 Oct): the aim is a function that starts fast.
+10. TODO: show that a reply is on its way. From the send to the first words the reply shows
+   only its label ("HR Assistant") over an empty space: the status line under it appears
+   only for a tool call or when a project's extension sets it, and /p/hr/ has neither. On
+   /p/hr/ that gap is 1.3 to 5 s once the warm start has run and longer before (Sam,
+   4 Oct: "seems faster, but still slow"). Plan: an animated indicator in the running
+   reply from the send until the first text, error or finish, for every project, with
+   `aria-busy` and a reduced-motion variant; then, optionally, a status line from the
+   run's `STEP_STARTED` events (the Connect bridge sends one per turn; a stage such as
+   "Starting the conversation" while it waits for the warm start would say why a first
+   question takes longer). CSS and page code only; the page still renders replies as
+   plain text.
