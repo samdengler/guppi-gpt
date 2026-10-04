@@ -476,9 +476,16 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
     await saveSession(tokens.refresh_token, decodeJwt(tokens.id_token));
   }
 
-  async function refreshTokenIfNeeded() {
-    const fiveMinutes = 5 * 60 * 1000;
-    if (Date.now() < tokenExpiresAt - fiveMinutes) return;
+  // One refresh at a time: the refresh token rotates on every use, so a warm start and a
+  // send that both refresh would spend it twice and the second would be refused.
+  let refreshing = null;
+  function refreshTokenIfNeeded(minimumLeft = 5 * 60 * 1000) {
+    if (Date.now() < tokenExpiresAt - minimumLeft) return Promise.resolve();
+    if (!refreshing) refreshing = refreshTokens().finally(() => { refreshing = null; });
+    return refreshing;
+  }
+
+  async function refreshTokens() {
     // Cognito rotates the refresh token on every use, and another tab of the same browser
     // may have used it since this tab last did (each tab keeps its own copy in memory). The
     // stored record always holds the newest one, so it wins over this tab's copy; a stale
@@ -607,8 +614,9 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
   // "Warm start"). Engagement rather than page load, so a reader who never writes opens
   // nothing (guppi-hr critique findings 1 and 2). The run names the thread the page left,
   // when that one may hold something open, so the agent can release it. Fire and forget: a
-  // failed warm start only means the first message does that work itself. A token near
-  // expiry skips it, so the send's refresh is the only one.
+  // failed warm start only means the first message does that work itself. The token is
+  // refreshed first unless it has 50 minutes left: an agent may start something that lasts
+  // an hour on it (guppi-hr's Connect contact, whose hop tokens expire with this token, D47).
   const warmStart = wantsWarmStart(manifest);
   let warmArmed = false;     // the current thread has not been warmed yet
   let warmedThreadId = null; // the last thread a warm start went out for
@@ -623,6 +631,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
   }
   async function warmThread() {
     if (!warmStart || auth !== "signed-in" || messages.length > 0) return;
+    await refreshTokenIfNeeded(50 * 60 * 1000);
     if (Date.now() >= tokenExpiresAt - 5 * 60 * 1000) return;
     warmedThreadId = threadId;
     const previousThreadId = leftThreadId;
