@@ -10,7 +10,11 @@ a link to set up their sign-in; someone already in Okta is added to the group in
 Then the requester gets the "You're in" email. `scripts/invite.sh revoke` removes the
 person from the group. An Okta account outside the group is refused at sign-in ("not
 assigned to the application"), and the page shows the invite form. The people approved
-before the move were not migrated (Sam, 3 October). The rest of this document is the
+before the move were not migrated (Sam, 3 October); instead a request from an address that
+is already approved re-runs the Okta step, so one of them who uses the form gets an
+account and the two emails (4 October). A repeat request from someone already in Okta, or
+a re-grant, only confirms the group membership and sends nothing, so the form cannot be
+used to flood an approved person's inbox. The rest of this document is the
 Cognito design as it was.
 
 Status: built and deployed, 3 October 2026 (phases 1 to 5 below). Two things wait: AWS's

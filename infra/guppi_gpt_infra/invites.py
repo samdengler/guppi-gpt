@@ -50,12 +50,15 @@ UUID_PATTERN = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 APPROVAL_RATE_PER_SECOND = 0.5
 APPROVAL_BURST = 5
 
-# The PutItem body. Every value comes from the request the validator already accepted,
+# The UpdateItem body. Every value comes from the request the validator already accepted,
 # escaped for JSON with escapeJavaScript, whose \' JSON does not accept, so replaceAll puts
 # the apostrophe back (the feedback API does the same). The address is lower-cased so one
 # person is one item however they type it. The token Sam's approval link carries is this
-# request's id, a UUID API Gateway generates; the condition makes a repeat request a
-# no-op, so it neither overwrites a decision nor mails Sam again.
+# request's id, a UUID API Gateway generates. if_not_exists keeps everything a first
+# request wrote, the decision included, so a repeat request neither overwrites a decision
+# nor mails Sam again; it only stamps lastRequestedAt. That stamp on an approved item makes
+# the mailer add the person to Okta again (an approval from before the Okta move had no
+# Okta account behind it), with no email unless Okta creates the account.
 _REQUEST_TEMPLATE = r"""
 #set($email = $util.escapeJavaScript($input.path('$.email').trim().toLowerCase()).replaceAll("\\'", "'"))
 #set($name = $util.escapeJavaScript($input.path('$.name').trim()).replaceAll("\\'", "'"))
@@ -64,15 +67,16 @@ _REQUEST_TEMPLATE = r"""
 #set($note = $util.escapeJavaScript($note.trim()).replaceAll("\\'", "'"))
 {
   "TableName": "TABLE",
-  "Item": {
-    "email": {"S": "$email"},
-    "name": {"S": "$name"},
-    "note": {"S": "$note"},
-    "status":{"S":"pending"},
-    "token": {"S": "$context.requestId"},
-    "requestedAt": {"N": "$context.requestTimeEpoch"}
-  },
-  "ConditionExpression": "attribute_not_exists(email)"
+  "Key": {"email": {"S": "$email"}},
+  "UpdateExpression": "SET #n = if_not_exists(#n, :name), #o = if_not_exists(#o, :note), #s = if_not_exists(#s, :pending), #t = if_not_exists(#t, :token), #r = if_not_exists(#r, :now), lastRequestedAt = :now",
+  "ExpressionAttributeNames": {"#n": "name", "#o": "note", "#s": "status", "#t": "token", "#r": "requestedAt"},
+  "ExpressionAttributeValues": {
+    ":name": {"S": "$name"},
+    ":note": {"S": "$note"},
+    ":pending": {"S": "pending"},
+    ":token": {"S": "$context.requestId"},
+    ":now": {"N": "$context.requestTimeEpoch"}
+  }
 }
 """.strip().replace("TABLE", TABLE_NAME)
 
@@ -195,7 +199,11 @@ def _email_definition(site_url: str) -> str:
             "Remember": {
                 "Type": "Pass",
                 # A direct grant has no name ("(granted)"); the address stands in for one.
+                # "fresh" is a new approval, as against a repeat request or a re-grant of
+                # an approved address: only a fresh one, or a new Okta account, is mailed.
                 "Assign": {
+                    "fresh": ("{% $not($exists($states.input[0].dynamodb.OldImage.status.S))"
+                              " or $states.input[0].dynamodb.OldImage.status.S != 'approved' %}"),
                     "email": f"{{% {image}.email.S %}}",
                     "name": (f"{{% {image}.name.S = '(granted)' ? $substringBefore({image}.email.S, '@')"
                              f" : {image}.name.S %}}"),
@@ -253,7 +261,12 @@ def _email_definition(site_url: str) -> str:
                     "Authentication": okta_auth,
                     "Headers": okta_headers,
                 },
-                "Next": "MailRequester",
+                "Next": "MailIfFresh",
+            },
+            "MailIfFresh": {
+                "Type": "Choice",
+                "Choices": [{"Condition": "{% $fresh %}", "Next": "MailRequester"}],
+                "Default": "Done",
             },
             "MailSam": {
                 "Type": "Task",
@@ -443,6 +456,19 @@ class Invites(Construct):
                                 }
                             )
                         ),
+                        # A repeat request, or a re-grant, for an approved address: the
+                        # mailer adds the person to Okta if they are not there yet.
+                        pipes.CfnPipe.FilterProperty(
+                            pattern=json.dumps(
+                                {
+                                    "eventName": ["MODIFY"],
+                                    "dynamodb": {
+                                        "OldImage": {"status": {"S": ["approved"]}},
+                                        "NewImage": {"status": {"S": ["approved"]}},
+                                    },
+                                }
+                            )
+                        ),
                         # scripts/invite.sh grant for an address with no request.
                         pipes.CfnPipe.FilterProperty(
                             pattern=json.dumps(
@@ -539,7 +565,7 @@ class Invites(Construct):
         )
         integration = apigateway.AwsIntegration(
             service="dynamodb",
-            action="PutItem",
+            action="UpdateItem",
             integration_http_method="POST",
             options=apigateway.IntegrationOptions(
                 credentials_role=api_role,

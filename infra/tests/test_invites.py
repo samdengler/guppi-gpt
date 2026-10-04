@@ -51,13 +51,16 @@ def test_request_api_takes_an_unauthenticated_validated_post(template):
     assert props["AuthorizationType"] == "NONE"
     assert "RequestValidatorId" in props
     integration = props["Integration"]
-    assert integration["Uri"]["Fn::Join"][1][-1].endswith(":dynamodb:action/PutItem")
+    assert integration["Uri"]["Fn::Join"][1][-1].endswith(":dynamodb:action/UpdateItem")
     template_text = integration["RequestTemplates"]["application/json"]
     # One item per lower-cased address, created once; the approval token is the request id.
     assert "toLowerCase()" in template_text
-    assert "attribute_not_exists(email)" in template_text
+    # A repeat request keeps the first request's fields and decision and only stamps the
+    # time, so an approved address that asks again reaches the mailer (no Okta account yet).
+    assert "#s = if_not_exists(#s, :pending)" in template_text
+    assert "lastRequestedAt = :now" in template_text
     assert "$context.requestId" in template_text
-    assert '"status":{"S":"pending"}' in template_text
+    assert '":pending": {"S": "pending"}' in template_text
 
 
 def test_request_model_bounds_every_field(template):
@@ -237,6 +240,9 @@ def test_an_approval_reaches_the_mailer_too(template):
             "NewImage": {"status": {"S": ["approved"]}},
         },
     } in filters
+    # A repeat request or re-grant for an approved address.
+    assert {"eventName": ["MODIFY"], "dynamodb": {"OldImage": {"status": {"S": ["approved"]}},
+                                                  "NewImage": {"status": {"S": ["approved"]}}}} in filters
     # A direct grant (scripts/invite.sh grant) for an address with no request.
     assert {"eventName": ["INSERT"], "dynamodb": {"NewImage": {"status": {"S": ["approved"]}}}} in filters
 
@@ -271,7 +277,12 @@ def test_an_approval_adds_the_requester_to_okta_then_mails_them(template):
     assert add["Catch"][0] == {"ErrorEquals": ["States.Http.StatusCode.400"], "Next": "FindOktaUser"}
     assert states["FindOktaUser"]["Next"] == "AddToGroup"
     assert states["AddToGroup"]["Arguments"]["Method"] == "PUT"
-    assert add["Next"] == states["AddToGroup"]["Next"] == "MailRequester"
+    # A new Okta account is always mailed; an existing user re-added only on a new approval.
+    assert add["Next"] == "MailRequester"
+    assert states["AddToGroup"]["Next"] == "MailIfFresh"
+    assert states["MailIfFresh"]["Choices"] == [{"Condition": "{% $fresh %}", "Next": "MailRequester"}]
+    assert states["MailIfFresh"]["Default"] == "Done"
+    assert "OldImage" in states["Remember"]["Assign"]["fresh"]
     mail = states["MailRequester"]["Arguments"]
     assert mail["Destination"]["ToAddresses"] == ["{% $email %}"]
     assert mail["ReplyToAddresses"] == ["${InviteEmail}"]
