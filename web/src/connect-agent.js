@@ -295,7 +295,9 @@ class Turn {
     const timing = this.timing(summary);
     if (this.debug) this.emit({ type: "CUSTOM", name: TIMING_EVENT_NAME, value: timing });
     this.emit({ type: "RUN_ERROR", message: "The Connect chat failed", code: code.toUpperCase() });
-    this.report("error", code, summary, timing);
+    // "error" is the designer's error line to the report route's alarm (chat_problem
+    // designer_error), so a turn the transport gave up on reports "aborted" with its code.
+    this.report("aborted", code, summary, timing);
     this.close();
   }
 

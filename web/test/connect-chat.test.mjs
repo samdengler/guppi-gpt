@@ -220,6 +220,7 @@ test("the designer's error line is shown as the error line and ends the conversa
   assert.deepEqual(customs(out), ["connect/error"]);
   assert.deepEqual(assembler.push(event(LEFT, 400)), []);
   assert.equal(assembler.summary().error, "designer_error");
+  assert.equal(assembler.done.reason, "error");
   assert.equal(assembler.summary().closed, true);
 });
 
@@ -583,7 +584,7 @@ test("a chat whose socket failed for good sends the thread to the bridge", async
   await tick();
   await tick();
   const ready = await chats.ready("t1");
-  assert.deepEqual([ready.reason, ready.fallback, ready.contactId], ["bridge", "socket_failed", "c-1"]);
+  assert.deepEqual([ready.reason, ready.fallback, ready.contactId], ["bridge", "ws_failed", "c-1"]);
 });
 
 test("an ended chat is replaced with previousContactId and the restart line", async () => {

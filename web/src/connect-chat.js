@@ -165,7 +165,7 @@ export function createTurnAssembler({ rules, now }) {
     const outputs = [{ type: "custom", name: `connect/${reply.kind}`, text: reply.text || "" }];
     if (reply.text) outputs.push({ type: "text", text: reply.text });
     if (reply.kind === "ended") finish("ended", { closed: true }, "closing event");
-    else if (reply.kind === "error") finish("closed", { closed: true, error: "designer_error" }, "closing event");
+    else if (reply.kind === "error") finish("error", { closed: true, error: "designer_error" }, "closing event");
     else finish("closed", { closed: true }, "closing event");
     return outputs;
   }
@@ -661,7 +661,7 @@ export function createConnectChatClient({
     } else if (current.chat.failed) {
       // The socket broke and one reconnect failed: the thread goes on through the bridge.
       entry.transport = "bridge";
-      entry.fallback = "socket_failed";
+      entry.fallback = "ws_failed";
       return bridge();
     } else if (current.chat.closed) {
       current = await start(threadId, { restartLine: true });
@@ -701,7 +701,7 @@ export function createConnectChatClient({
     contactOf(threadId) {
       return threads.get(threadId)?.lastContactId ?? null;
     },
-    useBridge(threadId, reason = "socket_failed") {
+    useBridge(threadId, reason = "ws_failed") {
       const entry = entryFor(threadId);
       entry.transport = "bridge";
       entry.fallback = reason;

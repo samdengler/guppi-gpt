@@ -253,7 +253,7 @@ test("a socket that fails for good ends the run with RUN_ERROR and an error repo
   const { events } = await run(agent, { debug: false });
   assert.equal(types(events).at(-1), "RUN_ERROR");
   assert.equal(events.at(-1).code, "SOCKET_FAILED");
-  assert.deepEqual([reports[0].endReason, reports[0].error], ["error", "socket_failed"]);
+  assert.deepEqual([reports[0].endReason, reports[0].error], ["aborted", "socket_failed"]);
 });
 
 test("the caller's abort controller stops the turn, unsubscribes, and reports aborted", async () => {
@@ -285,4 +285,13 @@ test("a wait for the chat start is a step and a note", async () => {
   assert.deepEqual(timing.steps[0], { name: "waiting for the chat start", start_ms: 0, end_ms: 1500, lane: "page" });
   assert.ok(timing.notes.includes("waited for the chat start"));
   assert.ok(timing.notes.includes("sub-agents warmed at chat start: 3"));
+});
+
+test("the designer's error line reports endReason error with designer_error, for the report route's alarm", async () => {
+  const chat = fakeChat({ script: { hello: [bot("[flow] The Agentic CX block returned an error.")] } });
+  const { agent, reports } = agentFor(chat);
+  const { events } = await run(agent, { debug: false });
+  assert.deepEqual(deltas(events), [RULES.lines.error]);
+  assert.deepEqual([reports[0].endReason, reports[0].error], ["error", "designer_error"]);
+  assert.equal(chat.closed, true);
 });

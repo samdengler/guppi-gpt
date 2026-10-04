@@ -261,9 +261,13 @@ and feeds it through the same `Id` check, so a catch-up never shows anything twi
 After each turn the page posts the report to `report` with `fetch(..., { keepalive: true
 })`, off the answer's path: `contactId`, `runId`, `threadId`, Connect's `AbsoluteTime` for
 the message and the first and last reply items, `endReason` (`end_mark`, `closed`,
-`ended`, `quiet`, `no_reply`, `error`, `aborted`), an `error` code (`designer_error`,
-`socket_failed`, `send_refused`, `connect_failed`, `start_unavailable`), `transport` and
-the timing value. Never reply text, never a token.
+`ended`, `quiet`, `no_reply`, `error`, `aborted`), an `error` code, `transport` and the
+timing value. Never reply text, never a token. The route's alarm reads `no_reply` as a
+turn with no answer, `error` as the designer's error line (with `designer_error`), and an
+error code that names the socket as a failed socket, so a turn the transport gave up on
+reports `aborted` with its code (`socket_failed`, `send_failed`, `send_refused`), a stall
+or Retry reports `aborted` alone, and a bridge turn reports `end_mark` or `aborted` with
+why its thread left Connect (`start_unavailable`, `connect_failed`, `ws_failed`).
 
 The debug block keeps working: the agent sends its own `guppi.timing` (the D54 shape) with
 the page-clock steps (the wait for the chat start, `SendMessage`, the first reply item, the
