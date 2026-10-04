@@ -4,7 +4,7 @@
 # `--site-only` skips cdk deploy (and the image build and push) and publishes the page
 # from the outputs of the last deploy; useful on a slow connection.
 # `--reuse-parameters` skips the 1Password reads and lets cdk deploy keep the stack's
-# existing Google OAuth and Dynatrace parameters (the CDK default, --previous-parameters),
+# existing Okta API token and Dynatrace parameters (the CDK default, --previous-parameters),
 # so a code-only redeploy never prompts for the vault. Not for a first deploy of a stack,
 # which has no previous values to keep.
 set -euo pipefail
@@ -20,7 +20,7 @@ while [[ "${1:-}" == "--site-only" || "${1:-}" == "--reuse-parameters" ]]; do
 done
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ITEM="op://Personal/GuppiGPT Google OAuth"
+ITEM="op://Personal/Okta API token"
 DT_ITEM_TITLE="GuppiGPT Dynatrace"
 OUTPUTS="$ROOT/cdk-outputs.json"
 
@@ -49,19 +49,20 @@ param_args=()
 if [[ "$SITE_ONLY" == 1 ]]; then
   echo "site only: skipping cdk deploy, using $OUTPUTS"
 elif [[ "$REUSE_PARAMETERS" == 1 ]]; then
-  echo "reuse parameters: skipping 1Password; cdk deploy keeps the stack's existing Google OAuth and Dynatrace parameters"
+  echo "reuse parameters: skipping 1Password; cdk deploy keeps the stack's existing Okta API token and Dynatrace parameters"
 # `op whoami` can report "not signed in" while reads succeed through the desktop app
 # integration, so the gate is a read of the item itself.
-elif op read "$ITEM/username" >/dev/null 2>&1; then
-  client_id="$(op read "$ITEM/username")"
-  client_secret="$(op read "$ITEM/credential")"
-  if [[ -z "$client_id" || -z "$client_secret" ]]; then
-    echo "could not read the Google OAuth client from 1Password ($ITEM)" >&2
-    echo "check the vault, item title, and field labels with: op item get 'GuppiGPT Google OAuth' --format json | jq '.vault.name, [.fields[].label]'" >&2
+elif op read "$ITEM/credential" >/dev/null 2>&1; then
+  # The invite flow's Okta API token (docs/proposals/invites.md); it reaches CloudFormation
+  # only as the no_echo parameter, and from there an EventBridge connection's own secret.
+  okta_token="$(op read "$ITEM/credential")"
+  if [[ -z "$okta_token" ]]; then
+    echo "could not read the Okta API token from 1Password ($ITEM)" >&2
     exit 1
   fi
-  param_args+=(--parameters "GoogleClientId=$client_id" --parameters "GoogleClientSecret=$client_secret")
-  # Dynatrace backend export: optional, unlike the Google client above. Skipped
+  param_args+=(--parameters "OktaApiToken=$okta_token")
+  unset okta_token
+  # Dynatrace backend export: optional, unlike the Okta token above. Skipped
   # entirely (op read with || true, same style) when the item does not exist yet, so a
   # deploy before Sam has a Dynatrace tenant behaves exactly as it does today.
   if op item get "$DT_ITEM_TITLE" --vault Personal >/dev/null 2>&1; then
@@ -74,7 +75,7 @@ elif op read "$ITEM/username" >/dev/null 2>&1; then
     fi
   fi
 else
-  echo "1Password is not readable (op read failed); reusing the stack's existing Google OAuth and Dynatrace parameters" >&2
+  echo "1Password is not readable (op read failed); reusing the stack's existing Okta API token and Dynatrace parameters" >&2
 fi
 if [[ -n "${GUPPI_ALARM_EMAIL:-}" ]]; then
   param_args+=(--parameters "AlarmEmail=$GUPPI_ALARM_EMAIL")
@@ -114,7 +115,7 @@ bucket="$(jq -r '.GuppiGpt.SiteBucketName' "$OUTPUTS")"
 distribution="$(jq -r '.GuppiGpt.DistributionId' "$OUTPUTS")"
 
 # Sign-in is Okta's since guppi-hr D46: the issuer's endpoints come from what
-# scripts/okta.py published, and the page uses them in place of Cognito's (web/src/oidc.js).
+# scripts/okta.py published (web/src/oidc.js).
 okta() { aws ssm get-parameter --name "/guppi/okta/$1" --query Parameter.Value --output text; }
 oidc="$(jq -n --arg issuer "$(okta issuer)" --arg clientId "$(okta client-id)" \
   --arg authorizeUrl "$(okta authorize-url)" --arg tokenUrl "$(okta token-url)" \
@@ -124,8 +125,6 @@ oidc="$(jq -n --arg issuer "$(okta issuer)" --arg clientId "$(okta client-id)" \
 jq --slurpfile features web/features.json --argjson oidc "$oidc" '{
   region: "'"$AWS_REGION"'",
   oidc: $oidc,
-  userPoolClientId: .GuppiGpt.UserPoolClientId,
-  authDomain: .GuppiGpt.AuthDomain,
   siteUrl: .GuppiGpt.SiteUrl,
   features: $features[0],
   rum: {

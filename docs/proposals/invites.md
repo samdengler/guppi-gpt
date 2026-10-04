@@ -1,5 +1,18 @@
 # Invite-only sign-in
 
+**Since 4 October 2026 (guppi-hr D46): Okta.** Sign-in moved from Cognito with Google to
+the Okta org, and Cognito is gone, with its pre sign-up Lambda. The request form, the
+`guppi-gpt-invites` table and the email to Sam are unchanged. Who may sign in is now the
+Okta group `chat-users`: approving a request (the email's link, or `scripts/invite.sh
+approve` or `grant`) makes the mailer state machine create the Okta user in that group
+through Okta's API (an EventBridge connection holding the API token), and Okta emails them
+a link to set up their sign-in; someone already in Okta is added to the group instead.
+Then the requester gets the "You're in" email. `scripts/invite.sh revoke` removes the
+person from the group. An Okta account outside the group is refused at sign-in ("not
+assigned to the application"), and the page shows the invite form. The people approved
+before the move were not migrated (Sam, 3 October). The rest of this document is the
+Cognito design as it was.
+
 Status: built and deployed, 3 October 2026 (phases 1 to 5 below). Two things wait: AWS's
 review of SES production access, and a sign-in check with a Google account that has no
 invite.

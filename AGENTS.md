@@ -3,7 +3,7 @@
 ## Project Overview
 
 GuppiGPT is a minimal claude.ai style chat: one page, plain text conversation, no
-attachments, Google sign-in, and answers grounded in a Bedrock Knowledge Base. The agent
+attachments, invite-only Okta sign-in (guppi-hr D46), and answers grounded in a Bedrock Knowledge Base. The agent
 holds nothing between runs and the page starts empty, but three things are kept: the
 sign-in session in IndexedDB, one pseudonymous record per thread in S3 for 30 days, and a
 vote on a reply as a business event. Chat history in the browser is built behind the
@@ -19,10 +19,10 @@ Guppi is Bob's ship AI from *We Are Legion (We Are Bob)*.
 - Infrastructure: AWS CDK v2 in Python, one stack `GuppiGpt`, region `us-east-1`
 - Agent: Python 3.12, FastAPI, AG-UI over SSE, Strands Agents with the `ag-ui-strands` adapter, arm64 container on AgentCore Runtime
 - Model: Claude Haiku 4.5 through the `us.` cross-region inference profile (`MODEL_ID` in the stack)
-- Edge: CloudFront in front of an AgentCore Gateway runtime target, plus an `/api/feedback` behavior in front of a small API Gateway REST API that puts reply votes straight onto an EventBridge bus; Cognito user pool federated to Google
+- Edge: CloudFront in front of an AgentCore Gateway runtime target, plus an `/api/feedback` behavior in front of a small API Gateway HTTP API (Okta JWT authorizer) that puts reply votes straight onto an EventBridge bus; sign-in through Okta (`scripts/okta.py`)
 - Page: static HTML and vanilla JavaScript in `web/src/`, bundled once by esbuild into `web/dist/` with `@ag-ui/client` as the stream reader, served from S3 through CloudFront
 - Package manager: uv workspace (`infra` and `agent` are members)
-- Secrets: 1Password CLI at deploy time for the Google OAuth client; the origin header value is generated in Secrets Manager by the stack; nothing secret is checked in
+- Secrets: 1Password CLI at deploy time for the Okta API token; the origin header value is generated in Secrets Manager by the stack; nothing secret is checked in
 
 ## Project Structure
 
@@ -63,7 +63,7 @@ web/
   src/flags-core.js       # pure override parsing and default/override overlay, tested without a DOM
   src/flags.js            # the /flags.html settings page: rows per flag, browser-wide override controls, reset
   src/flags.html          # that page, reachable by URL only (no link from the chat page)
-  src/privacy.html        # privacy policy, served at /privacy.html for the Google consent screen
+  src/privacy.html        # privacy policy, served at /privacy.html
   src/terms.html          # terms of service, served at /terms.html
   src/rum.js              # Dynatrace RUM: script injection, OpenFeature hook, behind the rum flag
   features.json           # committed feature flag defaults, merged into config.json at deploy time
@@ -96,11 +96,11 @@ scripts/
   a preference, not a ban: when a function is the right tool, propose it and get Sam's
   approval before building it. Approved so far: the Lambda functions inside Dynatrace's
   own AWS activation stack (`GuppiGPT-Dynatrace`, 7 Sep 2026), which sits outside
-  `GuppiGpt`; and the Cognito pre sign-up trigger `guppi-gpt-pre-sign-up` that makes
-  sign-in invite only (docs/proposals/invites.md, 3 Oct 2026), which runs once per new
-  user, never on a chat request.
+  `GuppiGpt`; and the on-behalf-of token issuer `guppi-gpt-obo-issuer` (guppi-hr D47,
+  3 Oct 2026). The Cognito pre sign-up trigger went with Cognito; Okta's `chat-users`
+  group is now who may sign in.
 - Secrets never enter files, `cdk.context.json`, or `-c` context values. Values the stack
-  cannot produce (the Google OAuth client) are CloudFormation parameters with `no_echo`
+  cannot produce (the Okta API token) are CloudFormation parameters with `no_echo`
   supplied by `scripts/deploy.sh` from 1Password; values it can produce (the
   `X-Origin-Verify` header) live in Secrets Manager and reach the template only as
   dynamic references.
@@ -140,8 +140,9 @@ deploy` and no CloudFormation parameter (`docs/proposals/feature-flags.md`).
 
 ## Deploying
 
-`scripts/deploy.sh` reads the Google OAuth client id and secret from 1Password
-(`op://Personal/GuppiGPT Google OAuth/...`, an API Credential item whose `username` is the client id and `credential` is the client secret), runs `cdk deploy` with them as parameters,
+`scripts/deploy.sh` reads the Okta API token from 1Password (`op://Personal/Okta API
+token/credential`), runs `cdk deploy` with it as the `OktaApiToken` parameter (the invite
+flow's connection to Okta),
 builds the page (`npm ci`, `npm run build` in `web/`), writes `web/dist/config.json` from the stack outputs, syncs `web/dist/` to the site bucket, and
 invalidates CloudFront. When the 1Password read fails the script omits both parameters and
 CloudFormation reuses the stack's existing values; `scripts/deploy.sh --reuse-parameters`
@@ -179,7 +180,7 @@ distribution, site URL, both gateways' ids and roles, the edge gateway ARN, the 
 gateway URL, the user pool client id, the JWT discovery URL, the conversation log bucket
 and key secret, the alarm topic); their names are the `PARAM_*` constants in `stack.py`,
 and a project reads them with `ssm.StringParameter.value_for_string_parameter`. No project
-changes this stack or the Google OAuth client. The `guppi-agent` package installs by git
+changes this stack or the Okta org. The `guppi-agent` package installs by git
 URL (`agent/README.md`). A project agent's whole HTTP surface is `create_app(build_agent)`
 from `guppi_agent` (tag `kit-v0.2.0`): `build_agent(token)` returns an object whose `run`
 yields AG-UI events, Strands or not. The platform agent reads every `tools/list` page.
@@ -271,7 +272,7 @@ Dynatrace is shipped dark: `DynatraceBeaconOrigin`, `DynatraceOtlpEndpoint`, and
 trace export env vars render exactly as they do today until Sam supplies real values.
 `scripts/deploy.sh` reads the OTLP endpoint and the API token from 1Password
 (`op://Personal/GuppiGPT Dynatrace/...`, an API Credential item whose `hostname` is the
-endpoint and `credential` is the token) the same way it reads the Google OAuth client,
+endpoint and `credential` is the token) the same way it reads the Okta API token,
 skipping them when the item does not exist yet; `GUPPI_DYNATRACE_BEACON_ORIGIN`, when
 set, becomes the `DynatraceBeaconOrigin` parameter the same way `GUPPI_ALARM_EMAIL`
 becomes `AlarmEmail`. The RUM script itself (`web/vendor/ruxitagentjs.js`, gitignored) is
@@ -285,9 +286,9 @@ Dynatrace first.
 Reply votes take their own path, off the chat runtime and off the trace
 (`docs/proposals/feedback.md`). The page posts one to `/api/feedback`, a CloudFront
 behavior listed ahead of `/api/*` because behaviors are matched in the order they appear;
-behind it, an API Gateway REST API validates the body, checks the same Cognito token
-(naming the `openid` scope, without which the authorizer refuses the page's access token),
-and integrates directly with `events:PutEvents` on the `guppi-gpt-feedback` bus. A 30 day
+behind it, an API Gateway HTTP API checks the page's Okta token with a JWT authorizer and
+integrates directly with EventBridge PutEvents on the `guppi-gpt-feedback` bus; it has no
+body validation, so the rule to Dynatrace forwards only well-formed votes. A 30 day
 archive on the bus keeps every vote; the rule that forwards them to Dynatrace as business
 events turns on with the same two parameters as log forwarding. The `feedback` flag in
 `web/features.json` is what puts the control on the page, and it is off.

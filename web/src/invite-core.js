@@ -3,9 +3,6 @@
 // checking and shaping the form, and what each answer from /api/invite means. No DOM
 // here, so this file runs under node:test (web/test/invite.test.mjs).
 
-// The pre sign-up trigger raises with this marker; Cognito sends the browser back with it
-// in error_description ("PreSignUp failed with error not-invited.").
-const NOT_INVITED_MARKER = "not-invited";
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 export const NAME_MAX = 100;
 export const EMAIL_MAX = 254;
@@ -15,14 +12,12 @@ export const NOTE_MAX = 500;
 // description ("User is not assigned to the client application.").
 const NOT_ASSIGNED = /not assigned/i;
 
-/** "not-invited" when the issuer refused this account (Cognito's pre sign-up gate, or an
- * Okta user not assigned to the app), "failed" for any other sign-in error, or null when
- * the URL carries none. */
+/** "not-invited" when Okta refused this account (not assigned to the app, so not in
+ * chat-users), "failed" for any other sign-in error, or null when the URL carries none. */
 export function signInRefusal(search) {
   const params = new URLSearchParams(search);
   if (!params.has("error")) return null;
   const description = params.get("error_description") || "";
-  if (description.includes(NOT_INVITED_MARKER)) return "not-invited";
   if (params.get("error") === "access_denied" && NOT_ASSIGNED.test(description)) return "not-invited";
   return "failed";
 }

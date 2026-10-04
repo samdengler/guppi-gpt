@@ -41,8 +41,9 @@ refresh_token="$(op read 'op://Personal/GuppiGPT Test Session/credential')" || {
 jq -n --arg t "$refresh_token" '{refreshToken: $t}' > "$SESSION_FILE"
 chmod 600 "$SESSION_FILE"
 unset refresh_token
-export GUPPI_USER_POOL_CLIENT_ID="$(jq -r '.GuppiGpt.UserPoolClientId' "$GUPPI/cdk-outputs.json")"
-export GUPPI_AUTH_DOMAIN="$(jq -r '.GuppiGpt.AuthDomain' "$GUPPI/cdk-outputs.json")"
+# Okta since guppi-hr D46: the token URL and the harness's own app (scripts/test-token.sh).
+export GUPPI_TOKEN_URL="$(aws ssm get-parameter --name /guppi/okta/token-url --query Parameter.Value --output text --region us-east-1)"
+export GUPPI_CLIENT_ID="$(aws ssm get-parameter --name /guppi/okta/harness-client-id --query Parameter.Value --output text --region us-east-1)"
 export AWS_REGION="${AWS_REGION:-us-east-1}"
 
 phase() {

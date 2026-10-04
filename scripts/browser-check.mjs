@@ -7,12 +7,13 @@
 //   /            waits for the chat screen and saves .deploy/phase-3-root.png
 //
 // The refresh token comes from $HOME/.config/guppi/test-session.json, as for test-token.sh.
-// The user pool client rotates refresh tokens on every use, so each rotation (this script's
+// The issuer rotates refresh tokens on every use, so each rotation (this script's
 // own refresh for the id token claims, and the page's silent refresh) is written back to that
 // file, mode 600, under the same lock test-token.sh takes. No token is printed or logged.
 //
 //   node scripts/browser-check.mjs        (Playwright is a dev dependency of web/)
 
+import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { mkdirSync, readFileSync, renameSync, rmdirSync, writeFileSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
@@ -33,14 +34,15 @@ function fail(message) {
 }
 
 function outputs() {
-  let auth = process.env.GUPPI_AUTH_DOMAIN;
-  let client = process.env.GUPPI_USER_POOL_CLIENT_ID;
-  if (!auth || !client) {
-    const stack = JSON.parse(readFileSync(join(ROOT, "cdk-outputs.json"), "utf8")).GuppiGpt;
-    auth = auth || stack.AuthDomain;
-    client = client || stack.UserPoolClientId;
-  }
-  return { auth, client };
+  // Okta since guppi-hr D46: the token URL and the harness's own native app, from what
+  // scripts/okta.py published, as scripts/test-token.sh reads them.
+  const ssm = (name) =>
+    execFileSync("aws", ["ssm", "get-parameter", "--name", name, "--query", "Parameter.Value", "--output", "text"], {
+      encoding: "utf8",
+    }).trim();
+  const tokenUrl = process.env.GUPPI_TOKEN_URL || ssm("/guppi/okta/token-url");
+  const client = process.env.GUPPI_CLIENT_ID || ssm("/guppi/okta/harness-client-id");
+  return { tokenUrl, client };
 }
 
 async function withLock(fn) {
@@ -81,10 +83,10 @@ function decodeClaims(idToken) {
 }
 
 // One refresh grant, for a fresh id token's claims; the rotated refresh token is stored at once.
-async function freshSession({ auth, client }) {
+async function freshSession({ tokenUrl, client }) {
   return withLock(async () => {
     const body = new URLSearchParams({ grant_type: "refresh_token", client_id: client, refresh_token: readRefreshToken() });
-    const response = await fetch(`https://${auth}/oauth2/token`, {
+    const response = await fetch(tokenUrl, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body,

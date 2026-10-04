@@ -2,12 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { inviteBody, inviteResult, signInRefusal } from "../src/invite-core.js";
 
-test("Cognito's refusal from the pre sign-up gate reads as not invited", () => {
-  const search =
-    "?error_description=PreSignUp+failed+with+error+not-invited.+&state=%2Fp%2Fhr%2F&error=invalid_request";
-  assert.equal(signInRefusal(search), "not-invited");
-});
-
 test("another sign-in error is reported as a plain failure", () => {
   assert.equal(signInRefusal("?error=access_denied&error_description=User+cancelled"), "failed");
 });

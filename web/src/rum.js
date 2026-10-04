@@ -127,7 +127,7 @@ async function sha256Hex(text) {
  * Calls dtrum.identifyUser with a hashed subject, only when config.rum.identifyUser is
  * true (default false). identifyUser ties a RUM session to a real person, so the page
  * asks for it explicitly rather than doing it just because RUM happens to be on.
- * subject is the Cognito sub claim; hashed with SHA-256 (the same primitive app.js
+ * subject is the token's subject (Okta's uid); hashed with SHA-256 (the same primitive app.js
  * already uses for the PKCE code challenge) before it ever reaches Dynatrace. A no-op
  * when RUM never finished loading (dtrumInstance is still null): there is nothing to
  * call, and rumActive was already false or the script has not settled yet.

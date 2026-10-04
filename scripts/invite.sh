@@ -4,8 +4,10 @@
 #   scripts/invite.sh list              every request: status, address, name, when
 #   scripts/invite.sh approve <email>   a pending request becomes approved (the email's button does the same)
 #   scripts/invite.sh grant <email>     approves an address directly, with or without a request
-#   scripts/invite.sh revoke <email>    marks it revoked and deletes the Cognito user, so no new sign-in
-#                                       works and the current session ends when its token expires (an hour)
+#                                       (an approval adds the person to Okta's chat-users)
+#   scripts/invite.sh revoke <email>    marks it revoked and removes the person from chat-users, so no
+#                                       new sign-in works and the current session ends when its token
+#                                       expires (an hour); the Okta API token comes from 1Password
 set -euo pipefail
 
 export AWS_REGION="${AWS_REGION:-us-east-1}"
@@ -72,14 +74,29 @@ print(f"{len(items)} request(s)")
       --expression-attribute-values "{\":revoked\":{\"S\":\"revoked\"},\":now\":{\"N\":\"$(now_ms)\"}}" \
       >/dev/null 2>&1 \
       || { echo "no request for $email" >&2; exit 1; }
-    pool="$(aws cloudformation describe-stacks --stack-name GuppiGpt \
-      --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text)"
-    users="$(aws cognito-idp list-users --user-pool-id "$pool" --filter "email = \"$email\"" \
-      --query 'Users[].Username' --output text)"
-    for user in $users; do
-      aws cognito-idp admin-delete-user --user-pool-id "$pool" --username "$user"
-      echo "deleted Cognito user $user"
-    done
+    # The token stays inside python: read from 1Password, never an argument or a file.
+    EMAIL="$email" python3 - <<'PY'
+import json, os, subprocess, urllib.error, urllib.parse, urllib.request
+read = lambda f: subprocess.run(["op", "read", f"op://Personal/Okta API token/{f}"], check=True,
+                                capture_output=True, text=True).stdout.strip()
+host, token = read("hostname"), read("credential")
+group = subprocess.run(["aws", "ssm", "get-parameter", "--name", "/guppi/okta/group-id", "--query",
+                        "Parameter.Value", "--output", "text"], check=True, capture_output=True, text=True).stdout.strip()
+def call(method, path):
+    req = urllib.request.Request(f"https://{host}{path}", method=method,
+                                 headers={"Authorization": f"SSWS {token}", "Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        body = r.read()
+        return json.loads(body) if body else None
+email = os.environ["EMAIL"]
+try:
+    user = call("GET", f"/api/v1/users/{urllib.parse.quote(email)}")
+except urllib.error.HTTPError as e:
+    print(f"no Okta user for {email} (HTTP {e.code})")
+else:
+    call("DELETE", f"/api/v1/groups/{group}/users/{user['id']}")
+    print(f"removed {email} from chat-users")
+PY
     echo "revoked $email"
     ;;
   *)

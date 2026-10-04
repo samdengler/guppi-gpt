@@ -4,9 +4,8 @@ import assert from "node:assert/strict";
 import { logoutUrl, oidcEndpoints } from "../src/oidc.js";
 import { signInRefusal } from "../src/invite-core.js";
 
-const COGNITO = { authDomain: "auth.example.com", userPoolClientId: "abc", siteUrl: "https://chat.example.com/" };
 const OKTA = {
-  ...COGNITO,
+  siteUrl: "https://chat.example.com/",
   oidc: {
     issuer: "https://org.okta.com/oauth2/aus1",
     clientId: "0oa1",
@@ -16,15 +15,8 @@ const OKTA = {
   },
 };
 
-test("without an oidc block the page keeps Cognito's hosted UI", () => {
-  const e = oidcEndpoints(COGNITO);
-  assert.equal(e.kind, "cognito");
-  assert.equal(e.token, "https://auth.example.com/oauth2/token");
-  assert.deepEqual(e.authorizeExtra, { identity_provider: "Google" });
-  assert.equal(
-    logoutUrl(e, { siteUrl: COGNITO.siteUrl }),
-    "https://auth.example.com/logout?client_id=abc&logout_uri=https%3A%2F%2Fchat.example.com%2F",
-  );
+test("without an oidc block the page refuses to start", () => {
+  assert.throws(() => oidcEndpoints({ siteUrl: OKTA.siteUrl }), /oidc/);
 });
 
 test("an oidc block switches to the issuer's endpoints and asks for a refresh token", () => {

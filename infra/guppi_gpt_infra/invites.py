@@ -5,9 +5,12 @@ straight into the `invites` table, one item per lower-cased address, with no Lam
 between, as the feedback API does. The table's stream feeds an EventBridge Pipe, and the
 Pipe starts an Express state machine that emails Sam through SES: from
 no-reply@dengler.io, with the requester as Reply-To and a link to the approval page. The
-approval page approves with a conditional update, an approval mails the requester, and a
-Cognito pre sign-up trigger, the one Lambda function here, refuses a sign-up whose address
-is not approved.
+approval page approves with a conditional update. An approval adds the requester to Okta
+(guppi-hr D46): the state machine creates the Okta user in the group `chat-users`, which is
+who may sign in, through Okta's API with an EventBridge connection holding the API token,
+and Okta emails them a link to set up their sign-in; then it mails the requester. Someone
+already in Okta is added to the group instead. No Lambda function: the Cognito pre sign-up
+trigger that once enforced the invite is gone with Cognito.
 """
 
 from __future__ import annotations
@@ -18,10 +21,9 @@ from pathlib import Path
 import aws_cdk as cdk
 from aws_cdk import Duration, RemovalPolicy
 from aws_cdk import aws_apigateway as apigateway
-from aws_cdk import aws_cognito as cognito
+from aws_cdk import aws_events as events
 from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_iam as iam
-from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_logs as logs
 from aws_cdk import aws_pipes as pipes
 from aws_cdk import aws_route53 as route53
@@ -29,7 +31,7 @@ from aws_cdk import aws_ses as ses
 from aws_cdk import aws_stepfunctions as sfn
 from constructs import Construct
 
-PRE_SIGN_UP_DIR = Path(__file__).resolve().parent / "lambdas" / "pre_sign_up"
+MAILER_NAME = "guppi-gpt-invite-mailer"
 TABLE_NAME = "guppi-gpt-invites"
 API_NAME = "guppi-gpt-invites"
 STAGE_NAME = "prod"
@@ -144,7 +146,8 @@ _APPROVE_REJECTED = r"""
 
 def _email_definition(site_url: str) -> str:
     """The state machine, in JSONata: a new pending item mails Sam; an item that turns
-    approved mails the requester, with replies going to Sam."""
+    approved is added to Okta's chat-users, then mails the requester, with replies going to
+    Sam."""
     image = "$states.input[0].dynamodb.NewImage"
     # \n is two characters here; JSONata reads the escape inside its string literals.
     body = (
@@ -158,11 +161,15 @@ def _email_definition(site_url: str) -> str:
         " & 'Reply to this email to write to them.' %}"
     )
     welcome = (
-        f"{{% 'Hi ' & {image}.name.S & ',\\n\\n'"
-        " & 'Sam approved your request for chat.dengler.io. Sign in at'"
-        f" & ' {site_url} with the Google account ' & {image}.email.S & '.\\n\\n'"
+        "{% 'Hi ' & $name & ',\\n\\n'"
+        " & 'Sam approved your request for chat.dengler.io. Okta will email you a link to set'"
+        " & ' up your sign-in; then sign in at'"
+        f" & ' {site_url} with ' & $email & '. If you already have an Okta account there,'"
+        " & ' just sign in.\\n\\n'"
         " & 'Reply to this email to reach Sam.' %}"
     )
+    okta_headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    okta_auth = {"ConnectionArn": "${OktaConnectionArn}"}
     definition = {
         "Comment": "Invite request emails (docs/proposals/invites.md)",
         "QueryLanguage": "JSONata",
@@ -171,19 +178,79 @@ def _email_definition(site_url: str) -> str:
             "Route": {
                 "Type": "Choice",
                 "Choices": [
+                    # Approved by the email's link (a change) or granted directly with
+                    # scripts/invite.sh (a new item, or a revoked one approved again).
+                    {
+                        "Condition": f"{{% {image}.status.S = 'approved' %}}",
+                        "Next": "Remember",
+                    },
                     {
                         "Condition": "{% $states.input[0].eventName = 'INSERT' %}",
                         "Next": "MailSam",
                     },
-                    {
-                        "Condition": (
-                            "{% $states.input[0].eventName = 'MODIFY'"
-                            f" and {image}.status.S = 'approved' %}}"
-                        ),
-                        "Next": "MailRequester",
-                    },
                 ],
                 "Default": "Done",
+            },
+            # The task results below replace the input, so the requester is kept in variables.
+            "Remember": {
+                "Type": "Pass",
+                # A direct grant has no name ("(granted)"); the address stands in for one.
+                "Assign": {
+                    "email": f"{{% {image}.email.S %}}",
+                    "name": (f"{{% {image}.name.S = '(granted)' ? $substringBefore({image}.email.S, '@')"
+                             f" : {image}.name.S %}}"),
+                },
+                "Next": "AddToOkta",
+            },
+            # A new Okta user in chat-users, activated: Okta mails the set-up link.
+            "AddToOkta": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::http:invoke",
+                "Arguments": {
+                    "ApiEndpoint": "${OktaOrgUrl}/api/v1/users",
+                    "Method": "POST",
+                    "QueryParameters": {"activate": "true"},
+                    "Authentication": okta_auth,
+                    "Headers": okta_headers,
+                    "RequestBody": {
+                        "profile": {
+                            "firstName": "{% $contains($name, ' ') ? $substringBefore($name, ' ') : $name %}",
+                            "lastName": "{% $contains($name, ' ') ? $substringAfter($name, ' ') : '-' %}",
+                            "email": "{% $email %}",
+                            "login": "{% $email %}",
+                        },
+                        "groupIds": ["${OktaGroupId}"],
+                    },
+                },
+                "Retry": [{"ErrorEquals": ["States.Http.StatusCode.429", "States.Http.StatusCode.500",
+                                           "States.Http.StatusCode.502", "States.Http.StatusCode.503"],
+                           "IntervalSeconds": 2, "MaxAttempts": 2, "BackoffRate": 2}],
+                # Okta answers 400 when the login exists: add that user to the group instead.
+                "Catch": [{"ErrorEquals": ["States.Http.StatusCode.400"], "Next": "FindOktaUser"}],
+                "Next": "MailRequester",
+            },
+            "FindOktaUser": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::http:invoke",
+                "Arguments": {
+                    "ApiEndpoint": "{% '${OktaOrgUrl}/api/v1/users/' & $encodeUrlComponent($email) %}",
+                    "Method": "GET",
+                    "Authentication": okta_auth,
+                    "Headers": okta_headers,
+                },
+                "Output": {"userId": "{% $states.result.ResponseBody.id %}"},
+                "Next": "AddToGroup",
+            },
+            "AddToGroup": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::http:invoke",
+                "Arguments": {
+                    "ApiEndpoint": "{% '${OktaOrgUrl}/api/v1/groups/${OktaGroupId}/users/' & $states.input.userId %}",
+                    "Method": "PUT",
+                    "Authentication": okta_auth,
+                    "Headers": okta_headers,
+                },
+                "Next": "MailRequester",
             },
             "MailSam": {
                 "Type": "Task",
@@ -206,7 +273,7 @@ def _email_definition(site_url: str) -> str:
                 "Resource": "arn:aws:states:::aws-sdk:sesv2:sendEmail",
                 "Arguments": {
                     "FromEmailAddress": f"GuppiGPT <{SENDER}>",
-                    "Destination": {"ToAddresses": [f"{{% {image}.email.S %}}"]},
+                    "Destination": {"ToAddresses": ["{% $email %}"]},
                     "ReplyToAddresses": ["${InviteEmail}"],
                     "Content": {
                         "Simple": {
@@ -235,7 +302,9 @@ class Invites(Construct):
         site_url: str,
         invite_email: cdk.CfnParameter,
         has_invite_email: cdk.CfnCondition,
-        user_pool: cognito.UserPool,
+        okta_org_url: str,
+        okta_group_id: str,
+        okta_api_token: cdk.CfnParameter,
     ) -> None:
         super().__init__(scope, construct_id)
         stack = cdk.Stack.of(self)
@@ -250,38 +319,9 @@ class Invites(Construct):
             point_in_time_recovery_specification=dynamodb.PointInTimeRecoverySpecification(
                 point_in_time_recovery_enabled=True
             ),
-            # The table is who may sign in once the gate is on; it outlives the stack.
+            # The table is the record of every request and decision; it outlives the stack.
             removal_policy=RemovalPolicy.RETAIN,
         )
-
-        # ---- The gate ---------------------------------------------------------------
-        # Cognito runs this when it is about to create a user, so it runs once per person,
-        # at their first sign-in, and never on a chat request. Sam approved it (AGENTS.md).
-        gate_logs = logs.LogGroup(
-            self,
-            "PreSignUpLogs",
-            log_group_name="/aws/lambda/guppi-gpt-pre-sign-up",
-            retention=logs.RetentionDays.ONE_MONTH,
-            removal_policy=RemovalPolicy.DESTROY,
-        )
-        gate = lambda_.Function(
-            self,
-            "PreSignUp",
-            function_name="guppi-gpt-pre-sign-up",
-            description="Refuses a Cognito sign-up whose address has no approved invite",
-            runtime=lambda_.Runtime.PYTHON_3_12,
-            architecture=lambda_.Architecture.ARM_64,
-            handler="index.handler",
-            code=lambda_.Code.from_asset(str(PRE_SIGN_UP_DIR)),
-            memory_size=128,
-            timeout=Duration.seconds(5),
-            environment={"TABLE_NAME": self.table.table_name},
-            log_group=gate_logs,
-        )
-        gate.add_to_role_policy(
-            iam.PolicyStatement(actions=["dynamodb:GetItem"], resources=[self.table.table_arn])
-        )
-        user_pool.add_trigger(cognito.UserPoolOperation.PRE_SIGN_UP, gate)
 
         # ---- SES ------------------------------------------------------------------------
         # The domain verifies itself through the DKIM records CDK writes into the zone.
@@ -307,17 +347,52 @@ class Invites(Construct):
             retention=logs.RetentionDays.ONE_MONTH,
             removal_policy=RemovalPolicy.DESTROY,
         )
+        # Okta's API, with the token in Okta's own header scheme; the connection keeps it in
+        # a Secrets Manager secret of its own, never in the definition or the logs.
+        okta = events.Connection(
+            self,
+            "OktaConnection",
+            connection_name="guppi-gpt-okta-invites",
+            description="Okta API token for adding an approved person to chat-users",
+            authorization=events.Authorization.api_key(
+                "Authorization",
+                cdk.SecretValue.unsafe_plain_text(cdk.Fn.join("", ["SSWS ", okta_api_token.value_as_string])),
+            ),
+        )
         machine = sfn.StateMachine(
             self,
             "Mailer",
+            state_machine_name=MAILER_NAME,
             state_machine_type=sfn.StateMachineType.EXPRESS,
             definition_body=sfn.DefinitionBody.from_string(_email_definition(site_url)),
-            definition_substitutions={"InviteEmail": invite_email.value_as_string},
+            definition_substitutions={
+                "InviteEmail": invite_email.value_as_string,
+                "OktaConnectionArn": okta.connection_arn,
+                "OktaOrgUrl": okta_org_url,
+                "OktaGroupId": okta_group_id,
+            },
             # Errors only, without the execution data: inputs and outputs hold addresses.
             logs=sfn.LogOptions(
                 destination=machine_logs, level=sfn.LogLevel.ERROR, include_execution_data=False
             ),
             timeout=Duration.minutes(1),
+        )
+        machine_arn = f"arn:aws:states:{stack.region}:{stack.account}:stateMachine:{MAILER_NAME}"
+        machine.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["states:InvokeHTTPEndpoint"],
+                resources=[machine_arn],
+                conditions={"StringLike": {"states:HTTPEndpoint": f"{okta_org_url}/api/v1/*"}},
+            )
+        )
+        machine.add_to_role_policy(
+            iam.PolicyStatement(actions=["events:RetrieveConnectionCredentials"], resources=[okta.connection_arn])
+        )
+        machine.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"],
+                resources=[okta.connection_secret_arn],
+            )
         )
         machine.add_to_role_policy(
             iam.PolicyStatement(
@@ -359,9 +434,18 @@ class Invites(Construct):
                                 {
                                     "eventName": ["MODIFY"],
                                     "dynamodb": {
-                                        "OldImage": {"status": {"S": ["pending"]}},
+                                        "OldImage": {"status": {"S": ["pending", "revoked"]}},
                                         "NewImage": {"status": {"S": ["approved"]}},
                                     },
+                                }
+                            )
+                        ),
+                        # scripts/invite.sh grant for an address with no request.
+                        pipes.CfnPipe.FilterProperty(
+                            pattern=json.dumps(
+                                {
+                                    "eventName": ["INSERT"],
+                                    "dynamodb": {"NewImage": {"status": {"S": ["approved"]}}},
                                 }
                             )
                         ),

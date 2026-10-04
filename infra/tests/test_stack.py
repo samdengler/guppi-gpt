@@ -27,35 +27,22 @@ def template() -> Template:
     return synth()
 
 
-def test_secret_parameter_is_no_echo(template):
-    template.has_parameter("GoogleClientSecret", {"NoEcho": True})
+def test_okta_token_parameter_is_no_echo(template):
+    template.has_parameter("OktaApiToken", {"NoEcho": True})
+    for name in ("GoogleClientId", "GoogleClientSecret"):
+        assert name not in template.to_json()["Parameters"]
 
 
-def test_web_client_rotates_refresh_tokens(template):
-    template.has_resource_properties(
-        "AWS::Cognito::UserPoolClient",
-        {
-            "ClientName": "guppi-gpt-web",
-            "RefreshTokenRotation": {"Feature": "ENABLED", "RetryGracePeriodSeconds": 30},
-            # Unchanged: 30 days, expressed in minutes by CloudFormation.
-            "RefreshTokenValidity": 43200,
-        },
-    )
-
-
-def test_apex_placeholder_record(template):
-    template.has_resource_properties(
-        "AWS::Route53::RecordSet",
-        {"Name": "dengler.io.", "Type": "A", "ResourceRecords": ["192.0.2.1"]},
-    )
-
-
-def test_user_pool_domain_waits_for_apex_record(template):
-    domains = template.find_resources("AWS::Cognito::UserPoolDomain")
-    assert len(domains) == 1
-    (domain,) = domains.values()
-    assert domain["Properties"]["Domain"] == "auth.dengler.io"
-    assert any(dep.startswith("ApexPlaceholder") for dep in domain.get("DependsOn", []))
+def test_cognito_and_its_domain_are_gone(template):
+    # Sign-in is Okta's (guppi-hr D46); the pool, its Google federation, client and domain
+    # went with the move, and so did auth.dengler.io and the apex placeholder it needed.
+    for resource in ("AWS::Cognito::UserPool", "AWS::Cognito::UserPoolClient",
+                     "AWS::Cognito::UserPoolDomain", "AWS::Cognito::UserPoolIdentityProvider"):
+        assert template.find_resources(resource) == {}, resource
+    records = template.find_resources("AWS::Route53::RecordSet")
+    assert not [r for r in records.values() if r["Properties"].get("Name") in ("auth.dengler.io.", "dengler.io.")]
+    certificates = template.find_resources("AWS::CertificateManager::Certificate")
+    assert [c["Properties"]["DomainName"] for c in certificates.values()] == ["chat.dengler.io"]
 
 
 def test_gateway_has_no_protocol_type_and_uses_cognito_jwt(template):
@@ -149,14 +136,13 @@ def test_api_behavior_streams_through_cloudfront(template):
     )
 
 
-def test_the_only_lambda_function_is_the_approved_sign_up_gate(template):
-    # AGENTS.md: no Lambda functions without Sam's approval. Approved: the Cognito pre
-    # sign-up trigger (docs/proposals/invites.md, 3 Oct 2026) and the on-behalf-of token
-    # issuer (guppi-hr D47, 3 Oct 2026).
+def test_the_only_lambda_function_is_the_approved_obo_issuer(template):
+    # AGENTS.md: no Lambda functions without Sam's approval. Approved: the on-behalf-of
+    # token issuer (guppi-hr D47, 3 Oct 2026). The Cognito pre sign-up trigger went with
+    # Cognito (guppi-hr D46).
     functions = template.find_resources("AWS::Lambda::Function")
     names = sorted(f["Properties"].get("FunctionName") for f in functions.values())
-    assert names == ["guppi-gpt-obo-issuer", "guppi-gpt-pre-sign-up"]
-
+    assert names == ["guppi-gpt-obo-issuer"]
 
 def test_managed_knowledge_base_reads_the_content_bucket(template):
     template.has_resource_properties(
@@ -285,7 +271,7 @@ def render(value) -> str:
 
 
 CSP_WITHOUT_BEACON = (
-    "default-src 'self'; connect-src 'self' https://auth.dengler.io https://<okta>; "
+    "default-src 'self'; connect-src 'self' https://<okta>; "
     "img-src 'self' data:; style-src 'self'; script-src 'self'; "
     "frame-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 )
@@ -494,7 +480,7 @@ def test_csp_adds_the_beacon_origin_only_when_the_parameter_is_set(template):
     assert render(if_branches[2]) == CSP_WITHOUT_BEACON
     # Rendering with the parameter set: the beacon origin joined into connect-src.
     assert render(if_branches[1]) == (
-        "default-src 'self'; connect-src 'self' https://auth.dengler.io https://<okta> "
+        "default-src 'self'; connect-src 'self' https://<okta> "
         "<DynatraceBeaconOrigin>; img-src 'self' data:; style-src 'self'; "
         "script-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'self'; "
         "form-action 'self'"
@@ -720,7 +706,7 @@ def test_runtime_role_reads_writes_and_lists_thread_objects_only(template):
     assert any(s.get("Action") == ["kms:Decrypt", "kms:GenerateDataKey"] for s in document)
 
 
-def test_investigator_role_reads_the_bucket_the_key_and_the_pool_and_nothing_else(template):
+def test_investigator_role_reads_the_bucket_and_the_key_and_nothing_else(template):
     document = statements(template, "ConversationInvestigatorRole")
     actions = sorted(
         action
@@ -730,7 +716,6 @@ def test_investigator_role_reads_the_bucket_the_key_and_the_pool_and_nothing_els
         )
     )
     assert actions == [
-        "cognito-idp:ListUsers",
         "kms:Decrypt",
         "s3:GetObject",
         "s3:GetObjectVersion",
@@ -744,7 +729,7 @@ def test_investigator_trust_is_the_account_root_until_the_parameter_is_set(templ
     template.has_parameter("InvestigatorPrincipalArn", {"Default": ""})
     roles = template.find_resources("AWS::IAM::Role")
     (role,) = [
-        r for r in roles.values() if "resolves a subject" in r["Properties"].get("Description", "")
+        r for r in roles.values() if "Reads conversation records" in r["Properties"].get("Description", "")
     ]
     principal = role["Properties"]["AssumeRolePolicyDocument"]["Statement"][0]["Principal"]["AWS"]
     condition_name, when_set, when_blank = principal["Fn::If"]
@@ -777,7 +762,6 @@ def test_vended_log_groups_have_30_day_retention_under_the_shared_prefix(templat
         "/aws/vendedlogs/bedrock-agentcore/guppi-gpt-tools",
         "/aws/vendedlogs/bedrock-agentcore/guppi_gpt",
         "/aws/vendedlogs/states/guppi-gpt-invite-mailer",
-        "/aws/lambda/guppi-gpt-pre-sign-up",
         "/aws/lambda/guppi-gpt-obo-issuer",
         "/aws/apigateway/guppi-obo-issuer",
     }
@@ -923,62 +907,31 @@ def test_dynatrace_subscription_filters_target_the_three_vended_log_groups(templ
     assert log_group_refs == vended_log_group_ids
 
 
-def test_feedback_method_needs_a_cognito_token_and_a_validated_body(template):
-    methods = template.find_resources("AWS::ApiGateway::Method")
-    (method,) = [
-        m
-        for m in methods.values()
-        if m["Properties"]["HttpMethod"] == "POST"
-        and "FeedbackApi" in json.dumps(m["Properties"]["RestApiId"])
-    ]
-    props = method["Properties"]
-    assert props["AuthorizationType"] == "COGNITO_USER_POOLS"
-    assert "AuthorizerId" in props
-    # A user pool authorizer with no scope reads the bearer as an id token; the page holds
-    # the access token, so the method names a scope every issued token claims.
-    assert props["AuthorizationScopes"] == ["openid"]
-    assert "RequestValidatorId" in props
-    assert props["MethodResponses"] == [{"StatusCode": "202"}, {"StatusCode": "400"}]
-    (validator,) = template.find_resources(
-        "AWS::ApiGateway::RequestValidator", {"Properties": {"Name": "feedback-body"}}
-    ).values()
-    assert validator["Properties"]["ValidateRequestBody"] is True
-    (model,) = template.find_resources(
-        "AWS::ApiGateway::Model", {"Properties": {"Name": "FeedbackVote"}}
-    ).values()
-    schema = model["Properties"]["Schema"]
-    assert schema["additionalProperties"] is False
-    assert set(schema["required"]) == {"vote", "runId", "threadId"}
-    assert schema["properties"]["vote"]["enum"] == ["up", "down", "none"]
+def test_feedback_route_needs_an_okta_token(template):
+    (route,) = template.find_resources("AWS::ApiGatewayV2::Route").values()
+    props = route["Properties"]
+    assert props["RouteKey"] == "POST /api/feedback"
+    assert props["AuthorizationType"] == "JWT"
+    (authorizer_id, authorizer) = next(iter(template.find_resources("AWS::ApiGatewayV2::Authorizer").items()))
+    assert props["AuthorizerId"] == {"Ref": authorizer_id}
+    jwt = authorizer["Properties"]["JwtConfiguration"]
+    assert "okta/audience" in json.dumps(jwt["Audience"]) or "Audience" in jwt
+    assert authorizer["Properties"]["IdentitySource"] == ["$request.header.Authorization"]
+    (stage,) = template.find_resources("AWS::ApiGatewayV2::Stage").values()
+    assert stage["Properties"]["DefaultRouteSettings"] == {"ThrottlingBurstLimit": 10, "ThrottlingRateLimit": 5}
 
 
 def test_feedback_integration_puts_one_event_on_the_bus_with_no_compute(template):
-    methods = template.find_resources("AWS::ApiGateway::Method")
-    (method,) = [
-        m
-        for m in methods.values()
-        if m["Properties"]["HttpMethod"] == "POST"
-        and "FeedbackApi" in json.dumps(m["Properties"]["RestApiId"])
-    ]
-    integration = method["Properties"]["Integration"]
-    assert integration["Type"] == "AWS"
-    assert integration["IntegrationHttpMethod"] == "POST"
-    assert "apigateway:us-east-1:events:action/PutEvents" in json.dumps(integration["Uri"])
-    assert integration["RequestParameters"] == {
-        "integration.request.header.X-Amz-Target": "'AWSEvents.PutEvents'",
-        "integration.request.header.Content-Type": "'application/x-amz-json-1.1'",
-    }
-    body = integration["RequestTemplates"]["application/json"]
-    assert '"EventBusName":"guppi-gpt-feedback"' in body
-    assert '"Source":"guppigpt.feedback"' in body
-    # The one field the request body cannot supply is the time the request arrived. The
-    # caller's Cognito sub claim stays out of the event: the template cannot hash it, and
-    # a vote joins its conversation through threadId rather than through the subject.
-    assert "$context.requestTimeEpoch" in body
-    assert "claims.sub" not in body
-    assert "subject" not in body
-    assert integration["IntegrationResponses"][0]["StatusCode"] == "202"
-    assert integration["IntegrationResponses"][1]["StatusCode"] == "400"
+    (integration,) = template.find_resources("AWS::ApiGatewayV2::Integration").values()
+    props = integration["Properties"]
+    assert props["IntegrationType"] == "AWS_PROXY"
+    assert props["IntegrationSubtype"] == "EventBridge-PutEvents"
+    params = props["RequestParameters"]
+    assert params["Source"] == "guppigpt.feedback" and params["DetailType"] == "reply-feedback"
+    assert params["Detail"] == "$request.body"
+    # The caller's subject stays out of the event; a vote joins its conversation by threadId.
+    assert "jwt" not in json.dumps(params) and "sub" not in json.dumps(params).replace("Subtype", "")
+    assert template.find_resources("AWS::Lambda::Function", {"Properties": {"FunctionName": "guppi-gpt-feedback"}}) == {}
 
 
 def test_feedback_behavior_is_matched_before_the_api_wildcard(template):
@@ -996,7 +949,7 @@ def test_feedback_behavior_is_matched_before_the_api_wildcard(template):
     assert feedback_behavior["CachePolicyId"] == "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
     assert feedback_behavior["OriginRequestPolicyId"] == "b689b0a8-53d0-40ab-baf2-68738e2966ac"
     (origin,) = [o for o in config["Origins"] if o["Id"] == feedback_behavior["TargetOriginId"]]
-    assert origin["OriginPath"] == "/prod"
+    assert origin.get("OriginPath", "") == ""  # the HTTP API's default stage
     assert "execute-api" in json.dumps(origin["DomainName"])
     # The API authorizes every request itself, so this origin carries no secret header.
     assert "OriginCustomHeaders" not in origin
@@ -1016,7 +969,8 @@ def test_feedback_reaches_dynatrace_only_when_the_parameters_are_set(template):
     # All three resources sit under HasDynatraceLogs, the condition that requires both
     # DynatraceOtlpEndpoint and DynatraceApiToken, so CloudFormation creates none of them
     # while either parameter is empty, which is the default.
-    (connection,) = template.find_resources("AWS::Events::Connection").values()
+    (connection,) = template.find_resources(
+        "AWS::Events::Connection", {"Properties": {"Name": "guppi-gpt-dynatrace-bizevents"}}).values()
     assert connection["Condition"] == "HasDynatraceLogs"
     auth = connection["Properties"]["AuthParameters"]["ApiKeyAuthParameters"]
     assert auth["ApiKeyName"] == "Authorization"
@@ -1032,7 +986,11 @@ def test_feedback_reaches_dynatrace_only_when_the_parameters_are_set(template):
 
     (rule,) = template.find_resources("AWS::Events::Rule").values()
     assert rule["Condition"] == "HasDynatraceLogs"
-    assert rule["Properties"]["EventPattern"] == {"source": ["guppigpt.feedback"]}
+    # Only well-formed votes reach Dynatrace: the HTTP API forwards the body unvalidated.
+    assert rule["Properties"]["EventPattern"] == {
+        "source": ["guppigpt.feedback"],
+        "detail": {"vote": ["up", "down", "none"], "runId": [{"exists": True}], "threadId": [{"exists": True}]},
+    }
     (target,) = rule["Properties"]["Targets"]
     assert target["RetryPolicy"] == {"MaximumRetryAttempts": 2}
     (queue_id,) = template.find_resources("AWS::SQS::Queue").keys()
@@ -1066,7 +1024,7 @@ def test_feedback_dead_letter_queue_has_an_alarm_under_the_same_condition(templa
 
 def test_feedback_outputs_name_the_api_and_the_bus(template):
     outputs = template.to_json()["Outputs"]
-    assert json.dumps(outputs["FeedbackApiUrl"]["Value"]).endswith('"/api/feedback"]]}')
+    assert json.dumps(outputs["FeedbackApiUrl"]["Value"]).endswith('/api/feedback"]]}')
     (bus_id,) = template.find_resources("AWS::Events::EventBus").keys()
     assert outputs["FeedbackBusName"]["Value"] == {"Ref": bus_id}
 

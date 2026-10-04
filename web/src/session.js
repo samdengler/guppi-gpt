@@ -1,5 +1,5 @@
 // Session persistence: keeps the refresh token in IndexedDB so a page reload restores the
-// signed-in session with a silent refresh instead of a redirect through Cognito. Never
+// signed-in session with a silent refresh instead of a redirect through the issuer. Never
 // stores the access token; the access and id tokens live in page memory only, as before.
 //
 // Uses its own database, separate from web/src/history.js's "guppigpt-history", so

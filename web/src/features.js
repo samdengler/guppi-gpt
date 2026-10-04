@@ -55,7 +55,7 @@ function writeStoredOverrides(overrides) {
 
 // Read the `ff` param, store it, and strip it from the URL the way finishSignIn strips
 // `code` (history.replaceState, no reload). Stored in localStorage so the override set
-// applies to every tab of the browser, survives the sign-in redirect to Cognito and
+// applies to every tab of the browser, survives the sign-in redirect to the issuer and
 // back (localStorage, like the sessionStorage this replaced, outlives that redirect;
 // unlike it, the same set also now reaches every other open tab), and is still there
 // after the tab that set it closes. A `ff` param, present or empty, replaces the whole

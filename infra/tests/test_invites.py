@@ -233,54 +233,78 @@ def test_an_approval_reaches_the_mailer_too(template):
     assert {
         "eventName": ["MODIFY"],
         "dynamodb": {
-            "OldImage": {"status": {"S": ["pending"]}},
+            "OldImage": {"status": {"S": ["pending", "revoked"]}},
             "NewImage": {"status": {"S": ["approved"]}},
         },
     } in filters
+    # A direct grant (scripts/invite.sh grant) for an address with no request.
+    assert {"eventName": ["INSERT"], "dynamodb": {"NewImage": {"status": {"S": ["approved"]}}}} in filters
 
 
-def test_the_requester_hears_from_no_reply_with_replies_to_sam(template):
+def machine_definition(template) -> dict:
+    """The mailer's definition, with each substituted token read as a placeholder."""
     machine = only(template, "AWS::StepFunctions::StateMachine", Properties={"StateMachineType": "EXPRESS"})
     definition = machine["Properties"]["DefinitionString"]
-    text = definition if isinstance(definition, str) else json.dumps(definition)
-    parsed = json.loads(text if isinstance(definition, str) else definition["Fn::Join"][1][0])
-    states = parsed["States"]
+    if isinstance(definition, str):
+        return json.loads(definition)
+    parts = definition["Fn::Join"][1]
+    return json.loads("".join(p if isinstance(p, str) else "TOKEN" for p in parts))
+
+
+def test_an_approval_adds_the_requester_to_okta_then_mails_them(template):
+    states = machine_definition(template)["States"]
     route = states["Route"]["Choices"]
-    assert any("MODIFY" in c["Condition"] and c["Next"] == "MailRequester" for c in route)
+    # Any item that becomes approved goes to Okta, before a new pending request mails Sam.
+    assert route[0]["Next"] == "Remember" and "'approved'" in route[0]["Condition"]
+    assert route[1]["Next"] == "MailSam"
+    assigned = states["Remember"]["Assign"]
+    assert assigned["email"] == "{% $states.input[0].dynamodb.NewImage.email.S %}"
+    assert "(granted)" in assigned["name"]
+    add = states["AddToOkta"]
+    assert add["Resource"] == "arn:aws:states:::http:invoke"
+    args = add["Arguments"]
+    assert args["Method"] == "POST" and args["ApiEndpoint"].endswith("/api/v1/users")
+    assert args["QueryParameters"] == {"activate": "true"}
+    assert args["RequestBody"]["profile"]["login"] == "{% $email %}"
+    assert len(args["RequestBody"]["groupIds"]) == 1
+    # An existing Okta user is found and added to the group instead.
+    assert add["Catch"][0] == {"ErrorEquals": ["States.Http.StatusCode.400"], "Next": "FindOktaUser"}
+    assert states["FindOktaUser"]["Next"] == "AddToGroup"
+    assert states["AddToGroup"]["Arguments"]["Method"] == "PUT"
+    assert add["Next"] == states["AddToGroup"]["Next"] == "MailRequester"
     mail = states["MailRequester"]["Arguments"]
-    assert mail["Destination"]["ToAddresses"] == ["{% $states.input[0].dynamodb.NewImage.email.S %}"]
+    assert mail["Destination"]["ToAddresses"] == ["{% $email %}"]
     assert mail["ReplyToAddresses"] == ["${InviteEmail}"]
-    assert "https://chat.dengler.io/" in mail["Content"]["Simple"]["Body"]["Text"]["Data"]
+    text = mail["Content"]["Simple"]["Body"]["Text"]["Data"]
+    assert "https://chat.dengler.io/" in text and "Okta" in text and "Google" not in text
 
 
-# ---- Phase 4: the gate ----------------------------------------------------------------
+def test_the_okta_token_is_a_no_echo_parameter_inside_a_connection(template):
+    template.has_parameter("OktaApiToken", {"Type": "String", "NoEcho": True})
+    connection = only(template, "AWS::Events::Connection", Properties={"Name": "guppi-gpt-okta-invites"})
+    auth = connection["Properties"]["AuthParameters"]["ApiKeyAuthParameters"]
+    assert auth["ApiKeyName"] == "Authorization"
+    assert "OktaApiToken" in json.dumps(auth["ApiKeyValue"])
 
 
-def test_the_user_pool_runs_the_pre_sign_up_trigger(template):
-    pool = only(template, "AWS::Cognito::UserPool")
-    trigger = pool["Properties"]["LambdaConfig"]["PreSignUp"]
-    (function_id,) = [
-        k
-        for k in template.find_resources("AWS::Lambda::Function")
-        if k.startswith("InvitesPreSignUp")
-    ]
-    assert trigger == {"Fn::GetAtt": [function_id, "Arn"]}
+def test_no_cognito_and_no_lambda_gate(template):
+    assert template.find_resources("AWS::Cognito::UserPool") == {}
+    assert template.find_resources("AWS::Lambda::Function", {"Properties": {"FunctionName": "guppi-gpt-pre-sign-up"}}) == {}
 
 
-def test_the_trigger_reads_the_table_and_nothing_else(template):
-    fn = only(
-        template,
-        "AWS::Lambda::Function",
-        Properties={"FunctionName": "guppi-gpt-pre-sign-up"},
-    )
-    props = fn["Properties"]
-    assert props["Runtime"].startswith("python3.")
-    assert props["Environment"]["Variables"]["TABLE_NAME"]["Ref"].startswith("InvitesTable")
+def test_the_mailer_may_call_only_okta_through_its_connection(template):
     policies = template.find_resources("AWS::IAM::Policy")
-    (policy,) = [p for k, p in policies.items() if k.startswith("InvitesPreSignUpServiceRoleDefaultPolicy")]
+    (policy,) = [p for k, p in policies.items() if k.startswith("InvitesMailerRoleDefaultPolicy")]
     statements = policy["Properties"]["PolicyDocument"]["Statement"]
-    actions = set()
+    by_action = {}
     for statement in statements:
         listed = statement["Action"]
-        actions.update([listed] if isinstance(listed, str) else listed)
-    assert actions == {"dynamodb:GetItem"}
+        for action in [listed] if isinstance(listed, str) else listed:
+            by_action[action] = statement
+    http = by_action["states:InvokeHTTPEndpoint"]
+    assert http["Resource"].endswith(":stateMachine:guppi-gpt-invite-mailer") or "guppi-gpt-invite-mailer" in json.dumps(http["Resource"])
+    assert "/api/v1/*" in json.dumps(http["Condition"])
+    assert "events:RetrieveConnectionCredentials" in by_action
+    assert "secretsmanager:GetSecretValue" in by_action
+
+

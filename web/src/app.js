@@ -58,7 +58,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
 
   // ---- Project: /p/<name>/ selects a project by its manifest; / is the default ----
 
-  // The Cognito redirect URI is the root, so a sign-in started on /p/<name>/ comes back
+  // The sign-in redirect URI is the root, so a sign-in started on /p/<name>/ comes back
   // to / with the code and the path in `state`; that page load is already the project's.
   function resolveProject() {
     const params = new URLSearchParams(location.search);
@@ -240,7 +240,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
       if (message) message.feedback = event.detail.vote;
     });
   }
-  // Cognito's hosted UI, or a standard OIDC issuer (Okta) when config.json has `oidc`.
+  // The OIDC issuer (Okta since guppi-hr D46), from config.json's `oidc`.
   const signin = oidcEndpoints(config);
   const redirectUri = config.siteUrl;
 
@@ -468,7 +468,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
   }
 
   // Saves the refresh token now in `tokens` plus the header claims from the current id
-  // token. Cognito issues a new refresh_token on every rotated use; when a response omits
+  // token. The issuer issues a new refresh_token on every rotated use; when a response omits
   // one, applyTokens leaves the previous value in `tokens.refresh_token` in place, which is
   // what ends up saved here, so the old token is kept only when no new one arrived.
   async function persistSession() {
@@ -1136,8 +1136,8 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
   // way. No stored session is the plain no-session case, unchanged.
 
   const code = new URLSearchParams(location.search).get("code");
-  // Cognito sends the browser back with an error instead of a code when the pre sign-up
-  // gate refuses an account (Okta: not assigned to the app), or a sign-in fails some other way.
+  // Okta sends the browser back with an error instead of a code when the account is not
+  // assigned to the app (not invited), or a sign-in fails some other way.
   const refusal = code ? null : signInRefusal(location.search);
   if (refusal) {
     signinNotice.textContent =

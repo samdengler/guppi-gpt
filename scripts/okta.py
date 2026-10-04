@@ -282,6 +282,9 @@ def main() -> None:
         "token-url": discovery["token_endpoint"],
         "logout-url": discovery["end_session_endpoint"],
         "jwks-url": discovery["jwks_uri"],
+        # The invite flow adds an approved person to this group (docs/proposals/invites.md).
+        "group-id": group["id"],
+        "org-url": f"https://{host}",
     }
     for name, value in values.items():
         print(f"{PARAMS}/{name}: {value}")
