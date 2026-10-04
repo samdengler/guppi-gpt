@@ -497,13 +497,19 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
       client_id: signin.clientId,
       refresh_token: tokens.refresh_token,
     });
-    const response = await fetch(signin.token, {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body,
-    });
-    // A failed refresh leaves the old token in place; the send below will fail
-    // on its own and land in the error state with Retry.
+    // A failed refresh, refused or offline, leaves the old token in place; the send below
+    // fails on its own and lands in the error state with Retry. Nothing escapes from here,
+    // since the warm start does not handle a rejection.
+    let response;
+    try {
+      response = await fetch(signin.token, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body,
+      });
+    } catch {
+      return;
+    }
     if (!response.ok) return;
     applyTokens(await response.json());
     await persistSession();

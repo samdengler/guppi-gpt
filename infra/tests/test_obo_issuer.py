@@ -327,3 +327,17 @@ def test_the_log_names_tokens_by_jti_never_the_employee(env, capsys):
     line = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert line["subject_jti"] == "okta-jti-1" and len(line["jti"]) == 32
     assert UID not in json.dumps(line) and "person@example.com" not in json.dumps(line)
+
+
+
+def test_refusals_say_what_was_claimed_and_presented_never_who(env, capsys):
+    exchange(env, "hr-bridge", okta_token(), "hr.agents.pay", secret="wrong")
+    line = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert line["claimed_client"] == "hr-bridge" and line["client"] == "-"
+    pay = exchange(env, "hr-bridge", okta_token(), "hr.agents.pay")[1]["access_token"]
+    capsys.readouterr()
+    exchange(env, "hr-agent-travel", pay, "hr.tools.policy")
+    line = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert line["subject_aud"] == "api://hr-agents/pay" and line["subject_client"] == "hr-bridge"
+    assert line["subject_depth"] == 1 and len(line["subject_jti"]) == 32
+    assert UID not in json.dumps(line)

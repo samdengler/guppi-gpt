@@ -2,7 +2,7 @@
 providers that call it.
 
 Okta signs people in (D46) but its free plan cannot exchange tokens, so a small RFC 8693
-issuer stands in for the production identity provider: an HTTP API in front of one Lambda
+issuer stands in for the production identity provider: a REST API in front of one Lambda
 function (lambdas/obo_issuer), approved by Sam on 3 October 2026 as a Lambda in the
 request path. It runs about five times per chat, never per turn on the callers' side; the
 HR tools gateway exchanges once per tool call (guppi-hr aws-feedback A14).
@@ -46,7 +46,9 @@ STAGE = "prod"
 # About five exchanges per chat start, plus one per HR tool call; a burst covers a chat's
 # warm start and a few turns at once. Key and discovery reads have their own, higher limit,
 # so a flood of token requests never starves the authorizers' key fetches.
-TOKEN_RATE, TOKEN_BURST = 20, 40
+# Higher than callers need, so draining it (no web ACL in front, an accepted risk) takes more;
+# reserved concurrency still caps the function, and a refusal takes about 2 ms.
+TOKEN_RATE, TOKEN_BURST = 100, 200
 READ_RATE, READ_BURST = 50, 100
 RESERVED_CONCURRENCY = 10
 
@@ -148,6 +150,8 @@ class OboIssuer(Construct):
                            description="Signs on-behalf-of tokens (guppi-hr D47)")
 
         # One secret per client, a generated string the issuer and AgentCore Identity read.
+        # A fixed name cannot be replaced in place: a change that forces replacement (a new
+        # logical id or generator settings) needs the name changed in the same deploy.
         # Stable names (guppi/obo/<client>), so a caller's grant (secret:guppi/obo/<client>-*)
         # survives a replaced secret. Identity reads it as the caller of
         # GetResourceOauth2Token (guppi-hr aws-feedback A16), so no service grant is needed.

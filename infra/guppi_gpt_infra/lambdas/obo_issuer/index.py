@@ -53,9 +53,9 @@ SHA256_DIGEST_INFO = bytes.fromhex("3031300d060960864801650304020105000420")
 class Refused(Exception):
     """A request the endpoint refuses, with the OAuth error code and an internal reason."""
 
-    def __init__(self, status: int, error: str, reason: str) -> None:
+    def __init__(self, status: int, error: str, reason: str, claimed: str = "") -> None:
         super().__init__(reason)
-        self.status, self.error, self.reason = status, error, reason
+        self.status, self.error, self.reason, self.claimed = status, error, reason, claimed
 
 
 def b64u(data: bytes) -> str:
@@ -278,7 +278,8 @@ def client_of(event: dict, form: dict, deps: Deps) -> str:
     ok = hmac.compare_digest(hashlib.sha256(secret.encode()).digest(),
                              hashlib.sha256((expected or "\x00unknown").encode()).digest())
     if not expected or not ok:
-        raise Refused(401, "invalid_client", "client authentication failed")
+        # The client id the caller claimed, cut short, so a probe can be told from a test.
+        raise Refused(401, "invalid_client", "client authentication failed", claimed=client_id[:40])
     return client_id
 
 
@@ -345,8 +346,17 @@ def log(**fields: Any) -> None:
     print(json.dumps(fields, separators=(",", ":")))
 
 
+def subject_fields(claims: dict | None) -> dict:
+    """What a refusal log line may say about the subject token: never who it names."""
+    if not claims:
+        return {}
+    return {"subject_jti": str(claims.get("jti", "")), "subject_aud": claims.get("aud"),
+            "subject_client": claims.get("client_id") or claims.get("cid"), "subject_depth": act_depth(claims)}
+
+
 def token(event: dict, deps: Deps, settings: Settings) -> dict:
     client_id = "-"
+    claims: dict | None = None
     try:
         raw = event.get("body") or ""
         if event.get("isBase64Encoded"):
@@ -367,7 +377,8 @@ def token(event: dict, deps: Deps, settings: Settings) -> dict:
         audience, scopes = grant_for(rule, form.get("scope", "").split(), claims)
         access_token, expires_in, jti = mint(deps, client_id, claims, source, audience, scopes)
     except Refused as refused:
-        log(route="/token", client=client_id, status=refused.status, error=refused.error, reason=refused.reason)
+        log(route="/token", client=client_id, claimed_client=refused.claimed or None, status=refused.status,
+            error=refused.error, reason=refused.reason, **subject_fields(claims))
         return respond(refused.status, {"error": refused.error})
     except Exception as error:  # noqa: BLE001 - never a 500 with a reason in it
         log(route="/token", client=client_id, status=400, error="invalid_request", reason=type(error).__name__)

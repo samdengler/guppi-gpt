@@ -1281,7 +1281,7 @@ def test_obo_issuer_is_throttled_and_capped(template):
     template.has_resource_properties("AWS::ApiGateway::Stage", {
         "StageName": "prod",
         "MethodSettings": Match.array_with([
-            Match.object_like({"HttpMethod": "*", "ResourcePath": "/*", "ThrottlingRateLimit": 20, "ThrottlingBurstLimit": 40}),
+            Match.object_like({"HttpMethod": "*", "ResourcePath": "/*", "ThrottlingRateLimit": 100, "ThrottlingBurstLimit": 200}),
             Match.object_like({"HttpMethod": "GET", "ResourcePath": "/~1jwks.json", "ThrottlingRateLimit": 50}),
         ]),
         "AccessLogSetting": Match.any_value(),
