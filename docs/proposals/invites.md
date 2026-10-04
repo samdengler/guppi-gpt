@@ -14,7 +14,9 @@ before the move were not migrated (Sam, 3 October); instead a request from an ad
 is already approved re-runs the Okta step, so one of them who uses the form gets an
 account and the two emails (4 October). A repeat request from someone already in Okta, or
 a re-grant, only confirms the group membership and sends nothing, so the form cannot be
-used to flood an approved person's inbox. The rest of this document is the
+used to flood an approved person's inbox. Signing in asks for the password and any
+second factor, again every 12 hours (guppi-hr D49); Okta's default policy refused
+anyone without a passkey or FastPass. The rest of this document is the
 Cognito design as it was.
 
 Status: built and deployed, 3 October 2026 (phases 1 to 5 below). Two things wait: AWS's

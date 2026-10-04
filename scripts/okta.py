@@ -12,6 +12,7 @@ What it sets up (docs/proposals/okta.md; guppi-hr D20, D46):
 - trusted origin `https://chat.dengler.io` for CORS and redirects;
 - the browser OIDC app `chat.dengler.io`: authorization code with PKCE, refresh tokens
   that rotate, sign-in and sign-out redirects to the site, assigned to `chat-users`;
+- an authentication policy for both apps: a password and any second factor;
 - the custom authorization server `guppi` (audience `api://guppi`) with a policy that
   issues the app's tokens to `chat-users` only: 60-minute access tokens, refresh tokens
   that expire after 7 days unused.
@@ -232,6 +233,41 @@ def ensure_policy(okta: Okta, server_id: str, client_ids: list[str], group_id: s
         okta.call("POST", rules, body)
 
 
+ACCESS_POLICY = "chat.dengler.io: password and any second factor"
+ACCESS_RULE = "password and any second factor"
+
+
+def ensure_access_policy(okta: Okta, app_ids: list[str], check: bool) -> None:
+    """The sign-on (authentication) policy for the chat and harness apps: a password and any
+    one other factor (Okta Verify, an email code or a passkey), asked again every 12 hours.
+    Okta's default "Any two factors" policy wants a phishing-resistant, device-bound factor
+    (FastPass or a passkey), which refuses any browser on a device without one (4 Oct 2026)."""
+    policy = okta.find("/api/v1/policies?type=ACCESS_POLICY", lambda p: p["name"] == ACCESS_POLICY)
+    if check:
+        print(f"access policy: {'present' if policy else 'missing'}")
+        return
+    if not policy:
+        policy = okta.call("POST", "/api/v1/policies", {
+            "type": "ACCESS_POLICY", "status": "ACTIVE", "name": ACCESS_POLICY,
+            "description": "Sign-in to chat.dengler.io: a password and one more factor of any kind",
+        })
+    rules = f"/api/v1/policies/{policy['id']}/rules"
+    body = {
+        "type": "ACCESS_POLICY", "name": ACCESS_RULE, "priority": 0,
+        "actions": {"appSignOn": {"access": "ALLOW", "verificationMethod": {
+            "type": "ASSURANCE", "factorMode": "2FA", "reauthenticateIn": "PT12H",
+            "constraints": [{"knowledge": {"required": True, "types": ["password"]}}],
+        }}},
+    }
+    rule = okta.find(rules, lambda r: r["name"] == ACCESS_RULE)
+    if rule:
+        okta.call("PUT", f"{rules}/{rule['id']}", body)
+    else:
+        okta.call("POST", rules, body)
+    for app_id in app_ids:
+        okta.call("PUT", f"/api/v1/apps/{app_id}/policies/{policy['id']}", None)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true", help="report what exists, change nothing")
@@ -269,6 +305,7 @@ def main() -> None:
         okta.call("PUT", f"/api/v1/groups/{group['id']}/users/{me['id']}", None)
     harness_client_id = harness["credentials"]["oauthClient"]["client_id"]
     ensure_policy(okta, server["id"], [client_id, harness_client_id], group["id"], args.check)
+    ensure_access_policy(okta, [app["id"], harness["id"]], args.check)
 
     issuer = server["issuer"]
     discovery = okta.call("GET", f"/oauth2/{server['id']}/.well-known/openid-configuration")
