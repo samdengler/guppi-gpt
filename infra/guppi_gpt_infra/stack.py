@@ -117,6 +117,7 @@ from aws_cdk import (
 from constructs import Construct
 
 from guppi_gpt_infra.invites import Invites
+from guppi_gpt_infra.obo import OboIssuer
 
 ZONE_NAME = "dengler.io"
 CHAT_HOST = f"chat.{ZONE_NAME}"
@@ -721,6 +722,20 @@ class GuppiGptStack(cdk.Stack):
         jwt_audience = ssm.StringParameter.value_for_string_parameter(self, f"{OKTA_PARAMS}/audience")
         okta_client_id = ssm.StringParameter.value_for_string_parameter(self, f"{OKTA_PARAMS}/client-id")
         okta_host = cdk.Fn.select(2, cdk.Fn.split("/", discovery_url))
+
+        # The on-behalf-of token issuer (guppi-hr D47): trades the employee's Okta token for
+        # one hop's token at a time, through AgentCore Identity credential providers.
+        OboIssuer(
+            self,
+            "Obo",
+            okta_issuer=ssm.StringParameter.value_for_string_parameter(self, f"{OKTA_PARAMS}/issuer"),
+            okta_audience=jwt_audience,
+            okta_client_ids=[
+                okta_client_id,
+                ssm.StringParameter.value_for_string_parameter(self, f"{OKTA_PARAMS}/harness-client-id"),
+            ],
+            alarm_topic=alarm_topic,
+        )
 
         # ---- Agent image ---------------------------------------------------------------
         image_uri = self.node.try_get_context("image_uri")

@@ -151,10 +151,11 @@ def test_api_behavior_streams_through_cloudfront(template):
 
 def test_the_only_lambda_function_is_the_approved_sign_up_gate(template):
     # AGENTS.md: no Lambda functions without Sam's approval. Approved: the Cognito pre
-    # sign-up trigger (docs/proposals/invites.md, 3 Oct 2026).
+    # sign-up trigger (docs/proposals/invites.md, 3 Oct 2026) and the on-behalf-of token
+    # issuer (guppi-hr D47, 3 Oct 2026).
     functions = template.find_resources("AWS::Lambda::Function")
     names = sorted(f["Properties"].get("FunctionName") for f in functions.values())
-    assert names == ["guppi-gpt-pre-sign-up"]
+    assert names == ["guppi-gpt-obo-issuer", "guppi-gpt-pre-sign-up"]
 
 
 def test_managed_knowledge_base_reads_the_content_bucket(template):
@@ -776,6 +777,7 @@ def test_vended_log_groups_have_30_day_retention_under_the_shared_prefix(templat
         "/aws/vendedlogs/bedrock-agentcore/guppi_gpt",
         "/aws/vendedlogs/states/guppi-gpt-invite-mailer",
         "/aws/lambda/guppi-gpt-pre-sign-up",
+        "/aws/lambda/guppi-gpt-obo-issuer",
     }
     for group in groups.values():
         assert group["Properties"]["RetentionInDays"] == 30
@@ -1244,3 +1246,36 @@ def test_projects_can_find_the_dynatrace_endpoint_and_token_secret(template):
     endpoint = parameters["/guppi/platform/dynatrace-traces-endpoint"]["Fn::If"]
     assert endpoint[0] == "HasDynatraceOtlp"
     assert endpoint[2] == "none"
+
+
+def test_only_the_obo_issuer_can_sign_tokens(template):
+    # guppi-hr D47: the key policy gives the account administration but not kms:Sign, so
+    # no IAM policy elsewhere in the account can mint an on-behalf-of token.
+    keys = [k for k in template.find_resources("AWS::KMS::Key").values()
+            if k["Properties"].get("KeySpec") == "RSA_2048"]
+    assert len(keys) == 1
+    statements = keys[0]["Properties"]["KeyPolicy"]["Statement"]
+    signers = [s for s in statements if "kms:Sign" in (s["Action"] if isinstance(s["Action"], list) else [s["Action"]])]
+    assert len(signers) == 1 and "AWS" in signers[0]["Principal"]
+    assert "Fn::GetAtt" in json.dumps(signers[0]["Principal"])  # the issuer's role, not the root
+    for statement in statements:
+        actions = statement["Action"] if isinstance(statement["Action"], list) else [statement["Action"]]
+        assert "kms:*" not in actions
+
+
+def test_obo_credential_providers_reference_the_stacks_secrets(template):
+    providers = template.find_resources("AWS::BedrockAgentCore::OAuth2CredentialProvider")
+    names = sorted(p["Properties"]["Name"] for p in providers.values())
+    assert names == [f"guppi-obo-{c}" for c in sorted(
+        ["hr-bridge", "hr-agent-profile", "hr-agent-pay", "hr-agent-travel", "hr-tools-gateway"])]
+    for provider in providers.values():
+        config = provider["Properties"]["Oauth2ProviderConfigInput"]["CustomOauth2ProviderConfig"]
+        assert config["ClientSecretSource"] == "EXTERNAL" and "ClientSecret" not in config
+        assert config["OnBehalfOfTokenExchangeConfig"]["GrantType"] == "TOKEN_EXCHANGE"
+
+
+def test_obo_issuer_is_throttled_and_capped(template):
+    template.has_resource_properties("AWS::ApiGatewayV2::Stage", {
+        "DefaultRouteSettings": {"ThrottlingBurstLimit": 40, "ThrottlingRateLimit": 20}})
+    template.has_resource_properties("AWS::Lambda::Function", {
+        "FunctionName": "guppi-gpt-obo-issuer", "ReservedConcurrentExecutions": 10, "MemorySize": 1024})
