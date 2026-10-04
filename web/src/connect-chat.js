@@ -11,9 +11,9 @@
 //   turn rules come from the manifest as data (marks, hidden prefix, lines, limits).
 // - ConnectChat: one chatjs customer session for one contact, with catch-up and one
 //   reconnect, built around an injected chatjs object.
-// - createConnectChatClient(): the page's chats by thread: the start request and its
-//   NDJSON stream, the in-flight start a question waits for, restarts, the bridge
-//   fallback, and sign-out.
+// - createConnectChatClient(): the page's chats by thread: the start request and its one
+//   JSON answer, the in-flight start a question waits for, restarts, the bridge fallback,
+//   and sign-out.
 
 export const CONNECT_CHAT_CAPABILITY = "connect-chat";
 // With this flag on, the page behaves as before D55: the bridge's warm start and HttpAgent.
@@ -22,8 +22,8 @@ export const STEP_NAME = "Amazon Connect";
 export const PING_MS = 15_000;
 // A chat with less than this left before expiresAt is replaced before the next question.
 export const EXPIRY_MARGIN_MS = 5 * 60 * 1000;
-// The start route answers its first line after the token exchanges, StartChatContact and
-// the greeting; past this the page stops waiting and the thread uses the bridge.
+// The start route answers after the token exchanges, StartChatContact and the greeting;
+// past this the page stops waiting and the thread uses the bridge.
 export const START_TIMEOUT_MS = 25_000;
 export const SIGN_OUT_CAP_MS = 2_000;
 // CreateParticipantConnection and the socket; past this the thread uses the bridge.
@@ -241,10 +241,11 @@ export function createTurnAssembler({ rules, now, previousSentAt = null, late = 
   };
 }
 
-// ---- The start route's stream ----
+// ---- The start route's answer ----
 
 /**
- * The first line of the start route's answer, checked: `{ ok: true, details, region,
+ * The start route's answer (guppi-hr D57: one JSON body, the shape of AWS's
+ * StartChatContact sample plus the page's fields), checked: `{ ok: true, details, region,
  * expiresAt, startedAt, restarted, timing }` with `details` the chatjs chatDetails, or
  * `{ ok: false, reason }` with reason "signin", "unavailable" or "malformed".
  */
@@ -274,53 +275,13 @@ export function startResult(line) {
   };
 }
 
-/**
- * Reads an NDJSON body: resolves with the first line parsed (null when the body ends
- * first or the line is not JSON), and gives the second line to `onSecond` when it comes.
- * The reader is released after the second line or the end of the body.
- */
-export async function readStartStream(body, onSecond = () => {}) {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffered = "";
-  const nextLine = async () => {
-    for (;;) {
-      const at = buffered.indexOf("\n");
-      if (at >= 0) {
-        const line = buffered.slice(0, at);
-        buffered = buffered.slice(at + 1);
-        if (line.trim()) return line;
-        continue;
-      }
-      const { value, done } = await reader.read();
-      if (done) {
-        const rest = buffered;
-        buffered = "";
-        return rest.trim() ? rest : null;
-      }
-      buffered += decoder.decode(value, { stream: true });
-    }
-  };
-  const parse = (line) => {
-    if (line === null) return null;
-    try {
-      return JSON.parse(line);
-    } catch {
-      return null;
-    }
-  };
-  const first = parse(await nextLine());
-  // The rest of the stream, off the answer's path: the warm-up count and its timing.
-  (async () => {
-    try {
-      const second = parse(await nextLine());
-      if (second) onSecond(second);
-      await reader.cancel();
-    } catch {
-      // The function ended or the page left; the second line is only for the debug block.
-    }
-  })();
-  return first;
+/** The start route's JSON body, or null when it is not JSON. */
+export async function readStartBody(response) {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
 }
 
 // ---- The turn report ----
@@ -433,7 +394,7 @@ export { isRefused };
  * `ChatSession` object (injected, so tests use a fake). The participant token stays in
  * this object's closure for a reconnect and is never exposed.
  */
-export function createConnectChat({ chatjs, details, region, expiresAt = null, restartLine = false, warmed = null }) {
+export function createConnectChat({ chatjs, details, region, expiresAt = null, restartLine = false }) {
   let session = null;
   let closed = false;
   let failed = false;
@@ -443,7 +404,7 @@ export function createConnectChat({ chatjs, details, region, expiresAt = null, r
   const seen = new Set();
   const listeners = new Set();
   const failureListeners = new Set();
-  const info = { contactId: details.contactId, expiresAt, warmed, reconnected: false, catchUps: 0, lastSentAt: null };
+  const info = { contactId: details.contactId, expiresAt, reconnected: false, catchUps: 0, lastSentAt: null };
 
   function dispatch(item) {
     if (discarded || !item || typeof item !== "object" || !item.Id) return;
@@ -539,9 +500,6 @@ export function createConnectChat({ chatjs, details, region, expiresAt = null, r
     get info() {
       return { ...info };
     },
-    setWarmed(count) {
-      info.warmed = count;
-    },
     /** Connects the first session; rejects when Connect refuses the connection. */
     connect: open,
     reconnect,
@@ -619,24 +577,11 @@ export function createConnectChatClient({
         body: JSON.stringify(previousContactId ? { previousContactId } : {}),
         signal: controller.signal,
       });
-      if (response.status === 401) return { result: { ok: false, reason: "signin" } };
-      if (!response.ok || !response.body) return { result: { ok: false, reason: "unavailable" } };
-      let second = null;
-      let onSecond = null;
-      const first = await readStartStream(response.body, (line) => {
-        second = line;
-        if (onSecond) onSecond(line);
-      });
-      clearTimeout(timer);
-      return {
-        result: startResult(first),
-        warmed: (callback) => {
-          if (second) callback(second);
-          else onSecond = callback;
-        },
-      };
+      if (response.status === 401) return { ok: false, reason: "signin" };
+      if (!response.ok) return { ok: false, reason: "unavailable" };
+      return startResult(await readStartBody(response));
     } catch {
-      return { result: { ok: false, reason: "unavailable" } };
+      return { ok: false, reason: "unavailable" };
     } finally {
       clearTimeout(timer);
     }
@@ -644,7 +589,7 @@ export function createConnectChatClient({
 
   async function begin(threadId, { previousContactId = null, restartLine = false } = {}) {
     const started = now();
-    const { result, warmed } = await requestStart(previousContactId);
+    const result = await requestStart(previousContactId);
     if (!result.ok) {
       return { ok: false, reason: result.reason === "signin" ? "signin" : "unavailable", startedAt: started };
     }
@@ -669,9 +614,6 @@ export function createConnectChatClient({
       // The route's `restarted` says it ended the previous contact, which a new thread
       // asks for too; the restart line is for a thread whose chat was replaced.
       restartLine,
-    });
-    warmed((line) => {
-      if (Number.isFinite(line.warmed)) chat.setWarmed(line.warmed);
     });
     try {
       await withTimeout(chat.connect(), CONNECT_TIMEOUT_MS);

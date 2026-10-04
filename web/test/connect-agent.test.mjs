@@ -41,7 +41,7 @@ function fakeChat({ script = {}, refuse = 0, failAfterSend = false, restartLine 
   const listeners = new Set();
   const chat = {
     contactId,
-    info: { contactId, warmed: 3 },
+    info: { contactId },
     sent: [],
     closed: false,
     disconnected: 0,
@@ -289,7 +289,7 @@ test("a wait for the chat start is a step and a note", async () => {
   const timing = events.find((e) => e.name === "guppi.timing").value;
   assert.deepEqual(timing.steps[0], { name: "waiting for the chat start", start_ms: 0, end_ms: 1500, lane: "page" });
   assert.ok(timing.notes.includes("waited for the chat start"));
-  assert.ok(timing.notes.includes("sub-agents warmed at chat start: 3"));
+  assert.ok(!timing.notes.some((note) => note.includes("warmed")));
 });
 
 test("the designer's error line reports endReason error with designer_error, for the report route's alarm", async () => {

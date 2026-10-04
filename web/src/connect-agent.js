@@ -282,7 +282,6 @@ class Turn {
     const total = this.ms();
     steps.push({ name: "total", start_ms: 0, end_ms: total, lane: "page" });
     const info = this.chat ? this.chat.info : null;
-    if (info && Number.isFinite(info.warmed)) this.notes.add(`sub-agents warmed at chat start: ${info.warmed}`);
     return {
       steps,
       total_ms: total,

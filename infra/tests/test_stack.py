@@ -1283,7 +1283,7 @@ def test_the_account_cannot_grant_itself_signing(template):
         assert not {"kms:CreateGrant", "kms:Create*", "kms:Put*"} & set(actions)
 
 
-def test_hr_chat_behavior_streams_to_the_chat_start_function_before_the_api_wildcard(template):
+def test_hr_chat_behavior_goes_to_the_chat_start_api_before_the_api_wildcard(template):
     (distribution,) = template.find_resources("AWS::CloudFront::Distribution").values()
     config = distribution["Properties"]["DistributionConfig"]
     patterns = [b["PathPattern"] for b in config["CacheBehaviors"]]
@@ -1293,7 +1293,7 @@ def test_hr_chat_behavior_streams_to_the_chat_start_function_before_the_api_wild
     assert behavior["ViewerProtocolPolicy"] == "https-only"
     assert "POST" in behavior["AllowedMethods"]
     # CachingDisabled, and AllViewerExceptHostHeader, which forwards Authorization,
-    # Content-Type and the body but not Host (a function URL routes by its own host).
+    # Content-Type and the body but not Host (API Gateway routes by its own host).
     assert behavior["CachePolicyId"] == "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
     assert behavior["OriginRequestPolicyId"] == "b689b0a8-53d0-40ab-baf2-68738e2966ac"
     assert behavior["Compress"] is False
@@ -1302,11 +1302,12 @@ def test_hr_chat_behavior_streams_to_the_chat_start_function_before_the_api_wild
     assert origin["CustomOriginConfig"]["OriginProtocolPolicy"] == "https-only"
     assert origin["CustomOriginConfig"]["OriginReadTimeout"] == 60
     assert "OriginCustomHeaders" not in origin
-    # The host comes from guppi-hr's SSM parameter at deploy time.
-    ref = origin["DomainName"]["Ref"]
-    parameter = template.to_json()["Parameters"][ref]
-    assert parameter["Type"] == "AWS::SSM::Parameter::Value<String>"
-    assert parameter["Default"] == "/guppi/hr/chat-start-host"
+    # The API's host and its stage path come from guppi-hr's SSM parameters at deploy time.
+    parameters = template.to_json()["Parameters"]
+    for field, name in (("DomainName", "/guppi/hr/chat-start-host"), ("OriginPath", "/guppi/hr/chat-start-path")):
+        parameter = parameters[origin[field]["Ref"]]
+        assert parameter["Type"] == "AWS::SSM::Parameter::Value<String>"
+        assert parameter["Default"] == name
 
 
 def test_csp_lets_every_page_reach_connects_participant_service_and_chat_socket(template):

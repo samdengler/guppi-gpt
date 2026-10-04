@@ -8,7 +8,7 @@ import {
   createConnectChatClient,
   createReportSender,
   onNetworkBack,
-  readStartStream,
+  readStartBody,
   reportBody,
   startResult,
   stripMark,
@@ -298,7 +298,7 @@ test("the summary carries Connect's times for the report", () => {
 
 // ---- the start route's answer ----
 
-const LINE_1 = {
+const START_BODY = {
   data: { startChatResult: { ContactId: "c-1", ParticipantId: "p-1", ParticipantToken: "secret-token" } },
   region: "us-east-1",
   startedAt: T0,
@@ -308,7 +308,7 @@ const LINE_1 = {
 };
 
 test("startResult reads the chat details and refuses anything else", () => {
-  const result = startResult(LINE_1);
+  const result = startResult(START_BODY);
   assert.equal(result.ok, true);
   assert.deepEqual(result.details, { contactId: "c-1", participantId: "p-1", participantToken: "secret-token" });
   assert.equal(result.region, "us-east-1");
@@ -316,30 +316,23 @@ test("startResult reads the chat details and refuses anything else", () => {
   assert.deepEqual(startResult({ error: "signin" }), { ok: false, reason: "signin" });
   assert.deepEqual(startResult({ error: "unavailable" }), { ok: false, reason: "unavailable" });
   assert.equal(startResult({ data: { startChatResult: { ContactId: "c" } }, region: "us-east-1" }).reason, "malformed");
-  assert.equal(startResult({ ...LINE_1, region: "javascript:" }).reason, "malformed");
+  assert.equal(startResult({ ...START_BODY, region: "javascript:" }).reason, "malformed");
   assert.equal(startResult(null).reason, "malformed");
 });
 
-function ndjson(lines, { split = false } = {}) {
-  const text = lines.map((line) => JSON.stringify(line)).join("\n") + "\n";
-  const bytes = new TextEncoder().encode(text);
-  const chunks = split ? [bytes.slice(0, 7), bytes.slice(7, 40), bytes.slice(40)] : [bytes];
-  return new ReadableStream({
-    start(controller) {
-      for (const chunk of chunks) controller.enqueue(chunk);
-      controller.close();
-    },
-  });
+/** A fetch Response with `text` as its body, as the start route's one JSON answer. */
+function jsonResponse(text) {
+  return new Response(text, { status: 200, headers: { "content-type": "application/json" } });
 }
 
-test("readStartStream answers with the first line and hands the second on later", async () => {
-  let second = null;
-  const first = await readStartStream(ndjson([LINE_1, { warmed: 3 }], { split: true }), (line) => {
-    second = line;
-  });
-  assert.equal(first.data.startChatResult.ContactId, "c-1");
-  await new Promise((resolve) => setTimeout(resolve, 5));
-  assert.deepEqual(second, { warmed: 3 });
+test("readStartBody reads the one JSON body, and null when it is not JSON", async () => {
+  const body = await readStartBody(jsonResponse(JSON.stringify(START_BODY)));
+  assert.equal(body.data.startChatResult.ContactId, "c-1");
+  assert.deepEqual(startResult(body).details, { contactId: "c-1", participantId: "p-1", participantToken: "secret-token" });
+  // A trailing newline (the answer before guppi-hr D57 was one NDJSON line) still reads.
+  assert.equal((await readStartBody(jsonResponse(`${JSON.stringify(START_BODY)}\n`))).region, "us-east-1");
+  assert.equal(await readStartBody(jsonResponse("not json")), null);
+  assert.equal(startResult(await readStartBody(jsonResponse(""))).reason, "malformed");
 });
 
 // ---- the report ----
@@ -515,7 +508,7 @@ function startServer(answers) {
     if (answer.hang) return new Promise(() => {});
     const gate = answer.gate || Promise.resolve();
     await gate;
-    return { status: 200, ok: true, body: ndjson(answer.lines) };
+    return jsonResponse(JSON.stringify(answer.body));
   };
   return { fetch, requests };
 }
@@ -530,15 +523,15 @@ function client(server, lib = fakeChatjs(), extra = {}) {
   });
 }
 
-const line = (contactId, extra = {}) => ({
-  ...LINE_1,
+const startBody = (contactId, extra = {}) => ({
+  ...START_BODY,
   data: { startChatResult: { ContactId: contactId, ParticipantId: `p-${contactId}`, ParticipantToken: `pt-${contactId}` } },
   expiresAt: Date.now() + 3_600_000,
   ...extra,
 });
 
 test("the warm start posts to the start route with the page's token and connects the chat", async () => {
-  const server = startServer([{ lines: [line("c-1"), { warmed: 3, timing: {} }] }]);
+  const server = startServer([{ body: startBody("c-1") }]);
   const lib = fakeChatjs();
   const chats = client(server, lib);
   const outcome = await chats.start("t1");
@@ -550,14 +543,14 @@ test("the warm start posts to the start route with the page's token and connects
   assert.deepEqual(server.requests[0].body, {});
   assert.deepEqual(lib.configs, [{ region: "us-east-1", features: { messageReceipts: { shouldSendMessageReceipts: false } } }]);
   assert.equal(lib.sessions[0].calls[0], "connect");
-  await tick();
-  assert.equal(outcome.chat.info.warmed, 3);
+  // No warm-up count: the chat start warms no sub-agent (guppi-hr D57).
+  assert.equal("warmed" in outcome.chat.info, false);
 });
 
 test("a question sent before the first line arrives waits for that one start", async () => {
   let open;
   const gate = new Promise((resolve) => (open = resolve));
-  const server = startServer([{ lines: [line("c-1")], gate }]);
+  const server = startServer([{ body: startBody("c-1"), gate }]);
   const chats = client(server);
   const warm = chats.start("t1");
   const question = chats.ready("t1");
@@ -571,7 +564,7 @@ test("a question sent before the first line arrives waits for that one start", a
 });
 
 test("a refused sign-in is the sign-in line, and the next question tries the start again", async () => {
-  const server = startServer([{ lines: [{ error: "signin" }] }, { status: 401 }, { lines: [line("c-2")] }]);
+  const server = startServer([{ body: { error: "signin" } }, { status: 401 }, { body: startBody("c-2") }]);
   const chats = client(server);
   assert.equal((await chats.ready("t1")).reason, "signin");
   assert.equal((await chats.ready("t1")).reason, "signin");
@@ -580,7 +573,7 @@ test("a refused sign-in is the sign-in line, and the next question tries the sta
 });
 
 test("an unavailable start puts the thread on the bridge", async () => {
-  const server = startServer([{ lines: [{ error: "unavailable" }] }]);
+  const server = startServer([{ body: { error: "unavailable" } }]);
   const chats = client(server);
   const ready = await chats.ready("t1");
   assert.equal(ready.reason, "bridge");
@@ -591,14 +584,14 @@ test("an unavailable start puts the thread on the bridge", async () => {
 });
 
 test("a chat that cannot connect puts the thread on the bridge and keeps its contact for the report", async () => {
-  const server = startServer([{ lines: [line("c-1")] }]);
+  const server = startServer([{ body: startBody("c-1") }]);
   const chats = client(server, fakeChatjs({ connectFails: [true] }));
   const ready = await chats.ready("t1");
   assert.deepEqual([ready.reason, ready.fallback, ready.contactId], ["bridge", "connect_failed", "c-1"]);
 });
 
 test("a chat whose socket failed for good sends the thread to the bridge", async () => {
-  const server = startServer([{ lines: [line("c-1")] }]);
+  const server = startServer([{ body: startBody("c-1") }]);
   const lib = fakeChatjs({ connectFails: [false, true] });
   const chats = client(server, lib);
   await chats.start("t1");
@@ -610,7 +603,7 @@ test("a chat whose socket failed for good sends the thread to the bridge", async
 });
 
 test("an ended chat is replaced with previousContactId and the restart line", async () => {
-  const server = startServer([{ lines: [line("c-1")] }, { lines: [line("c-2")] }]);
+  const server = startServer([{ body: startBody("c-1") }, { body: startBody("c-2") }]);
   const lib = fakeChatjs();
   const chats = client(server, lib);
   const first = await chats.ready("t1");
@@ -624,7 +617,7 @@ test("an ended chat is replaced with previousContactId and the restart line", as
 
 test("a chat with under five minutes left is replaced after the page refreshes its token", async () => {
   const now = clock(T0);
-  const server = startServer([{ lines: [line("c-1", { expiresAt: T0 + 10 * 60 * 1000 })] }, { lines: [line("c-2")] }]);
+  const server = startServer([{ body: startBody("c-1", { expiresAt: T0 + 10 * 60 * 1000 }) }, { body: startBody("c-2") }]);
   let refreshed = 0;
   const chats = client(server, fakeChatjs(), { now, refreshToken: async () => refreshed++ });
   assert.equal((await chats.ready("t1")).chat.contactId, "c-1");
@@ -639,7 +632,7 @@ test("a chat with under five minutes left is replaced after the page refreshes i
 });
 
 test("the thread the page leaves is named on the next start, which shows no restart line", async () => {
-  const server = startServer([{ lines: [line("c-1")] }, { lines: [line("c-2", { restarted: true })] }]);
+  const server = startServer([{ body: startBody("c-1") }, { body: startBody("c-2", { restarted: true }) }]);
   const chats = client(server);
   await chats.start("t1");
   chats.leave("t1");
@@ -649,14 +642,14 @@ test("the thread the page leaves is named on the next start, which shows no rest
 });
 
 test("a reopened thread starts a new chat that opens with the restart line", async () => {
-  const server = startServer([{ lines: [line("c-1")] }]);
+  const server = startServer([{ body: startBody("c-1") }]);
   const chats = client(server);
   const outcome = await chats.start("old-thread", { restartLine: true });
   assert.equal(outcome.chat.takeRestartLine(), true);
 });
 
 test("a refused send gets one reconnect first, then a new chat", async () => {
-  const server = startServer([{ lines: [line("c-1")] }, { lines: [line("c-2")] }]);
+  const server = startServer([{ body: startBody("c-1") }, { body: startBody("c-2") }]);
   const lib = fakeChatjs();
   const chats = client(server, lib);
   const { chat } = await chats.ready("t1");
@@ -669,7 +662,7 @@ test("a refused send gets one reconnect first, then a new chat", async () => {
 });
 
 test("sign-out ends the chats and gives up after the cap", async () => {
-  const server = startServer([{ lines: [line("c-1")] }]);
+  const server = startServer([{ body: startBody("c-1") }]);
   const lib = fakeChatjs();
   const chats = client(server, lib);
   await chats.start("t1");
@@ -683,7 +676,7 @@ test("sign-out ends the chats and gives up after the cap", async () => {
 test("a start the page left before it answered ends its chat", async () => {
   let open;
   const gate = new Promise((resolve) => (open = resolve));
-  const server = startServer([{ lines: [line("c-1")], gate }]);
+  const server = startServer([{ body: startBody("c-1"), gate }]);
   const lib = fakeChatjs();
   const chats = client(server, lib);
   const pending = chats.start("t1");
@@ -752,7 +745,7 @@ test("an HTTP answer counts as sent, and a body that is not a report is never qu
 test("the network coming back flushes the reports and reads every live chat's transcript", async () => {
   const reply = bot("Answered during the outage.", 2800);
   const lib = fakeChatjs({ transcript: [customer("hello", 0), reply], transcriptFails: 1 });
-  const chats = client(startServer([{ lines: [line("c-1")] }]), lib);
+  const chats = client(startServer([{ body: startBody("c-1") }]), lib);
   const outcome = await chats.start("t1");
   const seen = [];
   outcome.chat.listen((item) => seen.push(item.Id));

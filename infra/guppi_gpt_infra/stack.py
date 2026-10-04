@@ -237,13 +237,15 @@ FUNCTIONS_DIR = Path(__file__).resolve().parent / "functions"
 # connect-src, and framed only by this site.
 SANDBOX_PATH_PATTERN = "/sandbox/*"
 
-# guppi-hr's chat start (D55): a Rust function behind a Lambda function URL that streams
-# its answer, reached on this origin so the page's bearer never leaves it. The project's
-# stack publishes the function URL's host in SSM; this stack reads it at deploy time, the
-# one value it takes from a project. The behavior is listed before /api/*, which would
-# otherwise send these paths to the edge gateway.
+# guppi-hr's chat start (guppi-hr D55, D57): a Rust function behind a regional REST API
+# (stage prod, a standard Lambda proxy integration, one JSON answer), reached on this origin
+# so the page's bearer never leaves it. The project's stack publishes the API's host and
+# stage path in SSM; this stack reads them at deploy time, the values it takes from a
+# project. The behavior is listed before /api/*, which would otherwise send these paths to
+# the edge gateway.
 HR_CHAT_PATH_PATTERN = "/api/hr/chat/*"
 HR_CHAT_START_HOST_PARAMETER = "/guppi/hr/chat-start-host"
+HR_CHAT_START_PATH_PARAMETER = "/guppi/hr/chat-start-path"
 # The Connect chat transport (web/src/connect-chat.js, guppi-gpt decision 22): the
 # participant service and the chat WebSocket, in AWS's documented host shapes for the
 # region ("Set up your network", option 1). Every project page gets them.
@@ -1108,12 +1110,15 @@ class GuppiGptStack(cdk.Stack):
             protocol_policy=cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
         )
 
-        # The origin for /api/hr/chat/*: guppi-hr's chat-start function URL, whose host the
-        # project's stack publishes. The function verifies the Okta token itself (a function
-        # URL has no JWT authorizer), so this origin carries no secret header. The response
-        # is a stream: the chat details on the first line, the warm-up count later.
+        # The origin for /api/hr/chat/*: guppi-hr's chat-start REST API under its stage, as
+        # for the invites API; the project's stack publishes both. The function verifies the
+        # Okta token itself (no authorizer on the methods), so this origin carries no secret
+        # header. The answer is one JSON body with the chat details.
         hr_chat_origin = origins.HttpOrigin(
             ssm.StringParameter.value_for_string_parameter(self, HR_CHAT_START_HOST_PARAMETER),
+            origin_path=ssm.StringParameter.value_for_string_parameter(
+                self, HR_CHAT_START_PATH_PARAMETER
+            ),
             # A fixed id, so adding this origin leaves the generated ids of the others alone.
             origin_id="HrChatStart",
             protocol_policy=cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
@@ -1281,8 +1286,8 @@ class GuppiGptStack(cdk.Stack):
                 ),
                 # POST with the page's bearer and a JSON body. The managed all-viewer policy
                 # without Host forwards Authorization and Content-Type (an origin request
-                # policy cannot name Authorization itself), and a function URL routes by its
-                # own host. No caching and no compression, so the stream is not held back.
+                # policy cannot name Authorization itself), and API Gateway routes by its own
+                # host. No caching and no compression.
                 HR_CHAT_PATH_PATTERN: cloudfront.BehaviorOptions(
                     origin=hr_chat_origin,
                     viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
