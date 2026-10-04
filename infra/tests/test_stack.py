@@ -280,8 +280,12 @@ def render(value) -> str:
     return "<token>"
 
 
+CONNECT_HOSTS = (
+    "https://participant.connect.us-east-1.amazonaws.com "
+    "wss://*.transport.connect.us-east-1.amazonaws.com"
+)
 CSP_WITHOUT_BEACON = (
-    "default-src 'self'; connect-src 'self' https://<okta>; "
+    f"default-src 'self'; connect-src 'self' https://<okta> {CONNECT_HOSTS}; "
     "img-src 'self' data:; style-src 'self'; script-src 'self'; "
     "frame-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 )
@@ -490,7 +494,7 @@ def test_csp_adds_the_beacon_origin_only_when_the_parameter_is_set(template):
     assert render(if_branches[2]) == CSP_WITHOUT_BEACON
     # Rendering with the parameter set: the beacon origin joined into connect-src.
     assert render(if_branches[1]) == (
-        "default-src 'self'; connect-src 'self' https://<okta> "
+        f"default-src 'self'; connect-src 'self' https://<okta> {CONNECT_HOSTS} "
         "<DynatraceBeaconOrigin>; img-src 'self' data:; style-src 'self'; "
         "script-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'self'; "
         "form-action 'self'"
@@ -952,6 +956,7 @@ def test_feedback_behavior_is_matched_before_the_api_wildcard(template):
     assert [b["PathPattern"] for b in config["CacheBehaviors"]] == [
         "/api/feedback",
         "/api/invite*",
+        "/api/hr/chat/*",
         "/api/*",
         "/sandbox/*",
     ]
@@ -1159,7 +1164,10 @@ def test_agent_path_function_is_on_the_api_wildcard_only(template):
     assert viewer_request_function(behaviors["/api/*"]) == agent_id
     # The feedback behavior keeps its path and is still matched first.
     assert "FunctionAssociations" not in behaviors["/api/feedback"]
-    assert list(behaviors) == ["/api/feedback", "/api/invite*", "/api/*", "/sandbox/*"]
+    assert list(behaviors) == [
+        "/api/feedback", "/api/invite*", "/api/hr/chat/*", "/api/*", "/sandbox/*"
+    ]
+    assert "FunctionAssociations" not in behaviors["/api/hr/chat/*"]
 
 
 def test_sandbox_behavior_serves_the_site_bucket_with_the_sandbox_headers(template):
@@ -1273,3 +1281,42 @@ def test_the_account_cannot_grant_itself_signing(template):
     for statement in key["Properties"]["KeyPolicy"]["Statement"]:
         actions = statement["Action"] if isinstance(statement["Action"], list) else [statement["Action"]]
         assert not {"kms:CreateGrant", "kms:Create*", "kms:Put*"} & set(actions)
+
+
+def test_hr_chat_behavior_streams_to_the_chat_start_function_before_the_api_wildcard(template):
+    (distribution,) = template.find_resources("AWS::CloudFront::Distribution").values()
+    config = distribution["Properties"]["DistributionConfig"]
+    patterns = [b["PathPattern"] for b in config["CacheBehaviors"]]
+    # Matched in list order: the HR chat routes must not reach the edge gateway.
+    assert patterns.index("/api/hr/chat/*") < patterns.index("/api/*")
+    behavior = {b["PathPattern"]: b for b in config["CacheBehaviors"]}["/api/hr/chat/*"]
+    assert behavior["ViewerProtocolPolicy"] == "https-only"
+    assert "POST" in behavior["AllowedMethods"]
+    # CachingDisabled, and AllViewerExceptHostHeader, which forwards Authorization,
+    # Content-Type and the body but not Host (a function URL routes by its own host).
+    assert behavior["CachePolicyId"] == "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
+    assert behavior["OriginRequestPolicyId"] == "b689b0a8-53d0-40ab-baf2-68738e2966ac"
+    assert behavior["Compress"] is False
+    assert "FunctionAssociations" not in behavior
+    (origin,) = [o for o in config["Origins"] if o["Id"] == behavior["TargetOriginId"]]
+    assert origin["CustomOriginConfig"]["OriginProtocolPolicy"] == "https-only"
+    assert origin["CustomOriginConfig"]["OriginReadTimeout"] == 60
+    assert "OriginCustomHeaders" not in origin
+    # The host comes from guppi-hr's SSM parameter at deploy time.
+    ref = origin["DomainName"]["Ref"]
+    parameter = template.to_json()["Parameters"][ref]
+    assert parameter["Type"] == "AWS::SSM::Parameter::Value<String>"
+    assert parameter["Default"] == "/guppi/hr/chat-start-host"
+
+
+def test_csp_lets_every_page_reach_connects_participant_service_and_chat_socket(template):
+    _, policy = headers_policy(template, "CSP and security headers for the static page")
+    csp = policy["Properties"]["ResponseHeadersPolicyConfig"]["SecurityHeadersConfig"][
+        "ContentSecurityPolicy"
+    ]["ContentSecurityPolicy"]
+    for branch in csp["Fn::If"][1:]:
+        connect_src = render(branch).split("connect-src ")[1].split(";")[0].split()
+        assert "https://participant.connect.us-east-1.amazonaws.com" in connect_src
+        assert "wss://*.transport.connect.us-east-1.amazonaws.com" in connect_src
+        # Nothing else of Connect's, the client-side metrics host included.
+        assert not [h for h in connect_src if "telemetry" in h]

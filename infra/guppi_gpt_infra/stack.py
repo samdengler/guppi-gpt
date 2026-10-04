@@ -236,6 +236,21 @@ FUNCTIONS_DIR = Path(__file__).resolve().parent / "functions"
 # inherits this policy: inline script and style, data: images, nothing fetched, no
 # connect-src, and framed only by this site.
 SANDBOX_PATH_PATTERN = "/sandbox/*"
+
+# guppi-hr's chat start (D55): a Rust function behind a Lambda function URL that streams
+# its answer, reached on this origin so the page's bearer never leaves it. The project's
+# stack publishes the function URL's host in SSM; this stack reads it at deploy time, the
+# one value it takes from a project. The behavior is listed before /api/*, which would
+# otherwise send these paths to the edge gateway.
+HR_CHAT_PATH_PATTERN = "/api/hr/chat/*"
+HR_CHAT_START_HOST_PARAMETER = "/guppi/hr/chat-start-host"
+# The Connect chat transport (web/src/connect-chat.js, guppi-gpt decision 22): the
+# participant service and the chat WebSocket, in AWS's documented host shapes for the
+# region ("Set up your network", option 1). Every project page gets them.
+CONNECT_CHAT_CONNECT_SRC = (
+    "https://participant.connect.us-east-1.amazonaws.com "
+    "wss://*.transport.connect.us-east-1.amazonaws.com"
+)
 SANDBOX_CSP = (
     "default-src 'none'; "
     "script-src 'self' 'unsafe-inline'; "
@@ -1093,6 +1108,17 @@ class GuppiGptStack(cdk.Stack):
             protocol_policy=cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
         )
 
+        # The origin for /api/hr/chat/*: guppi-hr's chat-start function URL, whose host the
+        # project's stack publishes. The function verifies the Okta token itself (a function
+        # URL has no JWT authorizer), so this origin carries no secret header. The response
+        # is a stream: the chat details on the first line, the warm-up count later.
+        hr_chat_origin = origins.HttpOrigin(
+            ssm.StringParameter.value_for_string_parameter(self, HR_CHAT_START_HOST_PARAMETER),
+            protocol_policy=cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+            read_timeout=ORIGIN_RESPONSE_TIMEOUT,
+            keepalive_timeout=Duration.seconds(60),
+        )
+
         # ---- Site and CloudFront -------------------------------------------------------
         site_bucket = s3.Bucket(
             self,
@@ -1121,7 +1147,7 @@ class GuppiGptStack(cdk.Stack):
         # renders to the exact CSP the stack already had.
         csp_without_dynatrace = (
             "default-src 'self'; "
-            f"connect-src 'self' https://{okta_host}; "
+            f"connect-src 'self' https://{okta_host} {CONNECT_CHAT_CONNECT_SRC}; "
             "img-src 'self' data:; "
             "style-src 'self'; "
             "script-src 'self'; "
@@ -1132,7 +1158,8 @@ class GuppiGptStack(cdk.Stack):
         )
         csp_with_dynatrace = (
             "default-src 'self'; "
-            f"connect-src 'self' https://{okta_host} {dynatrace_beacon_origin.value_as_string}; "
+            f"connect-src 'self' https://{okta_host} {CONNECT_CHAT_CONNECT_SRC} "
+            f"{dynatrace_beacon_origin.value_as_string}; "
             "img-src 'self' data:; "
             "style-src 'self'; "
             "script-src 'self'; "
@@ -1233,8 +1260,8 @@ class GuppiGptStack(cdk.Stack):
                 ],
             ),
             # CloudFront compares the request path against these patterns in the order
-            # they are listed, so the feedback and invite paths come before the wildcard that
-            # would otherwise swallow them and send them to the edge gateway.
+            # they are listed, so the feedback, invite and HR chat paths come before the
+            # wildcard that would otherwise swallow them and send them to the edge gateway.
             additional_behaviors={
                 "/api/feedback": cloudfront.BehaviorOptions(
                     origin=feedback_api_origin,
@@ -1249,6 +1276,18 @@ class GuppiGptStack(cdk.Stack):
                     allowed_methods=cloudfront.AllowedMethods.ALLOW_ALL,
                     cache_policy=cloudfront.CachePolicy.CACHING_DISABLED,
                     origin_request_policy=cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+                ),
+                # POST with the page's bearer and a JSON body. The managed all-viewer policy
+                # without Host forwards Authorization and Content-Type (an origin request
+                # policy cannot name Authorization itself), and a function URL routes by its
+                # own host. No caching and no compression, so the stream is not held back.
+                HR_CHAT_PATH_PATTERN: cloudfront.BehaviorOptions(
+                    origin=hr_chat_origin,
+                    viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
+                    allowed_methods=cloudfront.AllowedMethods.ALLOW_ALL,
+                    cache_policy=cloudfront.CachePolicy.CACHING_DISABLED,
+                    origin_request_policy=cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+                    compress=False,
                 ),
                 "/api/*": cloudfront.BehaviorOptions(
                     origin=gateway_origin,
