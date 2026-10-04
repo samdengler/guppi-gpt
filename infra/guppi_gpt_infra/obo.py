@@ -4,7 +4,8 @@ providers that call it.
 Okta signs people in (D46) but its free plan cannot exchange tokens, so a small RFC 8693
 issuer stands in for the production identity provider: a REST API in front of one Lambda
 function (lambdas/obo_issuer), approved by Sam on 3 October 2026 as a Lambda in the
-request path. It runs about five times per chat, never per turn on the callers' side; the
+request path. The function is Rust since 4 October (guppi-hr D51), built for arm64 by
+cargo-lambda when the stack is synthesized (`IssuerBuild`); test synths skip the build. It runs about five times per chat, never per turn on the callers' side; the
 HR tools gateway exchanges once per tool call (guppi-hr aws-feedback A14).
 
 Each client is an OAuth client of the issuer with a secret in Secrets Manager, generated
@@ -20,6 +21,8 @@ name and ARN and the secret's ARN, which the caller's role must be allowed to re
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import aws_cdk as cdk
@@ -35,9 +38,42 @@ from aws_cdk import aws_logs as logs
 from aws_cdk import aws_secretsmanager as secretsmanager
 from aws_cdk import aws_sns as sns
 from aws_cdk import aws_ssm as ssm
+import jsii
 from constructs import Construct
 
 ISSUER_DIR = Path(__file__).resolve().parent / "lambdas" / "obo_issuer"
+ISSUER_BINARY = "obo-issuer"
+# cargo-lambda from PyPI, with the Zig linker it cross-compiles with; no install needed.
+CARGO_LAMBDA = ["uvx", "--from", "cargo-lambda", "cargo-lambda", "lambda", "build", "--release", "--arm64"]
+CARGO_LAMBDA_IMAGE = "ghcr.io/cargo-lambda/cargo-lambda:latest"
+
+
+@jsii.implements(cdk.ILocalBundling)
+class IssuerBuild:
+    """Builds the issuer on this machine with cargo-lambda; CDK falls back to cargo-lambda's
+    image in Docker when this returns False (no uv, no cargo)."""
+
+    def try_bundle(self, output_dir: str, *, image=None, **_options) -> bool:
+        if not (shutil.which("uvx") and shutil.which("cargo")):
+            return False
+        subprocess.run(CARGO_LAMBDA, cwd=ISSUER_DIR, check=True)
+        shutil.copy2(ISSUER_DIR / "target" / "lambda" / ISSUER_BINARY / "bootstrap", Path(output_dir) / "bootstrap")
+        return True
+
+
+def issuer_code() -> lambda_.Code:
+    """The issuer's binary. The hash is of the source, so a deploy without a change to the
+    Rust leaves the function alone even though builds are not byte for byte the same."""
+    return lambda_.Code.from_asset(
+        str(ISSUER_DIR),
+        exclude=["target", "testdata", "**/*.pyc"],
+        asset_hash_type=cdk.AssetHashType.SOURCE,
+        bundling=cdk.BundlingOptions(
+            image=cdk.DockerImage.from_registry(CARGO_LAMBDA_IMAGE),
+            command=["bash", "-c", f"cargo lambda build --release --arm64 && cp target/lambda/{ISSUER_BINARY}/bootstrap /asset-output/"],
+            local=IssuerBuild(),
+        ),
+    )
 PARAMS = "/guppi/obo"
 API_NAME = "guppi-obo-issuer"
 FUNCTION_NAME = "guppi-gpt-obo-issuer"
@@ -172,8 +208,8 @@ class OboIssuer(Construct):
         issuer_parameter_name = f"{PARAMS}/issuer"
         function = lambda_.Function(
             self, "Issuer",
-            runtime=lambda_.Runtime.PYTHON_3_12, architecture=lambda_.Architecture.ARM_64,
-            handler="index.handler", code=lambda_.Code.from_asset(str(ISSUER_DIR)),
+            runtime=lambda_.Runtime.PROVIDED_AL2023, architecture=lambda_.Architecture.ARM_64,
+            handler="bootstrap", code=issuer_code(),
             role=role, memory_size=1024, timeout=Duration.seconds(10),
             reserved_concurrent_executions=RESERVED_CONCURRENCY,
             function_name=FUNCTION_NAME,

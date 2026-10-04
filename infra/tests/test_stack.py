@@ -15,6 +15,8 @@ def synth(**extra_context) -> Template:
         context={
             ZONE_CONTEXT_KEY: {"Id": "/hostedzone/Z0000000000000", "Name": "dengler.io."},
             "image_uri": f"{ACCOUNT}.dkr.ecr.{REGION}.amazonaws.com/guppi-gpt:test",
+            # No asset is built in tests (the Rust issuer); the template is what is checked.
+            "aws:cdk:bundling-stacks": [],
             **extra_context,
         }
     )
@@ -143,6 +145,14 @@ def test_the_only_lambda_function_is_the_approved_obo_issuer(template):
     functions = template.find_resources("AWS::Lambda::Function")
     names = sorted(f["Properties"].get("FunctionName") for f in functions.values())
     assert names == ["guppi-gpt-obo-issuer"]
+
+
+def test_the_issuer_is_the_rust_binary_on_arm64(template):
+    # guppi-hr D51: Rust for the cold start.
+    (issuer,) = template.find_resources("AWS::Lambda::Function").values()
+    assert issuer["Properties"]["Runtime"] == "provided.al2023"
+    assert issuer["Properties"]["Handler"] == "bootstrap"
+    assert issuer["Properties"]["Architectures"] == ["arm64"]
 
 def test_managed_knowledge_base_reads_the_content_bucket(template):
     template.has_resource_properties(

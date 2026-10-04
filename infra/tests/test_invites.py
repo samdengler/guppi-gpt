@@ -18,6 +18,8 @@ def template() -> Template:
         context={
             ZONE_CONTEXT_KEY: {"Id": "/hostedzone/Z0000000000000", "Name": "dengler.io."},
             "image_uri": f"{ACCOUNT}.dkr.ecr.{REGION}.amazonaws.com/guppi-gpt:test",
+            # No asset is built in tests (the Rust issuer); the template is what is checked.
+            "aws:cdk:bundling-stacks": [],
         }
     )
     stack = GuppiGptStack(app, "GuppiGpt", env=cdk.Environment(account=ACCOUNT, region=REGION))

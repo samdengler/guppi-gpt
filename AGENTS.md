@@ -18,6 +18,7 @@ Guppi is Bob's ship AI from *We Are Legion (We Are Bob)*.
 
 - Infrastructure: AWS CDK v2 in Python, one stack `GuppiGpt`, region `us-east-1`
 - Agent: Python 3.12, FastAPI, AG-UI over SSE, Strands Agents with the `ag-ui-strands` adapter, arm64 container on AgentCore Runtime
+- Token issuer: Rust on Lambda's `provided.al2023` runtime, arm64, built by cargo-lambda (run through `uvx`) when the stack is synthesized; `cargo test --lib` in `infra/guppi_gpt_infra/lambdas/obo_issuer` runs inside pytest (guppi-hr D51)
 - Model: Claude Haiku 4.5 through the `us.` cross-region inference profile (`MODEL_ID` in the stack)
 - Edge: CloudFront in front of an AgentCore Gateway runtime target, plus an `/api/feedback` behavior in front of a small API Gateway HTTP API (Okta JWT authorizer) that puts reply votes straight onto an EventBridge bus; sign-in through Okta (`scripts/okta.py`)
 - Page: static HTML and vanilla JavaScript in `web/src/`, bundled once by esbuild into `web/dist/` with `@ag-ui/client` as the stream reader, served from S3 through CloudFront
@@ -97,7 +98,7 @@ scripts/
   approval before building it. Approved so far: the Lambda functions inside Dynatrace's
   own AWS activation stack (`GuppiGPT-Dynatrace`, 7 Sep 2026), which sits outside
   `GuppiGpt`; and the on-behalf-of token issuer `guppi-gpt-obo-issuer` (guppi-hr D47,
-  3 Oct 2026). The Cognito pre sign-up trigger went with Cognito; Okta's `chat-users`
+  3 Oct 2026; in Rust since D51, 4 Oct). The Cognito pre sign-up trigger went with Cognito; Okta's `chat-users`
   group is now who may sign in.
 - Secrets never enter files, `cdk.context.json`, or `-c` context values. Values the stack
   cannot produce (the Okta API token) are CloudFormation parameters with `no_echo`

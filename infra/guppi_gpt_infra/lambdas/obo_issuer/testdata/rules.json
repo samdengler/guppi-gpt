@@ -1,0 +1,141 @@
+{
+ "hr-bridge": {
+  "subject": {
+   "issuer": "okta",
+   "act_depths": [
+    0
+   ]
+  },
+  "grants": [
+   {
+    "audience": "api://hr-agents/profile",
+    "scopes": [
+     "hr.agents.profile"
+    ]
+   },
+   {
+    "audience": "api://hr-agents/pay",
+    "scopes": [
+     "hr.agents.pay"
+    ]
+   },
+   {
+    "audience": "api://hr-agents/travel",
+    "scopes": [
+     "hr.agents.travel"
+    ]
+   },
+   {
+    "audience": "api://hr-tools",
+    "scopes": [
+     "hr.tools.policy",
+     "hr.tools.profile.read",
+     "hr.tools.pay.statements.read"
+    ]
+   }
+  ]
+ },
+ "hr-agent-profile": {
+  "subject": {
+   "issuer": "self",
+   "audiences": [
+    "api://hr-agents/profile"
+   ],
+   "clients": [
+    "hr-bridge"
+   ],
+   "act_depths": [
+    1
+   ]
+  },
+  "grants": [
+   {
+    "audience": "api://hr-tools",
+    "scopes": [
+     "hr.tools.policy",
+     "hr.tools.profile.read",
+     "hr.tools.profile.write"
+    ]
+   }
+  ]
+ },
+ "hr-agent-pay": {
+  "subject": {
+   "issuer": "self",
+   "audiences": [
+    "api://hr-agents/pay"
+   ],
+   "clients": [
+    "hr-bridge"
+   ],
+   "act_depths": [
+    1
+   ]
+  },
+  "grants": [
+   {
+    "audience": "api://hr-tools",
+    "scopes": [
+     "hr.tools.policy",
+     "hr.tools.pay.statements.read",
+     "hr.tools.pay.read",
+     "hr.tools.pay.write"
+    ]
+   }
+  ]
+ },
+ "hr-agent-travel": {
+  "subject": {
+   "issuer": "self",
+   "audiences": [
+    "api://hr-agents/travel"
+   ],
+   "clients": [
+    "hr-bridge"
+   ],
+   "act_depths": [
+    1
+   ]
+  },
+  "grants": [
+   {
+    "audience": "api://hr-tools",
+    "scopes": [
+     "hr.tools.policy"
+    ]
+   }
+  ]
+ },
+ "hr-tools-gateway": {
+  "subject": {
+   "issuer": "self",
+   "audiences": [
+    "api://hr-tools"
+   ],
+   "clients": [
+    "hr-bridge",
+    "hr-agent-profile",
+    "hr-agent-pay",
+    "hr-agent-travel"
+   ],
+   "act_depths": [
+    1,
+    2
+   ]
+  },
+  "grants": [
+   {
+    "audience": "api://hr-tools-runtime",
+    "scopes": [
+     "hr.tools.pay.read",
+     "hr.tools.pay.statements.read",
+     "hr.tools.pay.write",
+     "hr.tools.policy",
+     "hr.tools.profile.read",
+     "hr.tools.profile.write"
+    ]
+   }
+  ],
+  "inherit_scopes": true
+ }
+}

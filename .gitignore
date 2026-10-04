@@ -14,3 +14,6 @@ node_modules/
 .DS_Store
 .deploy/
 .claude/worktrees/
+
+# The Rust issuer's build output (guppi-hr D51)
+infra/guppi_gpt_infra/lambdas/obo_issuer/target/

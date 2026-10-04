@@ -18,7 +18,9 @@ What it sets up (docs/proposals/okta.md; guppi-hr D20, D46):
   that expire after 7 days unused.
 
 It publishes /guppi/okta/issuer, /guppi/okta/client-id, /guppi/okta/audience and the
-issuer's endpoints. The API token comes from 1Password (`op://Personal/Okta API token`)
+issuer's endpoints, and writes the issuer's public signing keys to the token issuer's
+`okta-keys.json`, which the Rust binary embeds (guppi-hr D51): after Okta rotates its key,
+run this, commit the file and deploy (until then the issuer fetches the new key once). The API token comes from 1Password (`op://Personal/Okta API token`)
 and is never printed or passed as an argument.
 
     uv run scripts/okta.py            # configure and publish
@@ -29,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 import subprocess
 import sys
 import urllib.error
@@ -268,6 +271,24 @@ def ensure_access_policy(okta: Okta, app_ids: list[str], check: bool) -> None:
         okta.call("PUT", f"/api/v1/apps/{app_id}/policies/{policy['id']}", None)
 
 
+OKTA_KEYS_FILE = Path(__file__).resolve().parents[1] / "infra" / "guppi_gpt_infra" / "lambdas" / "obo_issuer" / "okta-keys.json"
+
+
+def write_okta_keys(jwks_url: str, check: bool) -> None:
+    """Okta's public keys, only the fields the issuer checks with, for the binary to embed."""
+    with urllib.request.urlopen(jwks_url, timeout=10) as response:  # noqa: S310 - Okta's https URL
+        keys = [{"kid": k["kid"], "kty": k["kty"], "n": k["n"], "e": k["e"]}
+                for k in json.load(response)["keys"] if k.get("kty") == "RSA"]
+    text = json.dumps({"keys": keys}, indent=1) + "\n"
+    current = OKTA_KEYS_FILE.read_text() if OKTA_KEYS_FILE.exists() else ""
+    if check:
+        print(f"okta-keys.json: {'current' if current == text else 'differs from Okta'}")
+        return
+    if current != text:
+        OKTA_KEYS_FILE.write_text(text)
+        print("okta-keys.json: written; commit it and deploy GuppiGpt")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true", help="report what exists, change nothing")
@@ -325,6 +346,7 @@ def main() -> None:
     }
     for name, value in values.items():
         print(f"{PARAMS}/{name}: {value}")
+    write_okta_keys(discovery["jwks_uri"], args.check)
     if args.check:
         return
     ssm = boto3.client("ssm", region_name="us-east-1")

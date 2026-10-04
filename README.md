@@ -225,7 +225,9 @@ Preference for anything on the backend: AWS native services, serverless where po
    - the eight calls in parallel: SSM, KMS and the five secrets each take 194 to 260 ms,
      and Okta's keys 680 to 705 ms, so Okta's keys set the length of this step;
    - verifying the token 0 ms, the KMS `Sign` 9 to 10 ms, even cold.
-   Done: each step of `_load` is timed in the log. Next steps:
+   Done: each step of the load is timed in the log. Built 4 Oct (guppi-hr D51): Okta's keys
+   in the binary and the issuer in Rust; the effect is in guppi-hr L25. The other options,
+   kept for reference:
    - Okta's keys as an environment value set at deploy, fetched only when a token names
      an unknown key: about 0.45 s off, the largest single cut;
    - fewer calls: the five client secrets in one secret, the issuer URL and the public
