@@ -193,6 +193,8 @@ test("the page lines list the marks reached in run order, then the page's ids", 
     ],
   );
   assert.deepEqual(pageLines({ refreshed: 210, sent: 215 }, { requestId: "q1" })[0], ["token refreshed", "210 ms"]);
+  // The Connect path's wait for its chat comes before the send.
+  assert.deepEqual(pageLines({ sent: 1500, chatReady: 1490 }, {}).map(([label]) => label), ["chat ready", "request sent"]);
 });
 
 test("the block is a collapsed details element whose summary is the one line", () => {

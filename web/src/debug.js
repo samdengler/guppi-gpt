@@ -23,6 +23,7 @@ const MAX_MS = 3_600_000;
 // The page's own marks, in the order a run reaches them, with the label each shows.
 export const PAGE_MARKS = [
   ["refreshed", "token refreshed"],
+  ["chatReady", "chat ready"],
   ["sent", "request sent"],
   ["started", "run started"],
   ["firstText", "first text"],

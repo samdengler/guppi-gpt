@@ -238,3 +238,72 @@ export function themeFor(manifest) {
   if (!light && !dark) return null;
   return { light: light || {}, dark: dark || light || {} };
 }
+
+// ---- The Connect chat transport's rules (guppi-hr D55, web/src/connect-chat.js) ----
+
+/** The lines the transport shows, by key; a project's `connectChat.lines` replaces any. */
+export const CONNECT_CHAT_LINES = Object.freeze({
+  tooLong: "That message is too long: keep it under the limit, or split it into two messages.",
+  noReply: "No answer came back. Try again in a moment.",
+  restarted: "(The assistant started a new conversation, so it may ask for details again.)",
+  signin: "The assistant could not confirm the sign-in. Try again in a minute.",
+  ended: "The conversation ended. A new message here starts a new one.",
+  escalated: "The service desk has this conversation now. A new message here starts over with the assistant.",
+  error: "The assistant ran into an error and ended this conversation. A new message here starts a new one.",
+});
+// Connect's SendMessage takes at most 1,024 characters of text/plain.
+export const CONNECT_MAX_CHARS = 1024;
+// Under the page's 30 s stall timer, which the transport's pings reset anyway.
+export const CONNECT_TURN_LIMIT_MAX_MS = 29_000;
+const CONNECT_ROUTE = /^\/api\/[a-z0-9-]+(?:\/[a-z0-9-]+)+$/;
+const MAX_LINE = 500;
+const MAX_MARK = 4;
+const MAX_PREFIX = 120;
+
+const textField = (value, max) => (typeof value === "string" && value.trim() && value.length <= max ? value : null);
+// A mark is usually one invisible character (U+2063, U+2064), which trim() keeps.
+const markField = (value) => (typeof value === "string" && value.length >= 1 && value.length <= MAX_MARK ? value : "");
+const numberField = (value, min, max, fallback) =>
+  typeof value === "number" && Number.isFinite(value) && value >= min && value <= max ? value : fallback;
+
+/** True when the manifest lists the `connect-chat` capability. */
+export function wantsConnectChat(manifest) {
+  return Boolean(manifest) && Array.isArray(manifest.capabilities) && manifest.capabilities.includes("connect-chat");
+}
+
+/**
+ * The manifest's `connectChat` block as the transport's rules, or null when the project
+ * does not use the transport or the block has no usable `start` route. `start` and
+ * `report` are same-origin /api/... paths (the bearer goes there); marks are one to four
+ * characters; prefixes and the legacy end and closed lines are optional strings; the
+ * numbers are clamped to their ranges by falling back to the defaults; each line is
+ * plain text up to 500 characters, and a missing or unusable one keeps the default.
+ */
+export function connectChatFor(manifest) {
+  if (!wantsConnectChat(manifest)) return null;
+  const raw = manifest.connectChat;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  if (typeof raw.start !== "string" || !CONNECT_ROUTE.test(raw.start)) return null;
+  const lines = { ...CONNECT_CHAT_LINES };
+  if (raw.lines && typeof raw.lines === "object" && !Array.isArray(raw.lines)) {
+    for (const key of Object.keys(CONNECT_CHAT_LINES)) {
+      const line = textField(raw.lines[key], MAX_LINE);
+      if (line) lines[key] = line;
+    }
+  }
+  return Object.freeze({
+    start: raw.start,
+    report: typeof raw.report === "string" && CONNECT_ROUTE.test(raw.report) ? raw.report : null,
+    endMark: markField(raw.endMark),
+    closedMark: markField(raw.closedMark),
+    hiddenPrefix: textField(raw.hiddenPrefix, MAX_PREFIX) || "",
+    endLine: textField(raw.endLine, MAX_PREFIX) || "",
+    closedLine: textField(raw.closedLine, MAX_PREFIX) || "",
+    escalationPrefix: textField(raw.escalationPrefix, MAX_PREFIX) || "",
+    errorPrefix: textField(raw.errorPrefix, MAX_PREFIX) || "",
+    quietAfterMs: numberField(raw.quietAfterMs, 0, 10_000, 800),
+    turnLimitMs: numberField(raw.turnLimitMs, 1_000, CONNECT_TURN_LIMIT_MAX_MS, 28_000),
+    maxChars: Number.isInteger(raw.maxChars) ? numberField(raw.maxChars, 1, CONNECT_MAX_CHARS, CONNECT_MAX_CHARS) : CONNECT_MAX_CHARS,
+    lines: Object.freeze(lines),
+  });
+}

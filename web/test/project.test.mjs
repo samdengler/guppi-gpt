@@ -17,6 +17,10 @@ import {
   warmRunInput,
   WARM_STALE_MS,
   MAX_SUGGESTIONS,
+  connectChatFor,
+  wantsConnectChat,
+  CONNECT_CHAT_LINES,
+  CONNECT_TURN_LIMIT_MAX_MS,
 } from "../src/project.js";
 
 const DEMO = { name: "demo", label: "Demo", agent: "platform" };
@@ -269,4 +273,92 @@ test("warmDue warms a thread once, and again when the employee comes back after 
 test("warmRunInput names the thread the page left, when there is one", () => {
   const input = warmRunInput({ threadId: "t2", runId: "r1", manifest: { name: "hr" }, previousThreadId: "t1" });
   assert.deepEqual(input.forwardedProps, { project: "hr", warm: true, previousThreadId: "t1" });
+});
+
+// ---- connectChatFor: the Connect chat transport's rules from the manifest ----
+
+const CONNECT = {
+  name: "hr",
+  label: "HR Assistant",
+  agent: "/api/hr/invocations",
+  capabilities: ["warm-start", "connect-chat"],
+  connectChat: {
+    start: "/api/hr/chat/start",
+    report: "/api/hr/chat/report",
+    endMark: "⁣",
+    closedMark: "⁤",
+    hiddenPrefix: "[flow]",
+    quietAfterMs: 800,
+    turnLimitMs: 28000,
+    maxChars: 1024,
+    lines: { noReply: "No answer came back from the HR assistant. Try again in a moment." },
+  },
+};
+
+test("connectChatFor reads the block of a project with the connect-chat capability", () => {
+  const rules = connectChatFor(CONNECT);
+  assert.equal(wantsConnectChat(CONNECT), true);
+  assert.equal(rules.start, "/api/hr/chat/start");
+  assert.equal(rules.report, "/api/hr/chat/report");
+  assert.equal(rules.endMark, "⁣");
+  assert.equal(rules.closedMark, "⁤");
+  assert.equal(rules.hiddenPrefix, "[flow]");
+  assert.deepEqual([rules.quietAfterMs, rules.turnLimitMs, rules.maxChars], [800, 28000, 1024]);
+  assert.equal(rules.lines.noReply, "No answer came back from the HR assistant. Try again in a moment.");
+  // A line the manifest leaves out keeps the platform's wording.
+  assert.equal(rules.lines.restarted, CONNECT_CHAT_LINES.restarted);
+  assert.ok(Object.isFrozen(rules) && Object.isFrozen(rules.lines));
+});
+
+test("connectChatFor is null without the capability, the block, or a same-origin start route", () => {
+  assert.equal(connectChatFor(null), null);
+  assert.equal(connectChatFor({ ...CONNECT, capabilities: ["warm-start"] }), null);
+  assert.equal(connectChatFor({ ...CONNECT, connectChat: undefined }), null);
+  assert.equal(connectChatFor({ ...CONNECT, connectChat: [] }), null);
+  for (const start of ["https://evil.example/api/chat/start", "//evil.example/api/x", "/api/../x", "/api/hr", "/other/chat/start", 7]) {
+    assert.equal(connectChatFor({ ...CONNECT, connectChat: { ...CONNECT.connectChat, start } }), null, String(start));
+  }
+});
+
+test("connectChatFor drops an unusable report route, marks, numbers and lines, keeping the defaults", () => {
+  const rules = connectChatFor({
+    ...CONNECT,
+    connectChat: {
+      start: "/api/hr/chat/start",
+      report: "https://evil.example/report",
+      endMark: "far too long a mark",
+      closedMark: 4,
+      hiddenPrefix: "",
+      quietAfterMs: -1,
+      turnLimitMs: 60000,
+      maxChars: 5000,
+      lines: { noReply: "", signin: 3, ended: "x".repeat(501), restarted: "(New chat.)" },
+    },
+  });
+  assert.equal(rules.report, null);
+  assert.equal(rules.endMark, "");
+  assert.equal(rules.closedMark, "");
+  assert.equal(rules.hiddenPrefix, "");
+  assert.deepEqual([rules.quietAfterMs, rules.turnLimitMs, rules.maxChars], [800, 28000, 1024]);
+  assert.equal(rules.lines.noReply, CONNECT_CHAT_LINES.noReply);
+  assert.equal(rules.lines.signin, CONNECT_CHAT_LINES.signin);
+  assert.equal(rules.lines.ended, CONNECT_CHAT_LINES.ended);
+  assert.equal(rules.lines.restarted, "(New chat.)");
+  // The turn limit stays under the page's 30 s stall timer.
+  assert.ok(CONNECT_TURN_LIMIT_MAX_MS < 30000);
+});
+
+test("the HR manifest's own block is usable", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const path = new URL("../../../guppi-hr/connect/web/manifest.json", import.meta.url);
+  let manifest;
+  try {
+    manifest = JSON.parse(await readFile(path, "utf8"));
+  } catch {
+    return; // guppi-hr is not checked out beside this repository
+  }
+  const rules = connectChatFor(checkManifest(manifest, "hr"));
+  assert.ok(rules);
+  assert.equal(rules.endMark, "⁣");
+  assert.equal(rules.report, "/api/hr/chat/report");
 });
