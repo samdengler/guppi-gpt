@@ -62,6 +62,7 @@ web/
   src/features.js         # OpenFeature static provider; initFeatures() and isEnabled()
   src/copy.js             # the hint and empty-state wording for each combination of the history and logging flags
   src/pending.js          # the dots a running reply shows until its first words (README backlog item 10)
+  src/debug.js            # the debug block under a reply: page timings, the agent's guppi.timing waterfall, behind the debug flag
   src/flags-core.js       # pure override parsing and default/override overlay, tested without a DOM
   src/flags.js            # the /flags.html settings page: rows per flag, browser-wide override controls, reset
   src/flags.html          # that page, reachable by URL only (no link from the chat page)
@@ -81,6 +82,7 @@ web/
   test/legal.test.mjs     # the privacy and terms pages: date, cross links, no inline style or script
   test/copy.test.js       # node:test coverage for copy.js's wording per flag combination
   test/pending.test.mjs   # node:test coverage of when the dots show and aria-busy
+  test/debug.test.mjs     # node:test coverage of debug.js: sanitizing, the waterfall layout, the summary, the block
   test/rum.test.mjs       # node:test coverage for rum.js's pure property-building functions
   test/session.test.mjs   # node:test coverage of session.js's pure decision and shaping functions
   dist/                   # build output plus config.json written by deploy.sh; not committed

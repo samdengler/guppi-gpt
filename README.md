@@ -266,3 +266,14 @@ Preference for anything on the backend: AWS native services, serverless where po
    of every turn, which names the service and says nothing the dots do not; a stage
    such as "Starting the conversation" needs the bridge to send its own step for it,
    and the wording belongs to the project's extension, which `/p/hr-diy/` already uses.
+11. Debug mode: see where a turn's time goes from the page itself (approved by Sam,
+   4 Oct 2026). Three steps: (1) the page's own timings under each reply, (2) the
+   agent's timings from a `guppi.timing` event drawn as a waterfall, (3) the full
+   breakdown from the logs on demand through the bridge, gated by an Okta group.
+   Done 4 Oct, steps 1 and 2: the `debug` flag (off; `?ff=debug` turns it on for a
+   browser) adds `forwardedProps.debug: true` to every run and a collapsed block under
+   each reply the page runs, with the send's timings, the trace, request and run ids,
+   and the agent's steps when it sends them (`web/src/debug.js`, tested in
+   `web/test/debug.test.mjs`; the contract is in `docs/proposals/platform.md`, "Debug
+   mode"). The agent side for `/p/hr/` is built in guppi-hr against the same contract.
+   Step 3 is later.

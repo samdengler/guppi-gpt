@@ -2,5 +2,6 @@
   "history": false,
   "feedback": false,
   "logging": true,
-  "rum": true
+  "rum": true,
+  "debug": false
 }

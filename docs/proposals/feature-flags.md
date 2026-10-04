@@ -32,6 +32,7 @@ page, not just reads state that already exists; it stays behind a flag the same 
 | `history` | The chat history panel |
 | `feedback` | The thumbs up/down control on a reply |
 | `rum` | Dynatrace RUM on the page (`docs/proposals/dynatrace.md`) |
+| `debug` | Timings under each reply, the page's and the agent's (`guppi.timing`; `docs/proposals/platform.md`, "Debug mode") |
 
 Plain JSON, no comments; this document is where the keys are explained. A new flagged
 feature adds a key here with a `false` default.

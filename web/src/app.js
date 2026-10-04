@@ -8,6 +8,7 @@ import { initRum, identifyRumUser } from "./rum.js";
 import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideOnLoad, newestRefreshToken } from "./session.js";
 import { createExtensionHost, EXTENSION_EVENT_TYPES } from "./extensions.js";
 import { createPendingIndicator, pendingShown, setPending } from "./pending.js";
+import { DEBUG_FLAG, createDebugRun, isTimingEvent, withDebugProp } from "./debug.js";
 import { inviteBody, inviteResult, signInRefusal } from "./invite-core.js";
 import { oidcEndpoints, logoutUrl } from "./oidc.js";
 import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, manifestUrl, checkManifest, mergeFeatures, brandFor, agentUrlFor, suggestionsFor, themeFor, wantsWarmStart, warmDue, warmRunInput, THEME_KEYS, PROJECTS_URL, projectNames, projectCard, switcherEntries } from "./project.js";
@@ -128,6 +129,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
   const historyEnabled = isEnabled("history");
   const feedbackEnabled = isEnabled("feedback");
   const loggingEnabled = isEnabled("logging");
+  const debugEnabled = isEnabled(DEBUG_FLAG);
   // The privacy notice states what the switches actually allow.
   emptyCopy.textContent = emptyStateText(historyEnabled, loggingEnabled);
   // A project's suggested prompts sit under the empty state copy and go with it: one
@@ -479,11 +481,12 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
 
   // One refresh at a time: the refresh token rotates on every use, so a warm start and a
   // send that both refresh would spend it twice and the second would be refused.
+  // Resolves true when it waited on a refresh, for the debug block's timings.
   let refreshing = null;
   function refreshTokenIfNeeded(minimumLeft = 5 * 60 * 1000) {
-    if (Date.now() < tokenExpiresAt - minimumLeft) return Promise.resolve();
+    if (Date.now() < tokenExpiresAt - minimumLeft) return Promise.resolve(false);
     if (!refreshing) refreshing = refreshTokens().finally(() => { refreshing = null; });
-    return refreshing;
+    return refreshing.then(() => true);
   }
 
   // A failed refresh, refused, offline, malformed or unable to store, leaves the old token in
@@ -962,7 +965,15 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
     let running = true;
     const updatePending = () => setPending(refs.reply, refs.pending, pendingShown({ running, text: draft }));
     updatePending();
-    await refreshTokenIfNeeded();
+    // With the debug flag, a block under the reply times this run from here, the send; a
+    // Retry replaces the failed run's block. Never drawn for a reply from history.
+    const debug = debugEnabled ? createDebugRun(document) : null;
+    if (debug) {
+      refs.debug?.remove();
+      refs.debug = debug.element;
+      refs.reply.appendChild(debug.element);
+    }
+    if (await refreshTokenIfNeeded()) debug?.mark("refreshed");
     const controller = new AbortController();
     let paintScheduled = false;
     let stallTimer = null;
@@ -1050,19 +1061,24 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
         traceparent,
       },
       fetch: async (url, init) => {
+        debug?.mark("sent");
         const response = await fetch(url, init);
         // The gateway's request id, when the response carries one; the page is
         // same-origin with the API, so the header is readable without CORS exposure.
         requestId = response.headers.get("x-amzn-requestid") || "";
         markReply(refs.reply, { runId, traceId, requestId });
+        debug?.setIds({ requestId });
         if (!response.ok) throw Object.assign(new Error(`HTTP ${response.status}`), { status: response.status });
         return response;
       },
     });
     markReply(refs.reply, { runId, traceId, requestId });
+    debug?.setIds({ traceId, runId });
     const subscriber = {
       onEvent: ({ event }) => {
         resetStallTimer(); // every event counts, the CUSTOM ping included
+        // The agent's timing feeds the debug block and still goes to extensions below.
+        if (debug && isTimingEvent(event)) debug.timing(event.value);
         if (EXTENSION_EVENT_TYPES.includes(event.type)) {
           const claimed = extensions.renderEvent(event, refs.attachments, renderContext(event));
           if (claimed && event.toolCallId) statusClaimed.add(event.toolCallId);
@@ -1098,22 +1114,27 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
         // A second message in one run (text around a tool call) starts a new paragraph.
         if (draft && !draft.endsWith("\n")) draft += "\n\n";
       },
+      onRunStartedEvent: () => debug?.mark("started"),
       onTextMessageContentEvent: ({ event }) => {
+        if (event.delta) debug?.mark("firstText");
         draft += event.delta || "";
         schedulePaint();
       },
       onRunFinishedEvent: () => {
         finished = true;
+        debug?.mark("finished");
       },
       onRunErrorEvent: () => {
         errored = true;
+        debug?.mark("failed");
       },
     };
 
     try {
       resetStallTimer();
       await agent.runAgent(
-        { runId, forwardedProps: runInput.forwardedProps, abortController: controller },
+        // Added after the onSend hooks, so no hook can drop it.
+        { runId, forwardedProps: withDebugProp(runInput.forwardedProps, debugEnabled), abortController: controller },
         subscriber,
       );
     } catch (error) {
@@ -1126,6 +1147,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
       input.focus();
     }
     if (errored || !finished) {
+      debug?.mark("failed");
       showError(refused);
       return;
     }
@@ -1145,6 +1167,8 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
     if (feedbackEnabled) {
       renderFeedbackControls(refs.reply, { threadId, messageId: assistantMessage.id });
     }
+    // The debug block stays the reply's last element, under the feedback control.
+    if (debug) refs.reply.appendChild(debug.element);
     status = "idle";
     render();
   }

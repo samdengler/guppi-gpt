@@ -174,6 +174,55 @@ whole warm start: 8.5 s to the first words against 3.7 s once the warm start had
 (guppi-hr D50, L24). The bridge now clears the token after the greeting and ends the
 contacts it leaves, so page load is back.
 
+## Debug mode
+
+A tab can ask the agent behind it for its timings and show them under each reply
+(approved by Sam, 4 Oct 2026; README backlog item 11). The contract between the page and
+an agent:
+
+1. The `debug` flag in `web/features.json` is off by default. `?ff=debug` turns it on for
+   the browser, the way `feedback` works, and it is read once at load like the other
+   flags. It is a flag, unlike passive observability (AGENTS.md), because it changes the
+   request and asks the agent to send more.
+2. With the flag on, every run the page sends carries `forwardedProps.debug: true`,
+   added after the extension's `onSend` hooks so none can drop it. A warm start does not.
+3. An agent may answer with an AG-UI `CUSTOM` event named `guppi.timing`, sent before
+   `RUN_FINISHED` or `RUN_ERROR`. Times are milliseconds from the agent receiving the
+   request. A step whose `end_ms` is null is a point in time. Steps with the same `lane`
+   belong together (for example `bridge`, `connect`, `exchange`). `lane` and `total_ms`
+   may be absent; `ids` maps names to strings (for example contact, trace, run); `notes`
+   is a list of strings.
+
+   ```json
+   { "steps": [{ "name": "contact ready", "start_ms": 0, "end_ms": 1905, "lane": "bridge" },
+               { "name": "first reply", "start_ms": 3311, "end_ms": null, "lane": "bridge" }],
+     "total_ms": 3324, "ids": { "contact": "...", "trace": "..." },
+     "notes": ["warm contact reused"] }
+   ```
+
+4. With the flag on, each reply the page runs gets a debug block as its last element; a
+   reply drawn from history never does, and a Retry replaces the failed run's block.
+   Collapsed, it is one line (`debug · first words 4.13 s · done 4.95 s · 12 steps`), a
+   `details` element whose `summary` opens it by click or keyboard. Open, it shows the
+   page's own times from the send, measured with `performance.now()` (token refreshed,
+   when a refresh happened; request sent; run started; first text; run finished or run
+   failed), then the trace id the page generated, the gateway's request id and the run
+   id. When `guppi.timing` arrived it adds a waterfall: one row per step in start order
+   with its lane, name, start and duration (or "point"), and a bar whose left offset and
+   width are percentages of the larger of `total_ms` and the latest end or point; then
+   the agent's ids and notes. The block is small, muted and monospace, uses the page's
+   theme variables in both schemes, and puts each bar on its own line under 30rem.
+5. With the flag off, nothing changes: no `forwardedProps.debug`, no block, and the
+   page ignores `guppi.timing`.
+
+Extensions receive `guppi.timing` like any other `CUSTOM` event, flag on or off: the
+block reads the event before the extension host sees it and never claims it. The value
+is untrusted, so `web/src/debug.js` keeps at most 60 steps, 12 ids and 12 notes, coerces
+times to numbers between 0 and an hour (a step without a usable start is dropped; an end
+before its start becomes the start; an unusable end makes a point), cuts names to 80
+characters, ids to 200 and notes to 300 on one line, and sets every value with
+`textContent`.
+
 ## Page extension API
 
 The page exposes one object, `guppi`, to an extension module's default export:
