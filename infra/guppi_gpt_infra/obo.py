@@ -35,7 +35,6 @@ from aws_cdk import aws_logs as logs
 from aws_cdk import aws_secretsmanager as secretsmanager
 from aws_cdk import aws_sns as sns
 from aws_cdk import aws_ssm as ssm
-from aws_cdk import aws_wafv2 as wafv2
 from constructs import Construct
 
 ISSUER_DIR = Path(__file__).resolve().parent / "lambdas" / "obo_issuer"
@@ -50,9 +49,6 @@ STAGE = "prod"
 TOKEN_RATE, TOKEN_BURST = 20, 40
 READ_RATE, READ_BURST = 50, 100
 RESERVED_CONCURRENCY = 10
-# Per source IP, over five minutes, at the web ACL in front of the API: far above what
-# AgentCore Identity sends for a handful of employees, far below what drains the throttle.
-WAF_LIMIT_PER_IP = 600
 
 TOOLS = "api://hr-tools"
 TOOLS_RUNTIME = "api://hr-tools-runtime"
@@ -194,8 +190,8 @@ class OboIssuer(Construct):
             actions=["ssm:GetParameter"],
             resources=[f"arn:aws:ssm:{region}:{account}:parameter{issuer_parameter_name}"]))
 
-        # A REST API rather than an HTTP API: only a REST API takes a web ACL, and the token
-        # endpoint is public by nature (critique of the build, finding 1).
+        # A REST API: per-method throttles keep key reads apart from token requests, and a web
+        # ACL can be added in front if the POC ever needs one (critique of the build, finding 1).
         access_logs = logs.LogGroup(self, "ApiAccessLogs", log_group_name=f"/aws/apigateway/{API_NAME}",
                                     retention=logs.RetentionDays.ONE_MONTH, removal_policy=RemovalPolicy.DESTROY)
         read_limits = apigateway.MethodDeploymentOptions(throttling_rate_limit=READ_RATE,
@@ -220,24 +216,9 @@ class OboIssuer(Construct):
         self.issuer_url = cdk.Fn.join("", ["https://", self.api.rest_api_id, f".execute-api.{region}.amazonaws.com/{STAGE}"])
         self.discovery_url = f"{self.issuer_url}/.well-known/openid-configuration"
 
-        web_acl = wafv2.CfnWebACL(
-            self, "IssuerWebAcl", scope="REGIONAL",
-            default_action=wafv2.CfnWebACL.DefaultActionProperty(allow=wafv2.CfnWebACL.AllowActionProperty()),
-            visibility_config=wafv2.CfnWebACL.VisibilityConfigProperty(
-                sampled_requests_enabled=True, cloud_watch_metrics_enabled=True, metric_name="GuppiOboIssuerWebAcl"),
-            rules=[wafv2.CfnWebACL.RuleProperty(
-                name="PerIpRate", priority=0,
-                statement=wafv2.CfnWebACL.StatementProperty(rate_based_statement=wafv2.CfnWebACL.RateBasedStatementProperty(
-                    limit=WAF_LIMIT_PER_IP, evaluation_window_sec=300, aggregate_key_type="IP")),
-                action=wafv2.CfnWebACL.RuleActionProperty(block=wafv2.CfnWebACL.BlockActionProperty()),
-                visibility_config=wafv2.CfnWebACL.VisibilityConfigProperty(
-                    sampled_requests_enabled=True, cloud_watch_metrics_enabled=True, metric_name="GuppiOboIssuerPerIpRate"),
-            )],
-        )
-        wafv2.CfnWebACLAssociation(
-            self, "IssuerWebAclAssociation", web_acl_arn=web_acl.attr_arn,
-            resource_arn=f"arn:aws:apigateway:{region}::/restapis/{self.api.rest_api_id}/stages/{STAGE}",
-        ).node.add_dependency(self.api.deployment_stage)
+        # No web ACL in front (Sam, 3 Oct 2026; D48): anyone can still send requests that use up
+        # the token throttle and stop HR tool calls until they stop. Accepted for the POC; a
+        # regional web ACL with a per-IP rate rule (about 6 dollars a month) would close it.
 
         issuer_parameter = ssm.StringParameter(self, "IssuerParameter", parameter_name=issuer_parameter_name,
                                                string_value=self.issuer_url,

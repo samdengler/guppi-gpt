@@ -1276,8 +1276,8 @@ def test_obo_credential_providers_reference_the_stacks_secrets(template):
         assert config["OnBehalfOfTokenExchangeConfig"]["GrantType"] == "TOKEN_EXCHANGE"
 
 
-def test_obo_issuer_is_throttled_capped_and_behind_a_per_ip_rate_rule(template):
-    # guppi-hr critique of the build, finding 1: a REST API, so a web ACL can sit in front.
+def test_obo_issuer_is_throttled_and_capped(template):
+    # guppi-hr critique of the build, finding 1: separate throttles for token and key reads.
     template.has_resource_properties("AWS::ApiGateway::Stage", {
         "StageName": "prod",
         "MethodSettings": Match.array_with([
@@ -1288,11 +1288,8 @@ def test_obo_issuer_is_throttled_capped_and_behind_a_per_ip_rate_rule(template):
     })
     template.has_resource_properties("AWS::Lambda::Function", {
         "FunctionName": "guppi-gpt-obo-issuer", "ReservedConcurrentExecutions": 10, "MemorySize": 1024})
-    (acl,) = [a for a in template.find_resources("AWS::WAFv2::WebACL").values()
-              if a["Properties"]["VisibilityConfig"]["MetricName"] == "GuppiOboIssuerWebAcl"]
-    (rule,) = acl["Properties"]["Rules"]
-    assert rule["Statement"]["RateBasedStatement"]["AggregateKeyType"] == "IP" and rule["Action"] == {"Block": {}}
-    assert len(template.find_resources("AWS::WAFv2::WebACLAssociation")) == 2
+    # No web ACL in front of the issuer: an accepted risk for the POC (guppi-hr D48).
+    assert len(template.find_resources("AWS::WAFv2::WebACLAssociation")) == 1
 
 
 def test_obo_secrets_have_stable_names_and_no_service_grant(template):
