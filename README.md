@@ -214,16 +214,27 @@ Preference for anything on the backend: AWS native services, serverless where po
    init 118 to 162 ms); that adds a second or more to the first answer of the day
    (guppi-hr L24, L25). Most of it is the first request's `_load`: importing boto3,
    three clients, then eight calls in parallel (SSM, KMS `GetPublicKey`, five Secrets
-   Manager reads, Okta's keys) before the KMS `Sign`. Steps, measuring each with the
-   Lambda's REPORT lines:
-   - time each step of `_load` in the log, to see what the second goes to;
-   - make fewer calls: the five client secrets in one secret, the issuer URL and the
-     public key as environment values set at deploy, Okta's keys fetched only when a
-     token names an unknown key;
+   Manager reads, Okta's keys) before the KMS `Sign`. Measured 4 Oct 11:26 UTC with the
+   `cold_start` log line and X-Ray (four cold instances at once; the slowest, then the
+   range of the other three):
+   - Lambda finds an execution environment: 217 ms (the X-Ray `LambdaService` segment
+     before `Init`), 289 to 302 ms counting the gap to the invocation;
+   - init (the Python runtime and `index.py`): 164 ms, 158 to 167;
+   - importing boto3: 271 ms, 256 to 271 (in sequence);
+   - creating the three clients: 523 ms, 273 to 295 (in sequence);
+   - the eight calls in parallel: SSM, KMS and the five secrets each take 194 to 260 ms,
+     and Okta's keys 680 to 705 ms, so Okta's keys set the length of this step;
+   - verifying the token 0 ms, the KMS `Sign` 9 to 10 ms, even cold.
+   Done: each step of `_load` is timed in the log. Next steps:
+   - Okta's keys as an environment value set at deploy, fetched only when a token names
+     an unknown key: about 0.45 s off, the largest single cut;
+   - fewer calls: the five client secrets in one secret, the issuer URL and the public
+     key as environment values set at deploy;
    - load at init rather than on the first request, where Lambda gives the full CPU;
    - Lambda SnapStart for Python, which restores a snapshot taken after init;
    - a Rust rewrite (cargo-lambda, the AWS SDK for Rust), which starts in tens of
-     milliseconds and imports nothing, but still makes the same network calls. Worth it
-     if the import and client setup turn out to be most of the time.
+     milliseconds and imports nothing: it would remove most of init, the import and the
+     clients (0.7 to 1.0 s together), but not the environment's placement or the network
+     calls.
    Keeping instances warm (provisioned concurrency or a schedule) was set aside (Sam,
    4 Oct): the aim is a function that starts fast.

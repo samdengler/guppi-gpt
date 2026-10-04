@@ -177,6 +177,9 @@ class OboIssuer(Construct):
             role=role, memory_size=1024, timeout=Duration.seconds(10),
             reserved_concurrent_executions=RESERVED_CONCURRENCY,
             function_name=FUNCTION_NAME,
+            # X-Ray: the console's trace timeline splits a cold start into Init and Invocation
+            # (README backlog item 9); the function's own steps are in its cold_start log line.
+            tracing=lambda_.Tracing.ACTIVE,
             log_group=logs.LogGroup(self, "IssuerLogs", log_group_name=f"/aws/lambda/{FUNCTION_NAME}",
                                     retention=logs.RetentionDays.ONE_MONTH, removal_policy=RemovalPolicy.DESTROY),
             description="On-behalf-of token issuer, RFC 8693 (guppi-hr D47)",
@@ -205,6 +208,7 @@ class OboIssuer(Construct):
             endpoint_types=[apigateway.EndpointType.REGIONAL],
             deploy_options=apigateway.StageOptions(
                 stage_name=STAGE,
+                tracing_enabled=True,
                 throttling_rate_limit=TOKEN_RATE, throttling_burst_limit=TOKEN_BURST,
                 method_options={"/jwks.json/GET": read_limits, "/.well-known/openid-configuration/GET": read_limits},
                 access_log_destination=apigateway.LogGroupLogDestination(access_logs),

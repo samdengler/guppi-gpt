@@ -329,6 +329,22 @@ def test_the_log_names_tokens_by_jti_never_the_employee(env, capsys):
     assert UID not in json.dumps(line) and "person@example.com" not in json.dumps(line)
 
 
+def test_the_token_line_times_the_load_the_verify_and_the_mint(env, capsys):
+    deps, settings = env
+    issuer._deps, issuer._settings = deps, settings
+    body = urllib.parse.urlencode({"grant_type": issuer.TOKEN_EXCHANGE, "subject_token": okta_token(),
+                                   "subject_token_type": issuer.ACCESS_TOKEN_TYPE, "scope": "hr.agents.pay"})
+    basic = base64.b64encode(f"hr-bridge:{SECRETS['hr-bridge']}".encode()).decode()
+    try:
+        response = issuer.handler({"httpMethod": "POST", "path": "/token", "body": body,
+                                   "headers": {"Authorization": f"Basic {basic}"}}, None)
+    finally:
+        issuer._deps = issuer._settings = None
+    line = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert response["statusCode"] == 200 and line["status"] == 200
+    assert set(line["ms"]) == {"load", "verify", "mint"} and line["cold"] is False
+
+
 
 def test_refusals_say_what_was_claimed_and_presented_never_who(env, capsys):
     exchange(env, "hr-bridge", okta_token(), "hr.agents.pay", secret="wrong")

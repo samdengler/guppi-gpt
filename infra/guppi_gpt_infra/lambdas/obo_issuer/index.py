@@ -18,6 +18,11 @@ Tokens are verified with the standard library alone (RS256 by modular exponentia
 constant-time comparison of the PKCS#1 v1.5 encoding), so the function has no
 dependencies to bundle. KMS signs; the private key never leaves it. Client secrets come
 from Secrets Manager at cold start. Nothing logged names a person or holds a token.
+
+Timings (guppi-gpt README backlog item 9): a cold start logs one `cold_start` line with each
+step's start and end in milliseconds from the start of the load, so the log shows what runs
+in sequence and what in parallel; every /token line carries `ms` (load, verify, mint) and
+`cold`. X-Ray traces the function and the API stage for the console's timeline.
 """
 
 from __future__ import annotations
@@ -150,15 +155,32 @@ class Settings:
 
 _deps: Deps | None = None
 _settings: Settings | None = None
+_timing: dict[str, Any] = {}  # this request's timings, for its log line
+
+
+def _ms(seconds: float) -> int:
+    return round(seconds * 1000)
 
 
 def _load() -> tuple[Deps, Settings]:
     """Cold start: the issuer URL, the public key and the client secrets, in parallel."""
     global _deps, _settings
     if _deps is None:
-        import boto3  # only in Lambda; the tests set _deps and never reach this
+        t0 = time.perf_counter()
+        steps: dict[str, list[int]] = {}
 
-        kms, ssm, secrets = boto3.client("kms"), boto3.client("ssm"), boto3.client("secretsmanager")
+        def timed(name: str, fn: Callable[[], Any]) -> Callable[[], Any]:
+            def run() -> Any:
+                start = time.perf_counter()
+                try:
+                    return fn()
+                finally:
+                    steps[name] = [_ms(start - t0), _ms(time.perf_counter() - t0)]
+            return run
+
+        boto3 = timed("import_boto3", lambda: __import__("boto3"))()  # only in Lambda; the tests set _deps
+        kms, ssm, secrets = timed("clients", lambda: (boto3.client("kms"), boto3.client("ssm"),
+                                                       boto3.client("secretsmanager")))()
         key_id = os.environ["KEY_ID"]
         arns: dict[str, str] = json.loads(os.environ["CLIENT_SECRET_ARNS"])
 
@@ -166,11 +188,15 @@ def _load() -> tuple[Deps, Settings]:
             return json.loads(secrets.get_secret_value(SecretId=arn)["SecretString"])["client_secret"]
 
         with ThreadPoolExecutor(max_workers=8) as pool:
-            issuer_f = pool.submit(lambda: ssm.get_parameter(Name=os.environ["ISSUER_PARAMETER"])["Parameter"]["Value"])
-            key_f = pool.submit(lambda: kms.get_public_key(KeyId=key_id)["PublicKey"])
-            secret_fs = {client: pool.submit(secret, arn) for client, arn in arns.items()}
+            issuer_f = pool.submit(timed("ssm_issuer", lambda: ssm.get_parameter(
+                Name=os.environ["ISSUER_PARAMETER"])["Parameter"]["Value"]))
+            key_f = pool.submit(timed("kms_public_key", lambda: kms.get_public_key(KeyId=key_id)["PublicKey"]))
+            secret_fs = {client: pool.submit(timed(f"secret_{client}", lambda arn=arn: secret(arn)))
+                         for client, arn in arns.items()}
             settings = Settings.from_env()
-            okta_f = pool.submit(fetch_json, f"{settings.okta_issuer}/v1/keys")
+            okta_f = pool.submit(timed("okta_keys", lambda: fetch_json(f"{settings.okta_issuer}/v1/keys")))
+        steps["parallel_calls"] = [min(s[0] for k, s in steps.items() if k not in ("import_boto3", "clients")),
+                                   _ms(time.perf_counter() - t0)]
         n, e = rsa_public_numbers(key_f.result())
         kid = hashlib.sha256(key_id.encode()).hexdigest()[:16]
         _deps = Deps(
@@ -188,6 +214,7 @@ def _load() -> tuple[Deps, Settings]:
         except Exception:  # noqa: BLE001 - fetched again on first use
             pass
         _settings = settings
+        log(event="cold_start", load_ms=_ms(time.perf_counter() - t0), steps=steps)
     return _deps, _settings  # type: ignore[return-value]
 
 
@@ -372,13 +399,17 @@ def token(event: dict, deps: Deps, settings: Settings) -> dict:
         rule = settings.rules.get(client_id)
         if not rule:
             raise Refused(400, "unauthorized_client", "client has no rule")
+        started = time.perf_counter()
         claims, source = verify(form.get("subject_token", ""), deps, settings)
+        verified = time.perf_counter()
         subject_allowed(rule, claims, source)
         audience, scopes = grant_for(rule, form.get("scope", "").split(), claims)
         access_token, expires_in, jti = mint(deps, client_id, claims, source, audience, scopes)
+        # mint is the KMS Sign call, all but a fraction of a millisecond.
+        _timing.setdefault("ms", {}).update(verify=_ms(verified - started), mint=_ms(time.perf_counter() - verified))
     except Refused as refused:
         log(route="/token", client=client_id, claimed_client=refused.claimed or None, status=refused.status,
-            error=refused.error, reason=refused.reason, **subject_fields(claims))
+            error=refused.error, reason=refused.reason, **subject_fields(claims), **_timing)
         return respond(refused.status, {"error": refused.error})
     except Exception as error:  # noqa: BLE001 - never a 500 with a reason in it
         log(route="/token", client=client_id, status=400, error="invalid_request", reason=type(error).__name__)
@@ -386,7 +417,7 @@ def token(event: dict, deps: Deps, settings: Settings) -> dict:
     # The new token's jti and the subject's, never who it names: an incident can follow a
     # chain of exchanges back to the Okta token, whose own jti Okta's system log has.
     log(route="/token", client=client_id, status=200, audience=audience, scope=" ".join(scopes),
-        depth=act_depth(claims) + 1, jti=jti, subject_jti=str(claims.get("jti", "")))
+        depth=act_depth(claims) + 1, jti=jti, subject_jti=str(claims.get("jti", "")), **_timing)
     return respond(200, {"access_token": access_token, "issued_token_type": ACCESS_TOKEN_TYPE,
                          "token_type": "Bearer", "expires_in": expires_in, "scope": " ".join(scopes)})
 
@@ -410,7 +441,10 @@ def discovery(deps: Deps, settings: Settings) -> dict:
 
 
 def handler(event: dict, _context: Any) -> dict:
+    cold, started = _deps is None, time.perf_counter()
     deps, settings = _load()
+    _timing.clear()
+    _timing.update(cold=cold, ms={"load": _ms(time.perf_counter() - started)})
     # REST API events (httpMethod, path) since D48; HTTP API events too.
     method = event.get("httpMethod") or event.get("requestContext", {}).get("http", {}).get("method", "")
     path = event.get("path") or event.get("rawPath", "")
