@@ -174,6 +174,121 @@ whole warm start: 8.5 s to the first words against 3.7 s once the warm start had
 (guppi-hr D50, L24). The bridge now clears the token after the greeting and ends the
 contacts it leaves, so page load is back.
 
+## Connect chat transport
+
+A project whose agent is an Amazon Connect chat can let the page talk to Connect itself
+instead of through an agent on AgentCore Runtime (guppi-hr D55, decision 22 in
+`docs/guppigpt-decision-log.html`). The manifest lists `connect-chat` in `capabilities`
+and carries a `connectChat` block; `web/src/project.js` (`connectChatFor`) checks it and
+the page uses the transport when the block has a same-origin `start` route and the
+`connect-bridge` flag is off, which is the default.
+
+```json
+"connectChat": {
+  "start": "/api/hr/chat/start",
+  "report": "/api/hr/chat/report",
+  "endMark": "\u2063",
+  "closedMark": "\u2064",
+  "hiddenPrefix": "[flow]",
+  "endLine": "[flow] end",
+  "closedLine": "[flow] closed",
+  "escalationPrefix": "[flow] Escalation",
+  "errorPrefix": "[flow] The Agentic CX block returned an error",
+  "quietAfterMs": 800,
+  "turnLimitMs": 28000,
+  "maxChars": 1024,
+  "lines": { "tooLong": "...", "noReply": "...", "restarted": "...", "signin": "...",
+             "ended": "...", "escalated": "...", "error": "..." }
+}
+```
+
+The turn rules are the project's data, so the page holds no project's conventions: the
+marks, the hidden prefix, the legacy end and closed lines, the escalation and error
+prefixes, the limits, and the lines it shows. `start` and `report` must be `/api/...`
+paths on the page's origin, since the page sends its bearer there. A mark is one to four
+characters, a line plain text up to 500 characters; an unusable field keeps the platform's
+default, and an unusable `start` turns the transport off.
+
+The pieces, all in `web/src/`:
+
+- `connect-chat.js`: `classify` and `createTurnAssembler`, pure functions over raw Connect
+  items; `createConnectChat`, one amazon-connect-chatjs 5.2.0 customer session
+  (`disableCSM: true`, no logger, receipts off with `shouldSendMessageReceipts: false`, no
+  typing or receipt events, so no `SendEvent`); and `createConnectChatClient`, the page's
+  chats by thread.
+- `connect-agent.js`: `ConnectChatAgent`, an `@ag-ui/client` `AbstractAgent` that keeps the
+  caller's `abortController` as `HttpAgent` does and sends the bridge's event order:
+  `RUN_STARTED`, `STEP_STARTED "Amazon Connect"`, the reply as text messages,
+  `connect/<kind>` CUSTOM events for a closing event, `STEP_FINISHED`, `guppi.timing` on a
+  debug run, `RUN_FINISHED`; a `ping` CUSTOM event every 15 s while it waits.
+- `vendor/chatjs.js`: chatjs as its own ES module (`dist/vendor/chatjs.js`, about 300 KB
+  minified), imported only by a page that uses the transport.
+
+### Chat start
+
+The warm start (D50 rules, `warmDue`) posts `{}` or `{ "previousContactId": "..." }` to
+`start` with the bearer instead of the bridge's warm run. The project's route answers
+`application/x-ndjson`: the first line holds `data.startChatResult` (`ContactId`,
+`ParticipantId`, `ParticipantToken`), `region`, `startedAt`, `expiresAt` and `restarted`,
+or `{"error":"signin"}` or `{"error":"unavailable"}`; a second line later says how many
+sub-agent warm-ups succeeded. The page reads the first line as soon as it arrives, calls
+`setGlobalConfig` with the region, creates the session and connects. A question sent
+before then waits for that one start. The participant token stays inside the chat
+session's closure: it never reaches the extension host, history, the debug block or RUM.
+
+A new chat names the left chat's contact as `previousContactId`, so the route ends it. A
+refused send gets one fresh connection on the same participant, then a new chat. A chat
+that ended (`chat.ended`, `participant.left`, the closed mark, an escalation, the
+designer's error line) or has fewer than five minutes before `expiresAt` (checked after the
+page refreshes its token) is replaced at the next question, which opens with the restart
+line. A thread reopened from history starts a new chat and shows the restart line: there is
+no server store, so the designer does not have the earlier turns. Sign-out awaits
+`disconnectParticipant`, capped at 2 s, before the redirect.
+
+### A turn
+
+The assembler buffers items until `sendMessage` resolves with the message's `Id` and
+`AbsoluteTime`, drops the message itself and every item older than it, takes each `Id`
+once, and ends the turn on the end mark or end line, on a closing event, after
+`quietAfterMs` of quiet that follows a reply without a mark, or at `turnLimitMs` with the
+no-reply line when nothing came. Hidden lines are not shown; marks are stripped. Items that
+arrive between turns are dropped, except `chat.ended`, which marks the chat ended. A
+message over `maxChars` is answered with the too-long line and not sent. After every
+`onConnectionEstablished` (it can fire twice, chatjs issues 124 and 298) and whenever the
+tab comes back into view, the session reads the transcript (`getTranscript`, newest 100)
+and feeds it through the same `Id` check, so a catch-up never shows anything twice.
+
+After each turn the page posts the report to `report` with `fetch(..., { keepalive: true
+})`, off the answer's path: `contactId`, `runId`, `threadId`, Connect's `AbsoluteTime` for
+the message and the first and last reply items, `endReason` (`end_mark`, `closed`,
+`ended`, `quiet`, `no_reply`, `error`, `aborted`), an `error` code (`designer_error`,
+`socket_failed`, `send_refused`, `connect_failed`, `start_unavailable`), `transport` and
+the timing value. Never reply text, never a token.
+
+The debug block keeps working: the agent sends its own `guppi.timing` (the D54 shape) with
+the page-clock steps (the wait for the chat start, `SendMessage`, the first reply item, the
+end), the ids (`contact`, `run`, `transport`), and notes that include Connect's own
+interval from the message to the first and last reply, from `AbsoluteTime`. The page's
+lines gain "chat ready".
+
+### Fallback and rollback
+
+If the start answers `unavailable`, the chat cannot connect, or the socket breaks and one
+reconnect fails, that thread goes on through the bridge: `HttpAgent` to the manifest's
+`agent` path, as before. Its reports carry `transport: "bridge"` and the reason as the
+error code. A socket that fails during a turn ends that turn with `RUN_ERROR` (the page's
+Retry), and the Retry goes through the bridge. `?ff=connect-bridge` puts the whole page
+back on the bridge path: the bridge's warm start and `HttpAgent`, exactly as before; a page
+already open keeps its transport until it reloads.
+
+The page's CSP `connect-src` names `https://participant.connect.us-east-1.amazonaws.com`
+and `wss://*.transport.connect.us-east-1.amazonaws.com` for every project page. The
+CloudFront behavior `/api/hr/chat/*`, listed before `/api/*`, sends the HR routes to
+guppi-hr's chat-start function URL, whose host this stack reads from the SSM parameter
+`/guppi/hr/chat-start-host` at deploy time: HTTPS only, no caching, no compression, and
+the managed all-viewer policy without Host, which forwards `Authorization`,
+`Content-Type` and the body.
+
 ## Debug mode
 
 A tab can ask the agent behind it for its timings and show them under each reply

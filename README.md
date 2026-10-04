@@ -277,3 +277,15 @@ Preference for anything on the backend: AWS native services, serverless where po
    `web/test/debug.test.mjs`; the contract is in `docs/proposals/platform.md`, "Debug
    mode"). The agent side for `/p/hr/` is built in guppi-hr against the same contract.
    Step 3 is later.
+12. The Connect chat transport: a project page that talks to Amazon Connect itself
+   (guppi-hr D55, approved by Sam 4 Oct 2026). Done 4 Oct: `/p/hr/` sends each question
+   straight to Connect's participant service and reads the reply on its own WebSocket with
+   amazon-connect-chatjs 5.2.0, after guppi-hr's chat-start route starts the chat; the
+   bridge on AgentCore Runtime stays as the fallback for a thread whose start or socket
+   fails, and as the rollback behind `?ff=connect-bridge`. The turn rules come from the
+   project's manifest (`connectChat`), the agent speaks the bridge's AG-UI events, sends
+   its own `guppi.timing`, and reports each turn without text or tokens
+   (`web/src/connect-chat.js`, `web/src/connect-agent.js`, tested in
+   `web/test/connect-chat.test.mjs` and `web/test/connect-agent.test.mjs`;
+   `docs/proposals/platform.md`, "Connect chat transport"). The CSP gains Connect's two
+   hosts for every page (decision 22).

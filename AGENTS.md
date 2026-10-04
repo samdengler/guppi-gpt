@@ -46,7 +46,7 @@ agent/
   Dockerfile                     # arm64, uvicorn on 8080; built from the repo root so uv.lock is in context
   tests/
 web/
-  package.json            # esbuild, @ag-ui/client, @openfeature/web-sdk, idb; `npm run build` writes dist/, `npm test` runs node --test
+  package.json            # esbuild, @ag-ui/client, rxjs, amazon-connect-chatjs, @openfeature/web-sdk, idb; `npm run build` writes dist/, `npm test` runs node --test
   src/index.html          # the page; no inline script or style (CSP is default-src 'self')
   src/app.js              # PKCE sign-in by hand, HttpAgent subscriber, plain text rendering, project boot
   src/project.js          # project from the /p/<name>/ path, manifest check, feature merge, brand strings, sign-in return path
@@ -63,6 +63,9 @@ web/
   src/copy.js             # the hint and empty-state wording for each combination of the history and logging flags
   src/pending.js          # the dots a running reply shows until its first words (README backlog item 10)
   src/debug.js            # the debug block under a reply: page timings, the agent's guppi.timing waterfall, behind the debug flag
+  src/connect-chat.js     # the Connect chat transport: turn assembler over raw Connect items, the chatjs session, the page's chats by thread
+  src/connect-agent.js    # ConnectChatAgent: one question as one Connect chat turn, in the bridge's AG-UI event order
+  src/vendor/chatjs.js    # amazon-connect-chatjs as its own ES module bundle, loaded only by a page that uses the transport
   src/flags-core.js       # pure override parsing and default/override overlay, tested without a DOM
   src/flags.js            # the /flags.html settings page: rows per flag, browser-wide override controls, reset
   src/flags.html          # that page, reachable by URL only (no link from the chat page)
@@ -83,6 +86,8 @@ web/
   test/copy.test.js       # node:test coverage for copy.js's wording per flag combination
   test/pending.test.mjs   # node:test coverage of when the dots show and aria-busy
   test/debug.test.mjs     # node:test coverage of debug.js: sanitizing, the waterfall layout, the summary, the block
+  test/connect-chat.test.mjs   # the assembler (the bridge's relay and classify cases), the chatjs session with a fake library, the page's chats
+  test/connect-agent.test.mjs  # ConnectChatAgent through runAgent: event order, pings, abort, recovery, reports
   test/rum.test.mjs       # node:test coverage for rum.js's pure property-building functions
   test/session.test.mjs   # node:test coverage of session.js's pure decision and shaping functions
   dist/                   # build output plus config.json written by deploy.sh; not committed
@@ -221,6 +226,21 @@ bucket with its own response headers policy (`default-src 'none'; script-src 'se
 same-origin path is the proof of concept arrangement; a separate origin for the sandbox
 is the production one. The page never writes HTML itself; the app's document is the only
 HTML written anywhere, inside the sandbox.
+
+A project whose agent is an Amazon Connect chat can have the page talk to Connect itself
+(guppi-hr D55; `docs/proposals/platform.md`, "Connect chat transport"). Its manifest lists
+`connect-chat` and a `connectChat` block with the project's start and report routes, turn
+marks, limits and lines; `connectChatFor` in `web/src/project.js` checks it. The page's
+warm start posts to the start route, reads the first NDJSON line (the participant
+credentials, kept in memory inside the chatjs session only), and sends each question with
+amazon-connect-chatjs 5.2.0 (`disableCSM`, no logger, receipts off, never `sendEvent`)
+through `ConnectChatAgent`; after each turn it posts a report with ids, Connect times and
+the end reason, never text or tokens. A thread whose start or socket fails goes on through
+the bridge (`HttpAgent`); the `connect-bridge` flag puts the whole page back on the bridge
+path. The CSP's `connect-src` names Connect's participant host and chat socket hosts for
+every page, and the `/api/hr/chat/*` behavior, listed before `/api/*`, sends the HR routes
+to the chat-start function URL whose host the stack reads from the SSM parameter
+`/guppi/hr/chat-start-host` at deploy time; a deploy fails until guppi-hr publishes it.
 
 `scripts/test-token.sh` prints a fresh access token for a test session on stdout and
 nothing else, for checks that need a signed-in bearer without a browser (a curl against
