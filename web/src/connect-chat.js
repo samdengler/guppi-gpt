@@ -667,7 +667,7 @@ export function createConnectChatClient({
     } else if (current.chat.failed) {
       // The socket broke and one reconnect failed: the thread goes on through the bridge.
       entry.transport = "bridge";
-      entry.fallback = "ws_failed";
+      entry.fallback = "socket_failed";
       return bridge();
     } else if (current.chat.closed) {
       current = await start(threadId, { restartLine: true });
@@ -707,7 +707,7 @@ export function createConnectChatClient({
     contactOf(threadId) {
       return threads.get(threadId)?.lastContactId ?? null;
     },
-    useBridge(threadId, reason = "ws_failed") {
+    useBridge(threadId, reason = "socket_failed") {
       const entry = entryFor(threadId);
       entry.transport = "bridge";
       entry.fallback = reason;

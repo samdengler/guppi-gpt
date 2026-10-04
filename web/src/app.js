@@ -1248,7 +1248,7 @@ const CHATJS_MODULE = "/vendor/chatjs.js";
     }
     // A socket that broke for good during the turn: the thread's next question, a Retry
     // included, goes through the bridge.
-    if (connectReady && connectReady.chat && connectReady.chat.failed) connectChats.useBridge(turnThread, "ws_failed");
+    if (connectReady && connectReady.chat && connectReady.chat.failed) connectChats.useBridge(turnThread, "socket_failed");
     if (bridgeReport && bridgeReport.contactId) {
       sendReport({
         ...bridgeReport,

@@ -267,7 +267,7 @@ turn with no answer, `error` as the designer's error line (with `designer_error`
 error code that names the socket as a failed socket, so a turn the transport gave up on
 reports `aborted` with its code (`socket_failed`, `send_failed`, `send_refused`), a stall
 or Retry reports `aborted` alone, and a bridge turn reports `end_mark` or `aborted` with
-why its thread left Connect (`start_unavailable`, `connect_failed`, `ws_failed`).
+why its thread left Connect (`start_unavailable`, `connect_failed`, `socket_failed`).
 
 The debug block keeps working: the agent sends its own `guppi.timing` (the D54 shape) with
 the page-clock steps (the wait for the chat start, `SendMessage`, the first reply item, the

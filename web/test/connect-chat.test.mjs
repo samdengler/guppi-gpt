@@ -584,7 +584,7 @@ test("a chat whose socket failed for good sends the thread to the bridge", async
   await tick();
   await tick();
   const ready = await chats.ready("t1");
-  assert.deepEqual([ready.reason, ready.fallback, ready.contactId], ["bridge", "ws_failed", "c-1"]);
+  assert.deepEqual([ready.reason, ready.fallback, ready.contactId], ["bridge", "socket_failed", "c-1"]);
 });
 
 test("an ended chat is replaced with previousContactId and the restart line", async () => {
