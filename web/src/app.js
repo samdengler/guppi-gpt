@@ -485,34 +485,33 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
     return refreshing;
   }
 
+  // A failed refresh, refused, offline, malformed or unable to store, leaves the old token in
+  // place; the send after it fails on its own and lands in the error state with Retry.
+  // Nothing escapes from here, since the warm start does not handle a rejection.
   async function refreshTokens() {
-    // Cognito rotates the refresh token on every use, and another tab of the same browser
-    // may have used it since this tab last did (each tab keeps its own copy in memory). The
-    // stored record always holds the newest one, so it wins over this tab's copy; a stale
-    // copy would be refused with invalid_grant and the send after it would fail.
-    tokens.refresh_token = newestRefreshToken(tokens.refresh_token, await loadSession());
-    if (!tokens.refresh_token) return;
-    const body = new URLSearchParams({
-      grant_type: "refresh_token",
-      client_id: signin.clientId,
-      refresh_token: tokens.refresh_token,
-    });
-    // A failed refresh, refused or offline, leaves the old token in place; the send below
-    // fails on its own and lands in the error state with Retry. Nothing escapes from here,
-    // since the warm start does not handle a rejection.
-    let response;
     try {
-      response = await fetch(signin.token, {
+      // The refresh token rotates on every use, and another tab of the same browser may have
+      // used it since this tab last did (each tab keeps its own copy in memory). The stored
+      // record always holds the newest one, so it wins over this tab's copy; a stale copy
+      // would be refused with invalid_grant and the send after it would fail.
+      tokens.refresh_token = newestRefreshToken(tokens.refresh_token, await loadSession());
+      if (!tokens.refresh_token) return;
+      const body = new URLSearchParams({
+        grant_type: "refresh_token",
+        client_id: signin.clientId,
+        refresh_token: tokens.refresh_token,
+      });
+      const response = await fetch(signin.token, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },
         body,
       });
-    } catch {
-      return;
+      if (!response.ok) return;
+      applyTokens(await response.json());
+      await persistSession();
+    } catch (error) {
+      console.warn("guppigpt: token refresh failed", error);
     }
-    if (!response.ok) return;
-    applyTokens(await response.json());
-    await persistSession();
   }
 
   // Attempts a silent refresh against a stored session on startup. Never throws: a network
