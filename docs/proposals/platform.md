@@ -198,6 +198,17 @@ IndexedDB keep only text, as today. Renderers never put model or user text throu
 `innerHTML`; an MCP App's HTML goes into a sandboxed iframe, which is the point of the
 sandbox.
 
+A running reply also shows three pulsing dots (`reply-pending`, `web/src/pending.js`)
+between its status line and `reply-text`, for every project and with no extension
+involved. They show from the send while the reply has no text: until the first words are
+painted, again while a tool call has cleared the text, and never after the run finishes,
+fails or stalls. The reply carries `aria-busy="true"` while they show, a visually hidden
+"Working" labels them, and under `prefers-reduced-motion` they hold still. A warm start
+is not a turn and shows nothing; a reply drawn from history never shows them. The page
+draws no status line from `STEP_STARTED` itself: a step name is the agent's own word
+(the Connect bridge sends "Amazon Connect" at the start of every turn), so turning it
+into a sentence stays with the project's extension, as guppi-hr's `/p/hr-diy/` does.
+
 `ext.js` is imported with a dynamic `import()` from the same origin, so the CSP stays
 `script-src 'self'`. The project builds it with esbuild as an ES module; this bundle stays
 an IIFE.

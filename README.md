@@ -253,3 +253,16 @@ Preference for anything on the backend: AWS native services, serverless where po
    "Starting the conversation" while it waits for the warm start would say why a first
    question takes longer). CSS and page code only; the page still renders replies as
    plain text.
+   Done 4 Oct: three dots pulse under the reply's label for every project
+   while the run is active and the reply has no text (`web/src/pending.js`, tested in
+   `web/test/pending.test.mjs`). They show from the send, the token refresh included,
+   hide when the first words are painted, show again while a tool call has cleared the
+   text, and hide when the run finishes, fails or stalls, so the error line and Retry
+   never sit under them; a Retry shows them again for its new run, and a new chat or
+   switched thread removes the reply with them. The reply is `aria-busy` while they
+   show, a visually hidden "Working" labels them, and with reduced motion they hold
+   still. A warm start is a separate fetch and shows nothing. The `STEP_STARTED` status
+   line was left out: the Connect bridge sends one step, "Amazon Connect", at the start
+   of every turn, which names the service and says nothing the dots do not; a stage
+   such as "Starting the conversation" needs the bridge to send its own step for it,
+   and the wording belongs to the project's extension, which `/p/hr-diy/` already uses.

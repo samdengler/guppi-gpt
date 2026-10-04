@@ -7,6 +7,7 @@ import { hintText, emptyStateText, toolStatus } from "./copy.js";
 import { initRum, identifyRumUser } from "./rum.js";
 import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideOnLoad, newestRefreshToken } from "./session.js";
 import { createExtensionHost, EXTENSION_EVENT_TYPES } from "./extensions.js";
+import { createPendingIndicator, pendingShown, setPending } from "./pending.js";
 import { inviteBody, inviteResult, signInRefusal } from "./invite-core.js";
 import { oidcEndpoints, logoutUrl } from "./oidc.js";
 import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, manifestUrl, checkManifest, mergeFeatures, brandFor, agentUrlFor, suggestionsFor, themeFor, wantsWarmStart, warmDue, warmRunInput, THEME_KEYS, PROJECTS_URL, projectNames, projectCard, switcherEntries } from "./project.js";
@@ -703,6 +704,10 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
     statusLine.hidden = true;
     reply.appendChild(statusLine);
 
+    // Shown only by runTurn, never for a reply drawn from history.
+    const pending = createPendingIndicator(document);
+    reply.appendChild(pending);
+
     const text = document.createElement("div");
     text.className = "reply-text";
     reply.appendChild(text);
@@ -731,7 +736,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
       retry();
     });
 
-    return { reply, label, statusLine, text, attachments, errorLine, errorText, retryLink };
+    return { reply, label, statusLine, pending, text, attachments, errorLine, errorText, retryLink };
   }
 
   function markReply(reply, ids) {
@@ -950,9 +955,15 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
   async function runTurn(messageList, refs) {
     status = "running";
     render();
+    let draft = "";
+    // The dots show while this run is active and its reply has no text: from the send
+    // (the token refresh included) to the first painted words, again while a tool call
+    // has cleared the text, and never after the run ends, whatever ended it.
+    let running = true;
+    const updatePending = () => setPending(refs.reply, refs.pending, pendingShown({ running, text: draft }));
+    updatePending();
     await refreshTokenIfNeeded();
     const controller = new AbortController();
-    let draft = "";
     let paintScheduled = false;
     let stallTimer = null;
     let finished = false;
@@ -972,6 +983,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
       requestAnimationFrame(() => {
         paintScheduled = false;
         refs.text.textContent = draft;
+        updatePending();
         scrollIfFollowing();
       });
     };
@@ -1109,6 +1121,8 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
       refused = error && error.status === 403;
     } finally {
       if (stallTimer) clearTimeout(stallTimer);
+      running = false;
+      updatePending();
       input.focus();
     }
     if (errored || !finished) {
