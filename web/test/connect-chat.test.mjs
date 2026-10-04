@@ -616,13 +616,14 @@ test("a chat with under five minutes left is replaced after the page refreshes i
   assert.equal(replaced.chat.takeRestartLine(), true);
 });
 
-test("the thread the page leaves is named on the next start", async () => {
-  const server = startServer([{ lines: [line("c-1")] }, { lines: [line("c-2")] }]);
+test("the thread the page leaves is named on the next start, which shows no restart line", async () => {
+  const server = startServer([{ lines: [line("c-1")] }, { lines: [line("c-2", { restarted: true })] }]);
   const chats = client(server);
   await chats.start("t1");
   chats.leave("t1");
-  await chats.start("t2");
+  const next = await chats.start("t2");
   assert.deepEqual(server.requests[1].body, { previousContactId: "c-1" });
+  assert.equal(next.chat.takeRestartLine(), false);
 });
 
 test("a reopened thread starts a new chat that opens with the restart line", async () => {

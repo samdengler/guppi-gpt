@@ -588,7 +588,9 @@ export function createConnectChatClient({
       details: result.details,
       region: result.region,
       expiresAt: result.expiresAt,
-      restartLine: restartLine || result.restarted,
+      // The route's `restarted` says it ended the previous contact, which a new thread
+      // asks for too; the restart line is for a thread whose chat was replaced.
+      restartLine,
     });
     warmed((line) => {
       if (Number.isFinite(line.warmed)) chat.setWarmed(line.warmed);
