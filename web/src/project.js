@@ -135,6 +135,23 @@ export function wantsWarmStart(manifest) {
 }
 
 /**
+ * A warm start goes out again for a thread still empty after this long: the agent may hold
+ * something for an hour (guppi-hr's Connect contact, whose chat and hop tokens last 60
+ * minutes), so a tab left open is warmed again when the employee comes back to it.
+ */
+export const WARM_STALE_MS = 50 * 60 * 1000;
+
+/**
+ * Whether the page sends a warm start now (guppi-hr D50): the project wants one, the
+ * employee is signed in with the page in view, and the thread is empty and has not been
+ * warmed, or was warmed WARM_STALE_MS ago or more.
+ */
+export function warmDue({ wanted, signedIn, visible, empty, warmed, warmedAt, now }) {
+  if (!wanted || !signedIn || !visible || !empty) return false;
+  return !warmed || now - warmedAt >= WARM_STALE_MS;
+}
+
+/**
  * The AG-UI run input of a warm start: no messages and `forwardedProps.warm`, which the
  * agent kit answers without a model call (docs/proposals/platform.md, "Warm start").
  */

@@ -191,8 +191,9 @@ Preference for anything on the backend: AWS native services, serverless where po
    that file.
 3. Correlation ids and traceability. Done: `docs/proposals/traceability.md`.
 4. Up/down feedback on each reply. Built and verified 5 Sep 2026; the `feedback` flag went off again on 8 Sep 2026 at Sam's request, so the thumbs are hidden unless a tab turns them on with `?ff=feedback`. The pipeline behind them stays deployed: the page
-   posts the vote to `/api/feedback`, a REST API with a Cognito authorizer integrates
-   directly with EventBridge, and an API destination turns it into a Dynatrace business
+   posts the vote to `/api/feedback`, an HTTP API with a JWT authorizer on the Okta issuer
+   (since 4 Oct 2026; a REST API with a Cognito authorizer before) integrates directly with
+   EventBridge, and an API destination turns it into a Dynatrace business
    event (`fetch bizevents | filter event.type == "guppigpt.reply-feedback"`). RUM custom
    actions were tried first and the tenant's new RUM does not ingest them:
    `docs/proposals/feedback.md`.
@@ -203,8 +204,26 @@ Preference for anything on the backend: AWS native services, serverless where po
    `docs/proposals/conversation-logging.md`.
 7. Operational alarms, vended log delivery, and the per-user rate limit: done, thresholds
    in `docs/proposals/operations.md`.
-8. Low priority: an allow-list for sign-in. Any Google account is admitted today. The
-   only place Cognito can refuse a federated first sign-in is a pre sign-up trigger, so
-   this is one small Lambda function reading an email list from an SSM parameter, plus a
-   callback error branch on the page. Shape and caveats in design section 16; needs
-   approval under the Lambda rule before building.
+8. An allow-list for sign-in. Done: invite only, built 3 Oct 2026 with a Cognito pre
+   sign-up Lambda, and on Okta since 4 Oct 2026, where the `chat-users` group is the list
+   and no Lambda is needed (`docs/proposals/invites.md`).
+9. TODO: cut the cold start of the Lambda functions in the request path. Today that is
+   `guppi-gpt-obo-issuer` (Python 3.12, arm64, 1024 MB), which every hop of guppi-hr's
+   on-behalf-of tokens calls. After a quiet spell its first requests take 1.0 to 1.5 s
+   each against about 10 ms warm (4 Oct 2026, 05:46 UTC: four cold instances at once,
+   init 118 to 162 ms); that adds a second or more to the first answer of the day
+   (guppi-hr L24, L25). Most of it is the first request's `_load`: importing boto3,
+   three clients, then eight calls in parallel (SSM, KMS `GetPublicKey`, five Secrets
+   Manager reads, Okta's keys) before the KMS `Sign`. Steps, measuring each with the
+   Lambda's REPORT lines:
+   - time each step of `_load` in the log, to see what the second goes to;
+   - make fewer calls: the five client secrets in one secret, the issuer URL and the
+     public key as environment values set at deploy, Okta's keys fetched only when a
+     token names an unknown key;
+   - load at init rather than on the first request, where Lambda gives the full CPU;
+   - Lambda SnapStart for Python, which restores a snapshot taken after init;
+   - a Rust rewrite (cargo-lambda, the AWS SDK for Rust), which starts in tens of
+     milliseconds and imports nothing, but still makes the same network calls. Worth it
+     if the import and client setup turn out to be most of the time.
+   Keeping instances warm (provisioned concurrency or a schedule) was set aside (Sam,
+   4 Oct): the aim is a function that starts fast.

@@ -9,7 +9,7 @@ import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideO
 import { createExtensionHost, EXTENSION_EVENT_TYPES } from "./extensions.js";
 import { inviteBody, inviteResult, signInRefusal } from "./invite-core.js";
 import { oidcEndpoints, logoutUrl } from "./oidc.js";
-import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, manifestUrl, checkManifest, mergeFeatures, brandFor, agentUrlFor, suggestionsFor, themeFor, wantsWarmStart, warmRunInput, THEME_KEYS, PROJECTS_URL, projectNames, projectCard, switcherEntries } from "./project.js";
+import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, manifestUrl, checkManifest, mergeFeatures, brandFor, agentUrlFor, suggestionsFor, themeFor, wantsWarmStart, warmDue, warmRunInput, THEME_KEYS, PROJECTS_URL, projectNames, projectCard, switcherEntries } from "./project.js";
 
 (async () => {
   const $ = (id) => document.getElementById(id);
@@ -139,7 +139,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
     pill.type = "button";
     pill.className = "suggestion";
     pill.textContent = suggestion.label;
-    // Pressing a pill starts the warm start a moment before its click sends.
+    // Pressing a pill starts a warm start that has not gone out yet a moment before its click sends.
     pill.addEventListener("pointerdown", () => engage());
     pill.addEventListener("click", () => {
       if (status !== "idle-empty" && status !== "idle") return;
@@ -612,33 +612,46 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
     render();
   }
 
-  // A project whose manifest lists `warm-start` gets a run with no messages once the
-  // employee engages with a new thread (focus on the composer, a first keystroke, or a
-  // suggestion), on the runtime session its runs use, so the agent is running and has
-  // opened what the first message needs by the time it is sent (docs/proposals/platform.md,
-  // "Warm start"). Engagement rather than page load, so a reader who never writes opens
-  // nothing (guppi-hr critique findings 1 and 2). The run names the thread the page left,
-  // when that one may hold something open, so the agent can release it. Fire and forget: a
-  // failed warm start only means the first message does that work itself. The token is
-  // refreshed first unless it has 50 minutes left: an agent may start something that lasts
-  // an hour on it (guppi-hr's Connect contact, whose hop tokens expire with this token, D47).
+  // A project whose manifest lists `warm-start` gets a run with no messages for each new
+  // thread as soon as the signed-in page is in view, on the runtime session its runs use, so
+  // the agent is running and has opened what the first message needs by the time it is
+  // sent (docs/proposals/platform.md, "Warm start"). Page load rather than engagement
+  // (guppi-hr D50, replacing D44): a suggested prompt is sent by one press, so a warm start
+  // sent on that press races the question, which then waits for all of it. A hidden tab
+  // warms when it comes into view, and a thread left empty is warmed again when the employee
+  // comes back to it after WARM_STALE_MS. The run names the thread the page left, when that
+  // one may hold something open, so the agent can release it. Fire and forget: a failed
+  // warm start only means the first message does that work itself. The token is refreshed
+  // first unless it has 50 minutes left: an agent may start something that lasts an hour on
+  // it (guppi-hr's Connect contact, whose hop tokens expire with this token, D47).
   const warmStart = wantsWarmStart(manifest);
-  let warmArmed = false;     // the current thread has not been warmed yet
   let warmedThreadId = null; // the last thread a warm start went out for
+  let warmedAt = 0;          // when it went out
   let leftThreadId = null;   // a thread the page left that may still hold something open
   function armWarmStart() {
-    warmArmed = warmStart;
+    engage();
   }
   function engage() {
-    if (!warmArmed || auth !== "signed-in" || messages.length > 0) return;
-    warmArmed = false;
-    warmThread();
+    const due = warmDue({
+      wanted: warmStart,
+      signedIn: auth === "signed-in",
+      visible: document.visibilityState === "visible",
+      empty: messages.length === 0,
+      warmed: warmedThreadId === threadId,
+      warmedAt,
+      now: Date.now(),
+    });
+    if (!due) return;
+    warmedThreadId = threadId;
+    warmedAt = Date.now();
+    warmThread(threadId);
   }
-  async function warmThread() {
-    if (!warmStart || auth !== "signed-in" || messages.length > 0) return;
+  document.addEventListener("visibilitychange", () => engage());
+  async function warmThread(thread) {
     await refreshTokenIfNeeded(50 * 60 * 1000);
     if (Date.now() >= tokenExpiresAt - 5 * 60 * 1000) return;
-    warmedThreadId = threadId;
+    // The employee may have moved on, or written, during the refresh.
+    if (auth !== "signed-in" || thread !== threadId || messages.length > 0) return;
     const previousThreadId = leftThreadId;
     leftThreadId = null;
     try {
@@ -651,7 +664,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
           "x-amzn-bedrock-agentcore-runtime-session-id": sessionId,
           traceparent: newTraceparent().traceparent,
         },
-        body: JSON.stringify(warmRunInput({ threadId, runId: crypto.randomUUID(), manifest, previousThreadId })),
+        body: JSON.stringify(warmRunInput({ threadId: thread, runId: crypto.randomUUID(), manifest, previousThreadId })),
       });
       await response.text();
     } catch (error) {

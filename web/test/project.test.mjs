@@ -13,7 +13,9 @@ import {
   suggestionsFor,
   themeFor,
   wantsWarmStart,
+  warmDue,
   warmRunInput,
+  WARM_STALE_MS,
   MAX_SUGGESTIONS,
 } from "../src/project.js";
 
@@ -238,6 +240,30 @@ test("warmRunInput has no messages and marks the run warm", () => {
     forwardedProps: { project: "hr", warm: true },
   });
   assert.deepEqual(warmRunInput({ threadId: "t1", runId: "r1", manifest: null }).forwardedProps, { warm: true });
+});
+
+// ---- warmDue: when the page sends a warm start (guppi-hr D50) ----
+
+const READY = { wanted: true, signedIn: true, visible: true, empty: true, warmed: false, warmedAt: 0, now: 1_000_000 };
+
+test("warmDue warms a new, empty thread as soon as the signed-in page is in view", () => {
+  assert.equal(warmDue(READY), true);
+});
+
+test("warmDue waits for the page to be in view, signed in, and wanting a warm start", () => {
+  assert.equal(warmDue({ ...READY, visible: false }), false);
+  assert.equal(warmDue({ ...READY, signedIn: false }), false);
+  assert.equal(warmDue({ ...READY, wanted: false }), false);
+});
+
+test("warmDue never warms a thread with messages", () => {
+  assert.equal(warmDue({ ...READY, empty: false }), false);
+});
+
+test("warmDue warms a thread once, and again when the employee comes back after WARM_STALE_MS", () => {
+  const warmed = { ...READY, warmed: true, warmedAt: READY.now };
+  assert.equal(warmDue({ ...warmed, now: READY.now + WARM_STALE_MS - 1 }), false);
+  assert.equal(warmDue({ ...warmed, now: READY.now + WARM_STALE_MS }), true);
 });
 
 test("warmRunInput names the thread the page left, when there is one", () => {

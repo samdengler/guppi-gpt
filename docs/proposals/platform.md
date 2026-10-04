@@ -146,9 +146,9 @@ on each manifest upload, which AGENTS.md asks to avoid, and projects are added r
 ## Warm start
 
 A project whose agent needs time before its first answer (a microVM to start, a contact to
-open, a session to set up) lists `warm-start` in `capabilities`. Once the employee engages
-with a new thread (the first focus on the composer, a first keystroke, or pressing a
-suggestion; not page load, not a resumed thread), the page posts a run with no messages and
+open, a session to set up) lists `warm-start` in `capabilities`. For each new thread, as
+soon as the signed-in page is in view (at load, at sign-in, on a new chat, or when a hidden
+tab comes into view; not a resumed thread), the page posts a run with no messages and
 `forwardedProps.warm: true` to the project's agent path, with the bearer, the runtime
 session id and a traceparent its runs use. When the page has just left a thread that may
 hold something open (one that was warmed or has messages), the run also carries
@@ -162,9 +162,17 @@ The page does not wait for it. An agent's `warm` prepares what its runs would ot
 on the first message, and a run that arrives while a warm start is still working shares or
 waits for that work, so a first message sent at once can wait up to the warm start's
 length. A token within five minutes of expiry skips the warm start, so a send's token
-refresh is never raced. Warming on engagement instead of page load came from the guppi-hr
-critique of 3 October: on page load every reader opened a Connect contact, which held a
-chat and, until the bridge cleared it, the employee's token.
+refresh is never raced. A thread still empty 50 minutes after its warm start is warmed
+again when the employee comes back to it (a focus, a keystroke, a pill press, or the tab
+coming into view), since guppi-hr's contact and hop tokens last an hour.
+
+From 3 to 4 October the page warmed on engagement instead (the first focus on the composer,
+a keystroke, or pressing a suggestion), after the guppi-hr critique found that every reader
+opened a Connect contact, which held a chat and, until the bridge cleared it, the
+employee's token. A suggestion is sent by the same press, so its question waited for the
+whole warm start: 8.5 s to the first words against 3.7 s once the warm start had run
+(guppi-hr D50, L24). The bridge now clears the token after the greeting and ends the
+contacts it leaves, so page load is back.
 
 ## Page extension API
 
