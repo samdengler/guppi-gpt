@@ -1114,6 +1114,8 @@ class GuppiGptStack(cdk.Stack):
         # is a stream: the chat details on the first line, the warm-up count later.
         hr_chat_origin = origins.HttpOrigin(
             ssm.StringParameter.value_for_string_parameter(self, HR_CHAT_START_HOST_PARAMETER),
+            # A fixed id, so adding this origin leaves the generated ids of the others alone.
+            origin_id="HrChatStart",
             protocol_policy=cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
             read_timeout=ORIGIN_RESPONSE_TIMEOUT,
             keepalive_timeout=Duration.seconds(60),
