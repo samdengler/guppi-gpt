@@ -11,7 +11,13 @@ import { createPendingIndicator, pendingShown, setPending } from "./pending.js";
 import { DEBUG_FLAG, createDebugRun, isTimingEvent, withDebugProp } from "./debug.js";
 import { inviteBody, inviteResult, signInRefusal } from "./invite-core.js";
 import { oidcEndpoints, logoutUrl } from "./oidc.js";
-import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, manifestUrl, checkManifest, mergeFeatures, brandFor, agentUrlFor, suggestionsFor, themeFor, wantsWarmStart, warmDue, warmRunInput, THEME_KEYS, PROJECTS_URL, projectNames, projectCard, switcherEntries } from "./project.js";
+import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, manifestUrl, checkManifest, mergeFeatures, brandFor, agentUrlFor, suggestionsFor, themeFor, wantsWarmStart, warmDue, warmRunInput, THEME_KEYS, PROJECTS_URL, projectNames, projectCard, switcherEntries, connectChatFor } from "./project.js";
+import { CONNECT_BRIDGE_FLAG, createConnectChatClient, reportBody } from "./connect-chat.js";
+import { ConnectChatAgent } from "./connect-agent.js";
+
+// The chatjs bundle (web/src/vendor/chatjs.js), loaded only by a page that uses the Connect
+// chat transport. A variable, so esbuild leaves the import native in this IIFE bundle.
+const CHATJS_MODULE = "/vendor/chatjs.js";
 
 (async () => {
   const $ = (id) => document.getElementById(id);
@@ -130,6 +136,12 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
   const feedbackEnabled = isEnabled("feedback");
   const loggingEnabled = isEnabled("logging");
   const debugEnabled = isEnabled(DEBUG_FLAG);
+  // The Connect chat transport (guppi-hr D55): the default for a project whose manifest
+  // lists `connect-chat` with a usable `connectChat` block. The `connect-bridge` flag
+  // (`?ff=connect-bridge`) puts the page back on the bridge path for rollback: the
+  // bridge's warm start and HttpAgent, exactly as before.
+  const connectRules = connectChatFor(manifest);
+  const useConnect = Boolean(connectRules) && !isEnabled(CONNECT_BRIDGE_FLAG);
   // The privacy notice states what the switches actually allow.
   emptyCopy.textContent = emptyStateText(historyEnabled, loggingEnabled);
   // A project's suggested prompts sit under the empty state copy and go with it: one
@@ -250,6 +262,43 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
   const tokens = {};        // access_token, id_token, refresh_token; access/id token: memory only
   let tokenExpiresAt = 0;    // epoch ms when access_token expires
 
+  // The thread's Connect chats; the participant credentials live inside them, in memory,
+  // and never reach the extension host, history, the debug block or RUM.
+  let chatjsLoading = null;
+  const loadChatjs = () => {
+    if (!chatjsLoading) {
+      chatjsLoading = import(CHATJS_MODULE).then((module) => module.ChatSession);
+      chatjsLoading.catch(() => {
+        chatjsLoading = null;
+      });
+    }
+    return chatjsLoading;
+  };
+  const connectChats = useConnect
+    ? createConnectChatClient({
+        rules: connectRules,
+        fetch: (url, init) => fetch(url, init),
+        getToken: () => tokens.access_token,
+        refreshToken: () => refreshTokenIfNeeded(50 * 60 * 1000),
+        loadChatjs,
+      })
+    : null;
+  // One report per turn, after it ends and off the answer's path: ids, Connect's times and
+  // the end reason, never reply text or a token.
+  function sendReport(record) {
+    if (!connectRules || !connectRules.report) return;
+    const body = reportBody(record);
+    if (!body) return;
+    setTimeout(() => {
+      fetch(connectRules.report, {
+        method: "POST",
+        keepalive: true,
+        headers: { authorization: `Bearer ${tokens.access_token}`, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }).catch(() => {});
+    }, 0);
+  }
+
   // The `guppi` object a project's extension module receives (web/src/extensions.js).
   const extensions = createExtensionHost({ project: manifest, getToken: () => tokens.access_token });
 
@@ -335,6 +384,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
   }
 
   function switchToThread(thread) {
+    if (connectChats && thread.id !== threadId) connectChats.leave(threadId);
     threadId = thread.id;
     extensions.notifyThread(threadId);
     threadCreatedAt = thread.createdAt;
@@ -347,6 +397,11 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
     );
     status = messages.length > 0 ? "idle" : "idle-empty";
     lastFailedTurn = null;
+    // A reopened thread has no chat anywhere (the page keeps none past a load), so it gets
+    // a new one, and its next reply opens with the restart line (guppi-hr D55, V1).
+    if (connectChats && messages.length > 0 && auth === "signed-in") {
+      connectChats.start(threadId, { restartLine: true });
+    }
     hydrateThread();
     historyPanel.hidden = true;
     render();
@@ -576,6 +631,8 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
   }
 
   async function signOut() {
+    // The Connect chats end before the redirect, which would cancel the call (capped at 2 s).
+    if (connectChats) await connectChats.signOut();
     // An OIDC issuer's logout takes the id token as a hint, so it is kept until the URL is built.
     const idToken = tokens.id_token;
     Object.keys(tokens).forEach((key) => delete tokens[key]);
@@ -602,6 +659,8 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
   }
 
   function clearThreadState() {
+    // The chat of the thread being left ends when the next one starts (previousContactId).
+    if (connectChats) connectChats.leave(threadId);
     messages = [];
     threadId = crypto.randomUUID();
     extensions.notifyThread(threadId);
@@ -628,7 +687,7 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
   // warm start only means the first message does that work itself. The token is refreshed
   // first unless it has 50 minutes left: an agent may start something that lasts an hour on
   // it (guppi-hr's Connect contact, whose hop tokens expire with this token, D47).
-  const warmStart = wantsWarmStart(manifest);
+  const warmStart = wantsWarmStart(manifest) || useConnect;
   let warmedThreadId = null; // the last thread a warm start went out for
   let warmedAt = 0;          // when it went out
   let leftThreadId = null;   // a thread the page left that may still hold something open
@@ -648,9 +707,23 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
     if (!due) return;
     warmedThreadId = threadId;
     warmedAt = Date.now();
-    warmThread(threadId);
+    if (connectChats) startChat(threadId);
+    else warmThread(threadId);
   }
-  document.addEventListener("visibilitychange", () => engage());
+  document.addEventListener("visibilitychange", () => {
+    engage();
+    // A tab that comes back into view reads what its chat's socket may have missed.
+    if (connectChats && document.visibilityState === "visible") connectChats.catchUp();
+  });
+  // The Connect path's warm start is the chat start itself: the start route answers once
+  // the chat has greeted, and a question sent before then waits for this same start.
+  async function startChat(thread) {
+    loadChatjs().catch(() => {});
+    await refreshTokenIfNeeded(50 * 60 * 1000);
+    if (Date.now() >= tokenExpiresAt - 5 * 60 * 1000) return;
+    if (auth !== "signed-in" || thread !== threadId || messages.length > 0) return;
+    connectChats.start(thread);
+  }
   async function warmThread(thread) {
     await refreshTokenIfNeeded(50 * 60 * 1000);
     if (Date.now() >= tokenExpiresAt - 5 * 60 * 1000) return;
@@ -974,6 +1047,22 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
       refs.reply.appendChild(debug.element);
     }
     if (await refreshTokenIfNeeded()) debug?.mark("refreshed");
+    // The Connect path: the thread's chat, waiting for its start when one is in flight. A
+    // thread whose chat could not start or connect, or whose socket broke for good, goes on
+    // through the bridge, and its reports say so.
+    const turnThread = threadId;
+    const turnStartedAt = performance.now();
+    let connectReady = null;
+    let bridgeReport = null;
+    if (connectChats) {
+      const ready = await connectChats.ready(turnThread);
+      if (ready.ok || ready.reason === "signin") {
+        connectReady = ready;
+        debug?.mark("chatReady");
+      } else {
+        bridgeReport = { contactId: ready.contactId, error: ready.fallback || "start_unavailable" };
+      }
+    }
     const controller = new AbortController();
     let paintScheduled = false;
     let stallTimer = null;
@@ -1050,7 +1139,16 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
     // One agent per turn: the page owns the thread and resends it whole, so nothing is
     // kept on the client object between turns. The custom fetch turns a non-2xx answer
     // into a failure, which the client would otherwise read as an empty stream.
-    const agent = new HttpAgent({
+    const agent = connectReady ? new ConnectChatAgent({
+      threadId: turnThread,
+      initialMessages: messageList.map(({ id, role, content }) => ({ id, role, content })),
+      initialState: runInput.state,
+      rules: connectRules,
+      ready: connectReady,
+      recover: (chat) => connectChats.recover(turnThread, chat),
+      onReport: sendReport,
+      startedAt: turnStartedAt,
+    }) : new HttpAgent({
       url: agentUrl,
       threadId,
       initialMessages: messageList.map(({ id, role, content }) => ({ id, role, content })),
@@ -1073,7 +1171,9 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
       },
     });
     markReply(refs.reply, { runId, traceId, requestId });
-    debug?.setIds({ traceId, runId });
+    // The Connect path sends no trace context, so its debug block names the run only.
+    debug?.setIds(connectReady ? { runId } : { traceId, runId });
+    if (connectReady) debug?.mark("sent");
     const subscriber = {
       onEvent: ({ event }) => {
         resetStallTimer(); // every event counts, the CUSTOM ping included
@@ -1145,6 +1245,18 @@ import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, man
       running = false;
       updatePending();
       input.focus();
+    }
+    // A socket that broke for good during the turn: the thread's next question, a Retry
+    // included, goes through the bridge.
+    if (connectReady && connectReady.chat && connectReady.chat.failed) connectChats.useBridge(turnThread, "socket_failed");
+    if (bridgeReport && bridgeReport.contactId) {
+      sendReport({
+        ...bridgeReport,
+        runId,
+        threadId: turnThread,
+        endReason: controller.signal.aborted ? "aborted" : errored || !finished ? "error" : "end_mark",
+        transport: "bridge",
+      });
     }
     if (errored || !finished) {
       debug?.mark("failed");

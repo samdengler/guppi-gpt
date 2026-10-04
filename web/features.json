@@ -3,5 +3,6 @@
   "feedback": false,
   "logging": true,
   "rum": true,
-  "debug": false
+  "debug": false,
+  "connect-bridge": false
 }

@@ -33,6 +33,7 @@ page, not just reads state that already exists; it stays behind a flag the same 
 | `feedback` | The thumbs up/down control on a reply |
 | `rum` | Dynatrace RUM on the page (`docs/proposals/dynatrace.md`) |
 | `debug` | Timings under each reply, the page's and the agent's (`guppi.timing`; `docs/proposals/platform.md`, "Debug mode") |
+| `connect-bridge` | Rollback for the Connect chat transport: a project page that uses it goes back to the bridge's warm start and `HttpAgent` (`docs/proposals/platform.md`, "Connect chat transport"). Off, so the transport is the default; `?ff=connect-bridge` turns the old path on for a browser |
 
 Plain JSON, no comments; this document is where the keys are explained. A new flagged
 feature adds a key here with a `false` default.
