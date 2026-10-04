@@ -14,7 +14,7 @@ Identity for a token and never handles the secret. RULES says which subject toke
 client may exchange and which scopes it may receive; the issuer enforces them.
 
 Published under /guppi/obo/*: the issuer and discovery URLs, and per client the provider's
-name and ARN. Project stacks read them at deploy time, like /guppi/platform/*.
+name and ARN and the secret's ARN, which the caller's role must be allowed to read. Project stacks read them at deploy time, like /guppi/platform/*.
 """
 
 from __future__ import annotations
@@ -213,7 +213,10 @@ class OboIssuer(Construct):
             )
             provider.node.add_dependency(self.api, issuer_parameter, function)
             self.providers[client] = provider
-            for field, value in (("provider-name", provider.name), ("provider-arn", provider.attr_credential_provider_arn)):
+            # AgentCore Identity reads an EXTERNAL secret as the caller of GetResourceOauth2Token
+            # (guppi-hr aws-feedback A16), so each caller's role is granted its client's secret.
+            for field, value in (("provider-name", provider.name), ("provider-arn", provider.attr_credential_provider_arn),
+                                 ("secret-arn", self.secrets[client].secret_arn)):
                 ssm.StringParameter(self, f"{_pascal(client)}{_pascal(field)}Parameter",
                                     parameter_name=f"{PARAMS}/{client}/{field}", string_value=value,
                                     description=f"On-behalf-of credential provider for {client} (guppi-hr D47)")
