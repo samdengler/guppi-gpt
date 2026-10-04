@@ -110,7 +110,10 @@ const timeOf = (item) => {
  * `now` is a millisecond clock; the turn limit counts from the assembler's creation,
  * which is the send.
  */
-export function createTurnAssembler({ rules, now }) {
+export function createTurnAssembler({ rules, now, previousSentAt = null }) {
+  // Only a reply newer than the previous question counts as that turn's late reply; the
+  // greeting and older items a catch-up repeats are not.
+  const previousTime = timeOf({ AbsoluteTime: previousSentAt });
   const startedAt = now();
   const seen = new Set();
   const buffer = [];
@@ -134,7 +137,7 @@ export function createTurnAssembler({ rules, now }) {
     const reply = classify(item, rules);
     const time = timeOf(item);
     if (ownTime !== null && time !== null && time < ownTime) {
-      if (reply) stale += 1;
+      if (reply && previousTime !== null && time > previousTime) stale += 1;
       return [];
     }
     if (!reply) return [];
@@ -365,7 +368,7 @@ export function createConnectChat({ chatjs, details, region, expiresAt = null, r
   const seen = new Set();
   const listeners = new Set();
   const failureListeners = new Set();
-  const info = { contactId: details.contactId, expiresAt, warmed, reconnected: false, catchUps: 0 };
+  const info = { contactId: details.contactId, expiresAt, warmed, reconnected: false, catchUps: 0, lastSentAt: null };
 
   function dispatch(item) {
     if (discarded || !item || typeof item !== "object" || !item.Id) return;
@@ -486,6 +489,7 @@ export function createConnectChat({ chatjs, details, region, expiresAt = null, r
     async send(text) {
       const response = await session.sendMessage({ contentType: "text/plain", message: text });
       const data = (response && response.data) || {};
+      if (data.AbsoluteTime) info.lastSentAt = data.AbsoluteTime;
       return { Id: data.Id || null, AbsoluteTime: data.AbsoluteTime || null };
     },
     /** Ends the contact (DisconnectParticipant); never throws. */

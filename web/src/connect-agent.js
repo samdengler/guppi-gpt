@@ -172,7 +172,8 @@ class Turn {
 
   listen() {
     if (this.unlisten) this.unlisten();
-    this.assembler = createTurnAssembler({ rules: this.rules, now: this.clock });
+    const previousSentAt = this.chat.info ? this.chat.info.lastSentAt : null;
+    this.assembler = createTurnAssembler({ rules: this.rules, now: this.clock, previousSentAt });
     this.unlisten = this.chat.listen(
       (item) => this.take(this.assembler.push(item)),
       () => this.fail("socket_failed"),

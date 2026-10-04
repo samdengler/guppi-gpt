@@ -139,7 +139,7 @@ test("items are buffered until the send resolves, the own message dropped, the r
 });
 
 test("a late reply from the previous turn is dropped and counted as stale", () => {
-  const { assembler } = turn();
+  const assembler = createTurnAssembler({ rules: RULES, now: clock(), previousSentAt: at(-5000) });
   const late = bot("A late extra line for turn one.", -2000);
   assembler.push(late);
   assembler.sent(customer("two", 0));
@@ -668,4 +668,11 @@ test("a start the page left before it answered ends its chat", async () => {
   open();
   assert.equal((await pending).reason, "left");
   assert.ok(lib.sessions[0].calls.includes("disconnectParticipant"));
+});
+
+test("older items a catch-up repeats, the greeting among them, are dropped but not counted as late", () => {
+  const { assembler, own } = turn();
+  assembler.push(bot("Hi, I'm the HR assistant.", -3000));
+  assembler.sent(own);
+  assert.equal(assembler.summary().stale, 0);
 });
