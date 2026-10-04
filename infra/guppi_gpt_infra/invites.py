@@ -232,13 +232,16 @@ def _email_definition(site_url: str) -> str:
             "FindOktaUser": {
                 "Type": "Task",
                 "Resource": "arn:aws:states:::http:invoke",
+                # A search by login, as a query parameter the task encodes once; an address in
+                # the path was encoded twice and answered 404 (observed 4 Oct 2026).
                 "Arguments": {
-                    "ApiEndpoint": "{% '${OktaOrgUrl}/api/v1/users/' & $encodeUrlComponent($email) %}",
+                    "ApiEndpoint": "${OktaOrgUrl}/api/v1/users",
                     "Method": "GET",
+                    "QueryParameters": {"search": "{% 'profile.login eq \"' & $email & '\"' %}"},
                     "Authentication": okta_auth,
                     "Headers": okta_headers,
                 },
-                "Output": {"userId": "{% $states.result.ResponseBody.id %}"},
+                "Output": {"userId": "{% $states.result.ResponseBody[0].id %}"},
                 "Next": "AddToGroup",
             },
             "AddToGroup": {
