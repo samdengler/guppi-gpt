@@ -411,7 +411,7 @@ def discovery(deps: Deps, settings: Settings) -> dict:
 
 def handler(event: dict, _context: Any) -> dict:
     deps, settings = _load()
-    # REST API events (httpMethod, path) since the move to a web ACL; HTTP API events too.
+    # REST API events (httpMethod, path) since D48; HTTP API events too.
     method = event.get("httpMethod") or event.get("requestContext", {}).get("http", {}).get("method", "")
     path = event.get("path") or event.get("rawPath", "")
     if method == "GET" and path == "/.well-known/openid-configuration":
