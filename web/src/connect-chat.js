@@ -108,9 +108,11 @@ const timeOf = (item) => {
  * - a reply without a mark ends after quietAfterMs of quiet;
  * - no reply within turnLimitMs of the start gives the no-reply line.
  * `now` is a millisecond clock; the turn limit counts from the assembler's creation,
- * which is the send.
+ * which is the send. With `late`, the assembler reads a question's late answer after its
+ * turn ended with the no-reply line: there is no turn limit, and only the end of the
+ * answer (a mark, a closing event, or quiet after a reply) ends it.
  */
-export function createTurnAssembler({ rules, now, previousSentAt = null }) {
+export function createTurnAssembler({ rules, now, previousSentAt = null, late = false }) {
   // Only a reply newer than the previous question counts as that turn's late reply; the
   // greeting and older items a catch-up repeats are not.
   const previousTime = timeOf({ AbsoluteTime: previousSentAt });
@@ -205,7 +207,7 @@ export function createTurnAssembler({ rules, now, previousSentAt = null }) {
         finish("quiet", {}, "quiet after the reply");
         return [];
       }
-      if (at - startedAt >= rules.turnLimitMs) {
+      if (!late && at - startedAt >= rules.turnLimitMs) {
         if (replied) {
           finish("quiet", {}, "turn limit");
           return [];
@@ -218,6 +220,7 @@ export function createTurnAssembler({ rules, now, previousSentAt = null }) {
     /** The clock time of the next tick that can change anything, or null when done. */
     deadline() {
       if (done) return null;
+      if (late) return quietUntil;
       const limit = startedAt + rules.turnLimitMs;
       return quietUntil === null ? limit : Math.min(limit, quietUntil);
     },
@@ -348,6 +351,78 @@ export function reportBody({ contactId, runId, threadId, sentAt, firstItemAt, la
   return body;
 }
 
+/**
+ * The page's report sender: each report goes out with `fetch(..., { keepalive: true })`.
+ * A report that fails to send (a network error; an HTTP answer counts as sent) waits in a
+ * memory queue of at most `cap` bodies, oldest dropped first, and goes again before the
+ * next report and on flush(), which the page calls when the network comes back. The queue
+ * holds report bodies only, never text or a token; the bearer is read at each send.
+ */
+export const REPORT_QUEUE_CAP = 20;
+
+export function createReportSender({ url, fetch: fetchImpl, getToken, cap = REPORT_QUEUE_CAP }) {
+  const queue = [];
+  function keep(body) {
+    queue.push(body);
+    while (queue.length > cap) queue.shift();
+  }
+  function post(body) {
+    let request;
+    try {
+      request = Promise.resolve(
+        fetchImpl(url, {
+          method: "POST",
+          keepalive: true,
+          headers: { authorization: `Bearer ${getToken()}`, "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      );
+    } catch (error) {
+      request = Promise.reject(error);
+    }
+    return request.then(
+      () => true,
+      () => {
+        keep(body);
+        return false;
+      },
+    );
+  }
+  function flush() {
+    return Promise.all(queue.splice(0).map(post));
+  }
+  return {
+    /** Sends one turn's report (after the queued ones); false when it was not sent. */
+    send(record) {
+      const body = reportBody(record);
+      if (!body) return Promise.resolve(false);
+      flush();
+      return post(body);
+    },
+    flush,
+    get pending() {
+      return queue.length;
+    },
+  };
+}
+
+// A catch-up when the network comes back that fails (the first request after the event
+// can still meet a dead connection) is tried once more after this.
+export const ONLINE_RETRY_MS = 2_000;
+
+/**
+ * The handler for the window's `online` event: queued reports go again, and every live
+ * chat reads its transcript, since a socket that stayed open through the outage (as in
+ * Chromium's offline emulation) neither reconnects nor delivers what it missed.
+ */
+export function onNetworkBack({ chats = null, reports = null, retryMs = ONLINE_RETRY_MS, timers = globalThis }) {
+  return async () => {
+    if (reports) reports.flush();
+    if (!chats) return;
+    if (!(await chats.catchUp())) timers.setTimeout(() => chats.catchUp(), retryMs);
+  };
+}
+
 // ---- One chatjs session ----
 
 const isRefused = (error) => Boolean(error) && REFUSED_TYPES.includes(error.type);
@@ -385,15 +460,18 @@ export function createConnectChat({ chatjs, details, region, expiresAt = null, r
     for (const listener of [...failureListeners]) listener();
   }
 
+  // True when the transcript was read (or there is nothing to read), false when it failed.
   async function catchUp() {
-    if (discarded || !session) return;
+    if (discarded || !session) return true;
     try {
       const response = await session.getTranscript({ maxResults: 100, sortOrder: "ASCENDING", scanDirection: "BACKWARD" });
       const items = (response && response.data && response.data.Transcript) || [];
       info.catchUps += 1;
       for (const item of items) dispatch(item);
+      return true;
     } catch {
       // A failed catch-up leaves the socket's items; the next connection event tries again.
+      return false;
     }
   }
 
@@ -712,9 +790,14 @@ export function createConnectChatClient({
       entry.transport = "bridge";
       entry.fallback = reason;
     },
-    /** A catch-up read for every live chat, for a tab that comes back into view. */
-    catchUp() {
-      for (const entry of threads.values()) if (entry.chat) entry.chat.catchUp();
+    /**
+     * A catch-up read for every live chat, for a tab that comes back into view or a network
+     * that comes back; true when every read succeeded.
+     */
+    async catchUp() {
+      const reads = [...threads.values()].filter((entry) => entry.chat).map((entry) => entry.chat.catchUp());
+      const results = await Promise.all(reads);
+      return results.every(Boolean);
     },
     /** Ends every live chat, each capped at SIGN_OUT_CAP_MS, before the sign-out redirect. */
     async signOut(capMs = SIGN_OUT_CAP_MS) {

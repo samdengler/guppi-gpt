@@ -6,6 +6,8 @@ import {
   createTurnAssembler,
   createConnectChat,
   createConnectChatClient,
+  createReportSender,
+  onNetworkBack,
   readStartStream,
   reportBody,
   startResult,
@@ -187,6 +189,21 @@ test("no reply within turnLimitMs gives the no-reply line", () => {
   assert.equal(assembler.summary().closed, false);
 });
 
+test("a late assembler has no turn limit and ends on the answer's mark or quiet", () => {
+  const now = clock();
+  const assembler = createTurnAssembler({ rules: RULES, now, late: true });
+  assembler.sent(customer("hello", 0));
+  assert.equal(assembler.deadline(), null);
+  now.advance(60000);
+  assert.deepEqual(assembler.tick(), []);
+  assert.equal(assembler.done, null);
+  assert.deepEqual(texts(assembler.push(bot("Late.", 30000))), ["Late."]);
+  assert.equal(assembler.deadline(), 60800);
+  now.advance(800);
+  assembler.tick();
+  assert.equal(assembler.done.reason, "quiet");
+});
+
 test("a reply that is still going at the turn limit ends without the no-reply line", () => {
   const now = clock();
   const assembler = createTurnAssembler({ rules: { ...RULES, quietAfterMs: 30000 }, now });
@@ -353,10 +370,11 @@ test("reportBody keeps ids, Connect times and the end reason, never text or toke
 // ---- the chatjs session ----
 
 // A fake of chatjs's ChatSession object: records every create and call.
-function fakeChatjs({ connectFails = [], transcript = [] } = {}) {
+function fakeChatjs({ connectFails = [], transcript = [], transcriptFails = 0 } = {}) {
   const sessions = [];
   const lib = {
     sessions,
+    transcriptFails,
     configs: [],
     setGlobalConfig(config) {
       lib.configs.push(config);
@@ -379,6 +397,10 @@ function fakeChatjs({ connectFails = [], transcript = [] } = {}) {
         },
         async getTranscript(request) {
           session.calls.push(["getTranscript", request]);
+          if (lib.transcriptFails > 0) {
+            lib.transcriptFails -= 1;
+            throw new TypeError("Failed to fetch");
+          }
           return { data: { Transcript: transcript } };
         },
         async sendMessage(request) {
@@ -676,4 +698,84 @@ test("older items a catch-up repeats, the greeting among them, are dropped but n
   assembler.push(bot("Hi, I'm the HR assistant.", -3000));
   assembler.sent(own);
   assert.equal(assembler.summary().stale, 0);
+});
+
+// ---- reports and the network coming back ----
+
+test("a report the network lost is queued, at most 20, and sent again before the next report and on flush", async () => {
+  let offline = true;
+  const posted = [];
+  const fetch = async (url, init) => {
+    if (offline) throw new TypeError("Failed to fetch");
+    posted.push({ url, init, body: JSON.parse(init.body) });
+    return { ok: true, status: 200 };
+  };
+  let token = "okta-access-token";
+  const sender = createReportSender({ url: "/api/hr/chat/report", fetch, getToken: () => token });
+  const record = (n) => ({ contactId: "c-1", runId: `r-${n}`, endReason: "no_reply", transport: "connect", text: "the reply", participantToken: "secret-token" });
+  assert.equal(await sender.send(record(1)), false);
+  assert.equal(sender.pending, 1);
+  for (let n = 2; n <= 25; n++) await sender.send(record(n));
+  assert.equal(sender.pending, 20);
+  offline = false;
+  token = "a-newer-token";
+  await sender.flush();
+  assert.equal(sender.pending, 0);
+  assert.deepEqual(
+    posted.map((p) => p.body.runId),
+    Array.from({ length: 20 }, (_, i) => `r-${i + 6}`),
+  );
+  for (const { url, init } of posted) {
+    assert.equal(url, "/api/hr/chat/report");
+    assert.equal(init.keepalive, true);
+    assert.equal(init.headers.authorization, "Bearer a-newer-token");
+    assert.equal(init.body.includes("the reply") || init.body.includes("secret-token"), false);
+  }
+  // A queued report goes before the next one.
+  offline = true;
+  await sender.send(record(26));
+  offline = false;
+  posted.length = 0;
+  assert.equal(await sender.send(record(27)), true);
+  await tick();
+  assert.deepEqual(posted.map((p) => p.body.runId), ["r-26", "r-27"]);
+  assert.equal(sender.pending, 0);
+});
+
+test("an HTTP answer counts as sent, and a body that is not a report is never queued", async () => {
+  const sender = createReportSender({ url: "/r", fetch: async () => ({ ok: false, status: 503 }), getToken: () => "t" });
+  assert.equal(await sender.send({ contactId: "c-1", runId: "r", endReason: "quiet" }), true);
+  assert.equal(await sender.send({ contactId: "c-1", runId: "r", endReason: "late" }), false);
+  assert.equal(sender.pending, 0);
+});
+
+test("the network coming back flushes the reports and reads every live chat's transcript", async () => {
+  const reply = bot("Answered during the outage.", 2800);
+  const lib = fakeChatjs({ transcript: [customer("hello", 0), reply], transcriptFails: 1 });
+  const chats = client(startServer([{ lines: [line("c-1")] }]), lib);
+  const outcome = await chats.start("t1");
+  const seen = [];
+  outcome.chat.listen((item) => seen.push(item.Id));
+  const window = new EventTarget();
+  let flushed = 0;
+  const retries = [];
+  const timers = { setTimeout: (fn, ms) => retries.push({ fn, ms }) };
+  window.addEventListener("online", onNetworkBack({ chats, reports: { flush: () => (flushed += 1) }, timers }));
+  window.dispatchEvent(new Event("online"));
+  await tick();
+  assert.equal(flushed, 1);
+  // The first read failed (the connection was still coming up): one more, later.
+  assert.deepEqual(seen, []);
+  assert.deepEqual(retries.map((r) => r.ms), [2000]);
+  await retries[0].fn();
+  assert.ok(seen.includes(reply.Id));
+  assert.equal(seen.length, 2);
+  // The read is idempotent by Id.
+  window.dispatchEvent(new Event("online"));
+  await tick();
+  assert.equal(seen.length, 2);
+  assert.equal(seen.filter((id) => id === reply.Id).length, 1);
+  assert.equal(retries.length, 1);
+  const reads = lib.sessions[0].calls.filter((call) => Array.isArray(call) && call[0] === "getTranscript");
+  assert.equal(reads.length, 3);
 });

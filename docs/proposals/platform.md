@@ -254,9 +254,21 @@ once, and ends the turn on the end mark or end line, on a closing event, after
 no-reply line when nothing came. Hidden lines are not shown; marks are stripped. Items that
 arrive between turns are dropped, except `chat.ended`, which marks the chat ended. A
 message over `maxChars` is answered with the too-long line and not sent. After every
-`onConnectionEstablished` (it can fire twice, chatjs issues 124 and 298) and whenever the
-tab comes back into view, the session reads the transcript (`getTranscript`, newest 100)
-and feeds it through the same `Id` check, so a catch-up never shows anything twice.
+`onConnectionEstablished` (it can fire twice, chatjs issues 124 and 298), whenever the
+tab comes back into view, and when the window's `online` event says the network is back,
+the session reads the transcript (`getTranscript`, newest 100) and feeds it through the
+same `Id` check, so a catch-up never shows anything twice. The `online` read matters
+because a socket can stay open through an outage (Chromium's offline emulation keeps it)
+and then neither reconnects nor delivers what it missed; a read that fails right after the
+event is tried once more 2 s later.
+
+A turn that ends at `turnLimitMs` with the no-reply line leaves its question awaiting a
+late answer until the next question is sent (or the page switches thread, starts a new
+chat or signs out). A reply to it that arrives later, on the socket or from a catch-up,
+goes through a late assembler (the same `Id` and time checks, no turn limit, ended by a
+mark, a closing event or quiet) and replaces the no-reply line in that same reply, as
+plain text, and in the stored thread. Once the next question is sent, a late reply to the
+earlier one is dropped, as before.
 
 After each turn the page posts the report to `report` with `fetch(..., { keepalive: true
 })`, off the answer's path: `contactId`, `runId`, `threadId`, Connect's `AbsoluteTime` for
@@ -268,6 +280,15 @@ error code that names the socket as a failed socket, so a turn the transport gav
 reports `aborted` with its code (`socket_failed`, `send_failed`, `send_refused`), a stall
 or Retry reports `aborted` alone, and a bridge turn reports `end_mark` or `aborted` with
 why its thread left Connect (`start_unavailable`, `connect_failed`, `socket_failed`).
+
+A late answer sends a second report for its run: the late answer's own end reason (one
+the route accepts, usually `end_mark`) with the error code `late_reply`, under the run id
+with `:late` added, since the route writes one run line per run id. The first report
+already said `no_reply`, so the alarm counts the turn once. A report that fails to send
+(a network error; any HTTP answer counts as sent) waits in a memory queue of at most 20
+report bodies, oldest dropped first, and goes again before the next report and on the
+`online` event. The queue holds the report body only, never text or a token; the bearer is
+read when the report goes out.
 
 The debug block keeps working: the agent sends its own `guppi.timing` (the D54 shape) with
 the page-clock steps (the wait for the chat start, `SendMessage`, the first reply item, the

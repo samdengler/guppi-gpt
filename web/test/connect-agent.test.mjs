@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { ConnectChatAgent } from "../src/connect-agent.js";
+import { reportBody } from "../src/connect-chat.js";
 import { connectChatFor } from "../src/project.js";
 
 const END_MARK = "⁣";
@@ -36,7 +37,7 @@ const bot = (text, ms = 100) => ({ Id: `i${++ids}`, Type: "MESSAGE", Participant
  * message is sent (each delivered on its own timer), and `before` items arrive before the
  * send resolves.
  */
-function fakeChat({ script = {}, refuse = 0, failAfterSend = false, restartLine = false, contactId = "c-1" } = {}) {
+function fakeChat({ script = {}, refuse = 0, failAfterSend = false, restartLine = false, contactId = "c-1", sentAt = {} } = {}) {
   const listeners = new Set();
   const chat = {
     contactId,
@@ -64,13 +65,17 @@ function fakeChat({ script = {}, refuse = 0, failAfterSend = false, restartLine 
     get listeners() {
       return listeners.size;
     },
+    /** An item Connect pushes now, on the socket or from a catch-up. */
+    deliver(item) {
+      for (const { onItem } of [...listeners]) onItem(item);
+    },
     async send(text) {
       chat.sent.push(text);
       if (refuse > 0) {
         refuse -= 1;
         throw { type: "AccessDeniedException" };
       }
-      const own = { Id: `own-${chat.sent.length}`, AbsoluteTime: at(0) };
+      const own = { Id: `own-${chat.sent.length}`, AbsoluteTime: at(sentAt[text] ?? 0) };
       let delay = 1;
       for (const item of script[text] || []) {
         setTimeout(() => {
@@ -294,4 +299,87 @@ test("the designer's error line reports endReason error with designer_error, for
   assert.deepEqual(deltas(events), [RULES.lines.error]);
   assert.deepEqual([reports[0].endReason, reports[0].error], ["error", "designer_error"]);
   assert.equal(chat.closed, true);
+});
+
+const SHORT = { ...RULES, turnLimitMs: 100 };
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test("a reply after the turn limit replaces the no-reply line through onLate and sends a late report", async () => {
+  const chat = fakeChat();
+  const late = [];
+  const { agent, reports } = agentFor(chat, { rules: SHORT, onLate: (answer) => late.push(answer) });
+  const { events } = await run(agent, { debug: false });
+  assert.deepEqual(deltas(events), ["No answer came back."]);
+  assert.equal(reports[0].endReason, "no_reply");
+  assert.equal(agent.awaitingLate, true);
+  assert.equal(chat.listeners, 1);
+  // The answer came 2.8 s after the question, long after the turn ended; the catch-up
+  // repeats it.
+  const answer = bot(`Your balance is 12 days.${END_MARK}`, 2800);
+  chat.deliver(answer);
+  chat.deliver({ ...answer });
+  assert.deepEqual(late, [
+    { text: "Your balance is 12 days.", done: false },
+    { text: "Your balance is 12 days.", done: true },
+  ]);
+  assert.equal(reports.length, 2);
+  const report = reports[1];
+  assert.deepEqual([report.runId, report.endReason, report.error], ["r1:late", "end_mark", "late_reply"]);
+  assert.deepEqual([report.sentAt, report.firstItemAt, report.lastItemAt], [at(0), at(2800), at(2800)]);
+  assert.equal(JSON.stringify(report).includes("12 days"), false);
+  // The report route takes it: a known end reason, an error code it accepts.
+  assert.equal(reportBody(report).error, "late_reply");
+  assert.equal(agent.awaitingLate, false);
+  assert.equal(chat.listeners, 0);
+  chat.deliver(bot(`Another.${END_MARK}`, 3000));
+  assert.equal(late.length, 2);
+});
+
+test("a late reply without a mark ends after the quiet period, message by message", async () => {
+  const chat = fakeChat();
+  const late = [];
+  const { agent, reports } = agentFor(chat, { rules: SHORT, onLate: (answer) => late.push(answer) });
+  await run(agent, { debug: false });
+  chat.deliver(bot("First part.", 2800));
+  chat.deliver(bot("Second part.", 2900));
+  assert.deepEqual(late.map((l) => l.done), [false, false]);
+  await wait(80);
+  assert.deepEqual(late.at(-1), { text: "First part.\n\nSecond part.", done: true });
+  assert.deepEqual([reports[1].endReason, reports[1].error], ["quiet", "late_reply"]);
+});
+
+test("a late reply that arrives after the next question is sent is dropped", async () => {
+  const lateForOne = bot(`The answer to one.${END_MARK}`, 2800);
+  const chat = fakeChat({ sentAt: { two: 4000 }, script: { two: [lateForOne, bot(`Answer two.${END_MARK}`, 4500)] } });
+  const late = [];
+  const first = agentFor(chat, { rules: SHORT, onLate: (answer) => late.push(answer) });
+  await run(first.agent, { text: "one", debug: false });
+  assert.equal(first.agent.awaitingLate, true);
+  const second = agentFor(chat, { rules: SHORT, onLate: () => assert.fail("no late wait for turn two") });
+  const { events } = await run(second.agent, { text: "two", debug: false });
+  assert.equal(first.agent.awaitingLate, false);
+  assert.deepEqual(deltas(events), ["Answer two."]);
+  assert.deepEqual(late, []);
+  assert.equal(first.reports.length, 1);
+  assert.equal(chat.listeners, 0);
+});
+
+test("the page ends the wait with cancelLate, and a later reply is dropped", async () => {
+  const chat = fakeChat();
+  const late = [];
+  const { agent, reports } = agentFor(chat, { rules: SHORT, onLate: (answer) => late.push(answer) });
+  await run(agent, { debug: false });
+  agent.cancelLate();
+  assert.equal(chat.listeners, 0);
+  chat.deliver(bot(`Too late.${END_MARK}`, 2800));
+  assert.deepEqual(late, []);
+  assert.equal(reports.length, 1);
+});
+
+test("without onLate a turn that got the no-reply line keeps no listener", async () => {
+  const chat = fakeChat();
+  const { agent } = agentFor(chat, { rules: SHORT });
+  await run(agent, { debug: false });
+  assert.equal(agent.awaitingLate, false);
+  assert.equal(chat.listeners, 0);
 });

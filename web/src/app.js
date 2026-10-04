@@ -12,7 +12,7 @@ import { DEBUG_FLAG, createDebugRun, isTimingEvent, withDebugProp } from "./debu
 import { inviteBody, inviteResult, signInRefusal } from "./invite-core.js";
 import { oidcEndpoints, logoutUrl } from "./oidc.js";
 import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, manifestUrl, checkManifest, mergeFeatures, brandFor, agentUrlFor, suggestionsFor, themeFor, wantsWarmStart, warmDue, warmRunInput, THEME_KEYS, PROJECTS_URL, projectNames, projectCard, switcherEntries, connectChatFor } from "./project.js";
-import { CONNECT_BRIDGE_FLAG, createConnectChatClient, reportBody } from "./connect-chat.js";
+import { CONNECT_BRIDGE_FLAG, createConnectChatClient, createReportSender, onNetworkBack } from "./connect-chat.js";
 import { ConnectChatAgent } from "./connect-agent.js";
 
 // The chatjs bundle (web/src/vendor/chatjs.js), loaded only by a page that uses the Connect
@@ -284,19 +284,24 @@ const CHATJS_MODULE = "/vendor/chatjs.js";
       })
     : null;
   // One report per turn, after it ends and off the answer's path: ids, Connect's times and
-  // the end reason, never reply text or a token.
+  // the end reason, never reply text or a token. A report the network lost waits in a
+  // small memory queue and goes again before the next one and when the network is back.
+  const reports = connectRules && connectRules.report
+    ? createReportSender({ url: connectRules.report, fetch: (url, init) => fetch(url, init), getToken: () => tokens.access_token })
+    : null;
   function sendReport(record) {
-    if (!connectRules || !connectRules.report) return;
-    const body = reportBody(record);
-    if (!body) return;
-    setTimeout(() => {
-      fetch(connectRules.report, {
-        method: "POST",
-        keepalive: true,
-        headers: { authorization: `Bearer ${tokens.access_token}`, "content-type": "application/json" },
-        body: JSON.stringify(body),
-      }).catch(() => {});
-    }, 0);
+    if (!reports) return;
+    setTimeout(() => reports.send(record), 0);
+  }
+  // A network that comes back: queued reports go again and every chat reads what its
+  // socket may have missed (a socket can stay open through an outage and miss replies).
+  if (connectChats || reports) window.addEventListener("online", onNetworkBack({ chats: connectChats, reports }));
+  // The last Connect turn whose question got the no-reply line and still awaits a late
+  // answer; the next question, a thread switch, a new chat or sign-out ends the wait.
+  let lateWait = null;
+  function endLateWait() {
+    if (lateWait) lateWait.cancel();
+    lateWait = null;
   }
 
   // The `guppi` object a project's extension module receives (web/src/extensions.js).
@@ -384,6 +389,7 @@ const CHATJS_MODULE = "/vendor/chatjs.js";
   }
 
   function switchToThread(thread) {
+    endLateWait();
     if (connectChats && thread.id !== threadId) connectChats.leave(threadId);
     threadId = thread.id;
     extensions.notifyThread(threadId);
@@ -632,6 +638,7 @@ const CHATJS_MODULE = "/vendor/chatjs.js";
 
   async function signOut() {
     // The Connect chats end before the redirect, which would cancel the call (capped at 2 s).
+    endLateWait();
     if (connectChats) await connectChats.signOut();
     // An OIDC issuer's logout takes the id token as a hint, so it is kept until the URL is built.
     const idToken = tokens.id_token;
@@ -660,6 +667,7 @@ const CHATJS_MODULE = "/vendor/chatjs.js";
 
   function clearThreadState() {
     // The chat of the thread being left ends when the next one starts (previousContactId).
+    endLateWait();
     if (connectChats) connectChats.leave(threadId);
     messages = [];
     threadId = crypto.randomUUID();
@@ -1007,6 +1015,8 @@ const CHATJS_MODULE = "/vendor/chatjs.js";
   // ---- Send / retry ----
 
   async function send(text) {
+    // A late answer to the previous question is no longer shown once this one is sent.
+    endLateWait();
     const userMessage = { id: crypto.randomUUID(), role: "user", content: text };
     messages.push(userMessage);
     await persistCurrentThread();
@@ -1025,6 +1035,13 @@ const CHATJS_MODULE = "/vendor/chatjs.js";
     refs.text.textContent = "";
     refs.attachments.textContent = "";
     await runTurn(messageList, refs);
+  }
+
+  // The reply with its no-reply line (the last thing in it) replaced by a late answer.
+  function withLateAnswer(reply, answer) {
+    const line = connectRules && connectRules.lines ? connectRules.lines.noReply : "";
+    const kept = line && reply.endsWith(line) ? reply.slice(0, reply.length - line.length) : "";
+    return kept + answer;
   }
 
   // ---- Stream handling: @ag-ui/client's HttpAgent reads the SSE stream ----
@@ -1139,6 +1156,19 @@ const CHATJS_MODULE = "/vendor/chatjs.js";
     // One agent per turn: the page owns the thread and resends it whole, so nothing is
     // kept on the client object between turns. The custom fetch turns a non-2xx answer
     // into a failure, which the client would otherwise read as an empty stream.
+    // A late answer to a turn that ended with the no-reply line replaces that line in this
+    // same reply, as plain text, and in the stored thread. It can come before the reply is
+    // committed below, which then uses it.
+    let lateText = null;
+    let committed = null;
+    const onLate = ({ text, done }) => {
+      lateText = text;
+      if (!committed) return;
+      committed.content = withLateAnswer(draft, text);
+      refs.text.textContent = committed.content;
+      scrollIfFollowing();
+      if (done) persistCurrentThread();
+    };
     const agent = connectReady ? new ConnectChatAgent({
       threadId: turnThread,
       initialMessages: messageList.map(({ id, role, content }) => ({ id, role, content })),
@@ -1147,6 +1177,7 @@ const CHATJS_MODULE = "/vendor/chatjs.js";
       ready: connectReady,
       recover: (chat) => connectChats.recover(turnThread, chat),
       onReport: sendReport,
+      onLate,
       startedAt: turnStartedAt,
     }) : new HttpAgent({
       url: agentUrl,
@@ -1272,9 +1303,17 @@ const CHATJS_MODULE = "/vendor/chatjs.js";
       showError(false, true);
       return;
     }
-    refs.text.textContent = draft;
-    const assistantMessage = { id: crypto.randomUUID(), role: "assistant", content: draft };
+    const content = lateText === null ? draft : withLateAnswer(draft, lateText);
+    refs.text.textContent = content;
+    const assistantMessage = { id: crypto.randomUUID(), role: "assistant", content };
     messages.push(assistantMessage);
+    committed = assistantMessage;
+    if (agent instanceof ConnectChatAgent && agent.awaitingLate && threadId === turnThread) {
+      endLateWait();
+      lateWait = { cancel: () => agent.cancelLate() };
+    } else if (agent instanceof ConnectChatAgent) {
+      agent.cancelLate();
+    }
     await persistCurrentThread();
     // Only a committed reply gets the control: never the streaming draft above, and
     // never an interrupted one, since that path returns from showError() above instead.

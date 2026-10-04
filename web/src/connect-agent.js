@@ -8,6 +8,11 @@
 //
 // The agent never sees a credential: it gets a chat from the transport's own start path
 // (web/src/connect-chat.js) and calls send and listen on it.
+//
+// A turn that ends on the turn limit with no reply leaves its question awaiting a late
+// answer (a LateWait on the chat) until the next question: a reply that arrives later, on
+// the socket or from a catch-up, goes to `onLate` to replace the no-reply line, and the run
+// gets a second report marked late.
 
 import { AbstractAgent } from "@ag-ui/client";
 import { Observable } from "rxjs";
@@ -37,6 +42,7 @@ const NOTES = {
   reconnected: "a fresh connection for the same contact",
   stale: "a previous turn's replies arrived late and were not shown",
   noReply: "no reply within the turn limit",
+  late: "a late reply replaced the no-reply line",
   designerError: "the designer reported an error",
   tooLong: "message too long: nothing sent",
   signin: "the chat start could not confirm the sign-in",
@@ -47,11 +53,15 @@ export class ConnectChatAgent extends AbstractAgent {
    * `ready` is the transport's answer for this thread: `{ ok: true, chat, waitedMs }` or
    * `{ ok: false, reason: "signin" }`. `recover(chat)` handles a refused send (one
    * reconnect, then a new chat). `onReport(record)` gets the turn's report fields when the
-   * run ends. `clock` is a millisecond clock, `timers` the setTimeout family.
+   * run ends. `onLate({ text, done })`, when given, gets a late answer to a turn that
+   * ended with the no-reply line: the answer so far as plain text, and `done` once it
+   * ended. `clock` is a millisecond clock, `timers` the setTimeout family.
    */
-  constructor({ rules, ready, recover = async () => ({ ok: false, reason: "unavailable" }), onReport = () => {}, clock, timers, pingMs = PING_MS, startedAt, ...config }) {
+  constructor({ rules, ready, recover = async () => ({ ok: false, reason: "unavailable" }), onReport = () => {}, onLate = null, clock, timers, pingMs = PING_MS, startedAt, ...config }) {
     super(config);
     this.startedAt = startedAt;
+    this.onLate = onLate;
+    this.lateWait = null;
     this.rules = rules;
     this.ready = ready;
     this.recover = recover;
@@ -72,6 +82,16 @@ export class ConnectChatAgent extends AbstractAgent {
   abortRun() {
     this.abortController.abort();
     super.abortRun();
+  }
+
+  /** True while the run's question, which got the no-reply line, awaits a late answer. */
+  get awaitingLate() {
+    return Boolean(this.lateWait && !this.lateWait.stopped);
+  }
+
+  /** The next question was sent (or the page left the thread): a late answer is dropped. */
+  cancelLate() {
+    if (this.lateWait) this.lateWait.cancel();
   }
 
   run(input) {
@@ -156,6 +176,9 @@ class Turn {
       return this.finish(null);
     }
     this.chat = ready.chat;
+    // A new question on this chat ends the previous question's wait for a late answer.
+    const waiting = lateWaits.get(this.chat);
+    if (waiting) waiting.cancel();
     if (this.chat.takeRestartLine()) {
       this.notes.add(NOTES.restarted);
       this.text(this.rules.lines.restarted);
@@ -210,6 +233,7 @@ class Turn {
       sent = await this.chat.send(text);
     }
     if (this.stopped) return;
+    this.sent = sent;
     this.steps.push({ name: "SendMessage", start_ms: sendStart, end_ms: this.ms(), lane: "connect" });
     this.take(this.assembler.sent(sent));
   }
@@ -286,6 +310,9 @@ class Turn {
     if (this.debug) this.emit({ type: "CUSTOM", name: TIMING_EVENT_NAME, value: timing });
     this.emit({ type: "RUN_FINISHED", threadId: this.input.threadId, runId: this.input.runId });
     this.report(summary ? summary.reason : null, summary ? summary.error : null, summary, timing);
+    if (summary && summary.reason === "no_reply" && this.agent.onLate && this.chat && this.sent && !this.chat.closed) {
+      this.agent.lateWait = new LateWait(this);
+    }
     this.close();
   }
 
@@ -351,5 +378,123 @@ class Turn {
   stop() {
     this.clearTimers();
     this.stopped = true;
+  }
+}
+
+// The chat's question that awaits a late answer, at most one per chat.
+const lateWaits = new WeakMap();
+
+/**
+ * One question's late answer after its turn ended with the no-reply line. It reads the
+ * chat with a late assembler (the same Id and time checks, no turn limit) until the answer
+ * ends, the next question is sent, or the socket fails. The answer goes to the agent's
+ * `onLate` as it grows; once it ends, the run gets a second report: the late answer's own
+ * end reason with the error code `late_reply`, under the run id with `:late` added, since
+ * the report route writes one run line per run id.
+ */
+class LateWait {
+  constructor(turn) {
+    this.turn = turn;
+    this.agent = turn.agent;
+    this.chat = turn.chat;
+    this.clock = turn.clock;
+    this.timers = turn.timers;
+    this.stopped = false;
+    this.text = "";
+    this.timer = null;
+    this.firstMs = null;
+    const previous = lateWaits.get(this.chat);
+    if (previous) previous.cancel();
+    lateWaits.set(this.chat, this);
+    this.assembler = createTurnAssembler({ rules: turn.rules, now: this.clock, late: true });
+    this.assembler.sent(turn.sent);
+    this.unlisten = this.chat.listen(
+      (item) => this.take(this.assembler.push(item)),
+      () => this.cancel(),
+    );
+  }
+
+  take(outputs) {
+    if (this.stopped) return;
+    let grew = false;
+    for (const output of outputs) {
+      if (output.type !== "text" || !output.text) continue;
+      if (this.text && !this.text.endsWith("\n")) this.text += "\n\n";
+      this.text += output.text;
+      grew = true;
+    }
+    if (grew && this.firstMs === null) this.firstMs = this.turn.ms();
+    if (grew) this.tell(false);
+    if (this.timer) this.timers.clearTimeout(this.timer);
+    this.timer = null;
+    if (this.assembler.done) {
+      this.end();
+      return;
+    }
+    const deadline = this.assembler.deadline();
+    if (deadline === null) return;
+    this.timer = this.timers.setTimeout(() => {
+      this.timer = null;
+      this.take(this.assembler.tick());
+    }, Math.max(0, deadline - this.clock()));
+  }
+
+  tell(done) {
+    try {
+      this.agent.onLate({ text: this.text, done });
+    } catch {
+      // The page's handler never changes the wait.
+    }
+  }
+
+  end() {
+    const summary = this.assembler.summary();
+    this.cancel();
+    if (summary.closed) {
+      this.chat.markClosed();
+      if (summary.reason !== "ended") this.chat.disconnect();
+    }
+    if (!this.text) return;
+    this.tell(true);
+    const total = this.turn.ms();
+    const notes = [NOTES.late];
+    const sent = Date.parse(summary.sentAt);
+    const first = Date.parse(summary.firstItemAt);
+    if (Number.isFinite(sent) && Number.isFinite(first)) notes.push(`Connect time: the late reply ${first - sent} ms after the question`);
+    const info = this.chat.info;
+    try {
+      this.agent.onReport({
+        contactId: this.chat.contactId,
+        runId: `${this.turn.input.runId}:late`,
+        threadId: this.turn.input.threadId,
+        sentAt: summary.sentAt,
+        firstItemAt: summary.firstItemAt,
+        lastItemAt: summary.lastItemAt,
+        endReason: summary.reason,
+        error: "late_reply",
+        transport: "connect",
+        timing: {
+          steps: [
+            { name: "late reply", start_ms: this.firstMs ?? total, end_ms: null, lane: "connect" },
+            { name: "total", start_ms: 0, end_ms: total, lane: "page" },
+          ],
+          total_ms: total,
+          ids: { contact: info ? info.contactId : "", run: this.turn.input.runId, transport: "connect" },
+          notes,
+        },
+      });
+    } catch {
+      // A report never changes the reply.
+    }
+  }
+
+  cancel() {
+    if (this.stopped) return;
+    this.stopped = true;
+    if (this.timer) this.timers.clearTimeout(this.timer);
+    this.timer = null;
+    if (this.unlisten) this.unlisten();
+    this.unlisten = null;
+    if (lateWaits.get(this.chat) === this) lateWaits.delete(this.chat);
   }
 }
