@@ -81,19 +81,22 @@ def claims_of(token: str) -> dict:
     return json.loads(issuer.unb64u(token.split(".")[1]))
 
 
+CANVAS = "hr.tools.policy hr.tools.profile.read hr.tools.pay.statements.read"
+
+
 def chain(env):
-    """T1, T1p and a Profile T2 the way the hops get them."""
-    _, t1 = exchange(env, "hr-bridge", okta_token(), "hr.agents")
-    _, t1p = exchange(env, "hr-bridge", okta_token(), "hr.tools.policy hr.tools.profile.read hr.tools.pay.read")
+    """The Profile agents token, the canvas token and a Profile T2, as the hops get them."""
+    _, t1 = exchange(env, "hr-bridge", okta_token(), "hr.agents.profile")
+    _, t1p = exchange(env, "hr-bridge", okta_token(), CANVAS)
     _, t2 = exchange(env, "hr-agent-profile", t1["access_token"], "hr.tools.policy hr.tools.profile.read hr.tools.profile.write")
     return t1["access_token"], t1p["access_token"], t2["access_token"]
 
 
 def test_the_bridge_gets_an_agents_token_naming_the_employee(env):
-    status, body = exchange(env, "hr-bridge", okta_token(), "hr.agents")
+    status, body = exchange(env, "hr-bridge", okta_token(), "hr.agents.profile")
     assert status == 200 and body["issued_token_type"] == issuer.ACCESS_TOKEN_TYPE
     claims = claims_of(body["access_token"])
-    assert claims["iss"] == OWN and claims["aud"] == "api://hr-agents" and claims["scope"] == "hr.agents"
+    assert claims["iss"] == OWN and claims["aud"] == "api://hr-agents/profile" and claims["scope"] == "hr.agents.profile"
     assert claims["sub"] == UID and claims["client_id"] == "hr-bridge" and claims["act"] == {"sub": "hr-bridge"}
     assert claims["exp"] == NOW + 3000 - 0 and "scp" not in claims
     header = json.loads(issuer.unb64u(body["access_token"].split(".")[0]))
@@ -101,31 +104,44 @@ def test_the_bridge_gets_an_agents_token_naming_the_employee(env):
 
 
 def test_tokens_never_outlive_the_subject_or_an_hour(env):
-    _, short = exchange(env, "hr-bridge", okta_token(exp=NOW + 600), "hr.agents")
-    _, long = exchange(env, "hr-bridge", okta_token(exp=NOW + 9000), "hr.agents")
+    _, short = exchange(env, "hr-bridge", okta_token(exp=NOW + 600), "hr.agents.pay")
+    _, long = exchange(env, "hr-bridge", okta_token(exp=NOW + 9000), "hr.agents.pay")
     assert claims_of(short["access_token"])["exp"] == NOW + 600
     assert claims_of(long["access_token"])["exp"] == NOW + 3600
 
 
-def test_the_canvas_token_reads_but_cannot_write(env):
-    status, body = exchange(env, "hr-bridge", okta_token(), "hr.tools.policy hr.tools.profile.read hr.tools.pay.read")
+def test_the_canvas_token_reads_but_cannot_write_or_see_bank_details(env):
+    status, body = exchange(env, "hr-bridge", okta_token(), CANVAS)
     assert status == 200 and claims_of(body["access_token"])["aud"] == "api://hr-tools"
     assert exchange(env, "hr-bridge", okta_token(), "hr.tools.pay.write")[1] == {"error": "invalid_scope"}
+    assert exchange(env, "hr-bridge", okta_token(), "hr.tools.pay.read")[1] == {"error": "invalid_scope"}
 
 
 def test_scopes_for_two_audiences_are_refused(env):
-    assert exchange(env, "hr-bridge", okta_token(), "hr.agents hr.tools.policy")[1] == {"error": "invalid_scope"}
+    assert exchange(env, "hr-bridge", okta_token(), "hr.agents.pay hr.tools.policy")[1] == {"error": "invalid_scope"}
+    assert exchange(env, "hr-bridge", okta_token(), "hr.agents.pay hr.agents.travel")[1] == {"error": "invalid_scope"}
+
+
+def agents_token(env, domain: str) -> str:
+    return exchange(env, "hr-bridge", okta_token(), f"hr.agents.{domain}")[1]["access_token"]
 
 
 def test_each_sub_agent_gets_only_its_domain(env):
-    t1, _, _ = chain(env)
-    status, body = exchange(env, "hr-agent-pay", t1, "hr.tools.policy hr.tools.pay.read hr.tools.pay.write")
+    status, body = exchange(env, "hr-agent-pay", agents_token(env, "pay"),
+                            "hr.tools.policy hr.tools.pay.read hr.tools.pay.write")
     assert status == 200
     claims = claims_of(body["access_token"])
     assert claims["act"] == {"sub": "hr-agent-pay", "act": {"sub": "hr-bridge"}} and claims["sub"] == UID
-    assert exchange(env, "hr-agent-travel", t1, "hr.tools.pay.read")[1] == {"error": "invalid_scope"}
-    assert exchange(env, "hr-agent-profile", t1, "hr.tools.pay.read")[1] == {"error": "invalid_scope"}
-    assert exchange(env, "hr-agent-travel", t1, "hr.tools.policy")[0] == 200
+    assert exchange(env, "hr-agent-travel", agents_token(env, "travel"), "hr.tools.pay.read")[1] == {"error": "invalid_scope"}
+    assert exchange(env, "hr-agent-profile", agents_token(env, "profile"), "hr.tools.pay.read")[1] == {"error": "invalid_scope"}
+    assert exchange(env, "hr-agent-travel", agents_token(env, "travel"), "hr.tools.policy")[0] == 200
+
+
+def test_an_agents_token_serves_only_its_own_sub_agent(env):
+    # A Travel runtime that holds the Travel agents token cannot become the Pay agent.
+    travel = agents_token(env, "travel")
+    assert exchange(env, "hr-agent-pay", travel, "hr.tools.policy")[1] == {"error": "invalid_grant"}
+    assert exchange(env, "hr-agent-profile", travel, "hr.tools.policy")[1] == {"error": "invalid_grant"}
 
 
 def test_sub_agents_accept_only_the_bridges_agents_token(env):
@@ -137,8 +153,8 @@ def test_sub_agents_accept_only_the_bridges_agents_token(env):
 
 def test_the_bridge_accepts_only_okta_tokens(env):
     t1, t1p, _ = chain(env)
-    assert exchange(env, "hr-bridge", t1p, "hr.agents")[1] == {"error": "invalid_grant"}
-    assert exchange(env, "hr-bridge", t1, "hr.agents")[1] == {"error": "invalid_grant"}
+    assert exchange(env, "hr-bridge", t1p, "hr.agents.profile")[1] == {"error": "invalid_grant"}
+    assert exchange(env, "hr-bridge", t1, "hr.agents.profile")[1] == {"error": "invalid_grant"}
 
 
 def test_the_tools_gateway_carries_the_callers_scopes_to_the_runtime(env):
@@ -150,7 +166,7 @@ def test_the_tools_gateway_carries_the_callers_scopes_to_the_runtime(env):
     assert claims["scope"] == "hr.tools.policy hr.tools.profile.read hr.tools.profile.write"
     assert claims["act"] == {"sub": "hr-tools-gateway", "act": {"sub": "hr-agent-profile", "act": {"sub": "hr-bridge"}}}
     _, body = exchange(env, "hr-tools-gateway", t1p, "hr.tools.policy")
-    assert claims_of(body["access_token"])["scope"] == "hr.tools.policy hr.tools.profile.read hr.tools.pay.read"
+    assert claims_of(body["access_token"])["scope"] == CANVAS
 
 
 def test_the_tools_gateway_refuses_tokens_not_meant_for_the_tools_gateway(env):
@@ -162,8 +178,8 @@ def test_the_tools_gateway_refuses_tokens_not_meant_for_the_tools_gateway(env):
 
 
 def test_client_authentication(env):
-    assert exchange(env, "hr-bridge", okta_token(), "hr.agents", secret="wrong") == (401, {"error": "invalid_client"})
-    assert exchange(env, "nobody", okta_token(), "hr.agents") == (401, {"error": "invalid_client"})
+    assert exchange(env, "hr-bridge", okta_token(), "hr.agents.profile", secret="wrong") == (401, {"error": "invalid_client"})
+    assert exchange(env, "nobody", okta_token(), "hr.agents.profile") == (401, {"error": "invalid_client"})
     deps, settings = env
     event = {"requestContext": {"http": {"method": "POST"}}, "rawPath": "/token",
              "headers": {"authorization": "Basic %%%not-base64"}, "body": ""}
@@ -185,7 +201,7 @@ def test_okta_token_checks(env, overrides, expected):
     if overrides.get("uid", 1) is None:
         token = signed(OKTA_KEY, {"alg": "RS256", "kid": "okta-kid"},
                        {"iss": OKTA, "aud": "api://guppi", "cid": CHAT_APP, "iat": NOW, "exp": NOW + 600})
-    assert exchange(env, "hr-bridge", token, "hr.agents")[1] == {"error": expected}
+    assert exchange(env, "hr-bridge", token, "hr.agents.profile")[1] == {"error": expected}
 
 
 def test_signature_and_header_checks(env):
@@ -196,10 +212,10 @@ def test_signature_and_header_checks(env):
     none_alg = f"{issuer.b64u(json.dumps({'alg': 'none', 'kid': 'okta-kid'}).encode())}.{body}."
     hs256 = f"{issuer.b64u(json.dumps({'alg': 'HS256', 'kid': 'okta-kid'}).encode())}.{body}.{sig}"
     for token in (tampered, short_sig, none_alg, hs256, "not-a-token", ""):
-        assert exchange(env, "hr-bridge", token, "hr.agents")[1] == {"error": "invalid_grant"}
+        assert exchange(env, "hr-bridge", token, "hr.agents.profile")[1] == {"error": "invalid_grant"}
     other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     forged = signed(other_key, {"alg": "RS256", "kid": "okta-kid"}, claims_of(good))
-    assert exchange(env, "hr-bridge", forged, "hr.agents")[1] == {"error": "invalid_grant"}
+    assert exchange(env, "hr-bridge", forged, "hr.agents.profile")[1] == {"error": "invalid_grant"}
 
 
 def test_own_tokens_need_typ_and_kid(env):
@@ -212,9 +228,9 @@ def test_own_tokens_need_typ_and_kid(env):
 
 
 def test_other_grants_and_actor_tokens_are_refused(env):
-    assert exchange(env, "hr-bridge", okta_token(), "hr.agents", grant_type="client_credentials")[1] == \
+    assert exchange(env, "hr-bridge", okta_token(), "hr.agents.profile", grant_type="client_credentials")[1] == \
         {"error": "unsupported_grant_type"}
-    assert exchange(env, "hr-bridge", okta_token(), "hr.agents", actor_token="x")[1] == {"error": "invalid_request"}
+    assert exchange(env, "hr-bridge", okta_token(), "hr.agents.profile", actor_token="x")[1] == {"error": "invalid_request"}
 
 
 def test_unknown_okta_keys_are_refetched_at_most_once_a_minute(env):
@@ -222,14 +238,14 @@ def test_unknown_okta_keys_are_refetched_at_most_once_a_minute(env):
     calls, clock = [], [NOW]
     deps.now = lambda: clock[0]
     deps.fetch_json = lambda url: calls.append(url) or {"keys": [jwk_of(OKTA_KEY, "okta-kid")]}
-    assert exchange(env, "hr-bridge", okta_token(), "hr.agents")[0] == 200
+    assert exchange(env, "hr-bridge", okta_token(), "hr.agents.profile")[0] == 200
     rotated = signed(OKTA_KEY, {"alg": "RS256", "kid": "rotated"}, claims_of(okta_token()))
     for _ in range(5):
-        exchange(env, "hr-bridge", rotated, "hr.agents")
+        exchange(env, "hr-bridge", rotated, "hr.agents.profile")
     assert len(calls) == 1  # within the minute of the first fill, an unknown kid waits
     clock[0] += 61
     for _ in range(5):
-        exchange(env, "hr-bridge", rotated, "hr.agents")
+        exchange(env, "hr-bridge", rotated, "hr.agents.profile")
     assert len(calls) == 2  # then one refetch, and no more for a minute
 
 
@@ -252,4 +268,62 @@ def test_discovery_lists_the_scopes(env):
     deps, settings = env
     doc = issuer.discovery(deps, settings)
     assert doc["issuer"] == OWN and doc["token_endpoint"] == f"{OWN}/token"
-    assert "hr.agents" in doc["scopes_supported"] and doc["grant_types_supported"] == [issuer.TOKEN_EXCHANGE]
+    assert "hr.agents.pay" in doc["scopes_supported"] and doc["grant_types_supported"] == [issuer.TOKEN_EXCHANGE]
+
+
+
+def test_a_subject_about_to_expire_is_refused(env):
+    assert exchange(env, "hr-bridge", okta_token(exp=NOW + 30), "hr.agents.pay")[1] == {"error": "invalid_grant"}
+    assert exchange(env, "hr-bridge", okta_token(exp=NOW + 120), "hr.agents.pay")[0] == 200
+
+
+def test_client_secret_post_and_url_encoded_basic(env):
+    deps, settings = env
+    deps.client_secrets["hr-bridge"] = "a b:c"
+    body = urllib.parse.urlencode({"grant_type": issuer.TOKEN_EXCHANGE, "subject_token": okta_token(),
+                                   "scope": "hr.agents.pay", "client_id": "hr-bridge", "client_secret": "a b:c"})
+    event = {"requestContext": {}, "httpMethod": "POST", "path": "/token", "headers": {}, "body": body}
+    assert issuer.token(event, deps, settings)["statusCode"] == 200
+    encoded = base64.b64encode(f"hr-bridge:{urllib.parse.quote('a b:c')}".encode()).decode()
+    body = urllib.parse.urlencode({"grant_type": issuer.TOKEN_EXCHANGE, "subject_token": okta_token(), "scope": "hr.agents.pay"})
+    event = {"httpMethod": "POST", "path": "/token", "headers": {"Authorization": f"Basic {encoded}"}, "body": body}
+    assert issuer.token(event, deps, settings)["statusCode"] == 200
+
+
+def test_an_unknown_subject_token_type_is_refused(env):
+    status, body = exchange(env, "hr-bridge", okta_token(), "hr.agents.pay",
+                            subject_token_type="urn:ietf:params:oauth:token-type:id_token")
+    assert (status, body) == (400, {"error": "invalid_request"})
+
+
+def test_cached_okta_keys_survive_an_okta_outage(env):
+    deps, settings = env
+    assert exchange(env, "hr-bridge", okta_token(), "hr.agents.pay")[0] == 200
+    clock = [NOW + 2 * issuer.JWKS_TTL]
+    deps.now = lambda: clock[0]
+
+    def down(url):
+        raise OSError("okta unreachable")
+
+    deps.fetch_json = down
+    token = okta_token(iat=clock[0] - 10, exp=clock[0] + 600)
+    assert exchange(env, "hr-bridge", token, "hr.agents.pay")[0] == 200
+
+
+def test_rest_api_events_and_cacheable_reads(env):
+    deps, settings = env
+    issuer._deps, issuer._settings = deps, settings
+    try:
+        for path in ("/jwks.json", "/.well-known/openid-configuration"):
+            response = issuer.handler({"httpMethod": "GET", "path": path, "headers": {}}, None)
+            assert response["statusCode"] == 200 and response["headers"]["cache-control"] == "public, max-age=300"
+        assert issuer.handler({"httpMethod": "GET", "path": "/token", "headers": {}}, None)["statusCode"] == 404
+    finally:
+        issuer._deps = issuer._settings = None
+
+
+def test_the_log_names_tokens_by_jti_never_the_employee(env, capsys):
+    exchange(env, "hr-bridge", okta_token(jti="okta-jti-1"), "hr.agents.pay")
+    line = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert line["subject_jti"] == "okta-jti-1" and len(line["jti"]) == 32
+    assert UID not in json.dumps(line) and "person@example.com" not in json.dumps(line)

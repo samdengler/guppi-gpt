@@ -219,7 +219,8 @@ def test_nightly_ingestion_is_a_scheduler_universal_target(template):
 
 def test_web_acl_has_three_blocking_rules_associated_with_the_edge_gateway(template):
     acls = template.find_resources("AWS::WAFv2::WebACL")
-    (acl,) = acls.values()
+    (acl,) = [a for a in acls.values()
+              if a["Properties"]["VisibilityConfig"]["MetricName"] == "GuppiGptEdgeWebAcl"]
     assert acl["Properties"]["Scope"] == "REGIONAL"
     rules = acl["Properties"]["Rules"]
     assert len(rules) == 3
@@ -778,6 +779,7 @@ def test_vended_log_groups_have_30_day_retention_under_the_shared_prefix(templat
         "/aws/vendedlogs/states/guppi-gpt-invite-mailer",
         "/aws/lambda/guppi-gpt-pre-sign-up",
         "/aws/lambda/guppi-gpt-obo-issuer",
+        "/aws/apigateway/guppi-obo-issuer",
     }
     for group in groups.values():
         assert group["Properties"]["RetentionInDays"] == 30
@@ -1274,8 +1276,35 @@ def test_obo_credential_providers_reference_the_stacks_secrets(template):
         assert config["OnBehalfOfTokenExchangeConfig"]["GrantType"] == "TOKEN_EXCHANGE"
 
 
-def test_obo_issuer_is_throttled_and_capped(template):
-    template.has_resource_properties("AWS::ApiGatewayV2::Stage", {
-        "DefaultRouteSettings": {"ThrottlingBurstLimit": 40, "ThrottlingRateLimit": 20}})
+def test_obo_issuer_is_throttled_capped_and_behind_a_per_ip_rate_rule(template):
+    # guppi-hr critique of the build, finding 1: a REST API, so a web ACL can sit in front.
+    template.has_resource_properties("AWS::ApiGateway::Stage", {
+        "StageName": "prod",
+        "MethodSettings": Match.array_with([
+            Match.object_like({"HttpMethod": "*", "ResourcePath": "/*", "ThrottlingRateLimit": 20, "ThrottlingBurstLimit": 40}),
+            Match.object_like({"HttpMethod": "GET", "ResourcePath": "/~1jwks.json", "ThrottlingRateLimit": 50}),
+        ]),
+        "AccessLogSetting": Match.any_value(),
+    })
     template.has_resource_properties("AWS::Lambda::Function", {
         "FunctionName": "guppi-gpt-obo-issuer", "ReservedConcurrentExecutions": 10, "MemorySize": 1024})
+    (acl,) = [a for a in template.find_resources("AWS::WAFv2::WebACL").values()
+              if a["Properties"]["VisibilityConfig"]["MetricName"] == "GuppiOboIssuerWebAcl"]
+    (rule,) = acl["Properties"]["Rules"]
+    assert rule["Statement"]["RateBasedStatement"]["AggregateKeyType"] == "IP" and rule["Action"] == {"Block": {}}
+    assert len(template.find_resources("AWS::WAFv2::WebACLAssociation")) == 2
+
+
+def test_obo_secrets_have_stable_names_and_no_service_grant(template):
+    secrets = {s["Properties"].get("Name"): s for s in template.find_resources("AWS::SecretsManager::Secret").values()}
+    for client in ("hr-bridge", "hr-agent-profile", "hr-agent-pay", "hr-agent-travel", "hr-tools-gateway"):
+        assert f"guppi/obo/{client}" in secrets
+    for policy in template.find_resources("AWS::SecretsManager::ResourcePolicy").values():
+        assert "bedrock-agentcore.amazonaws.com" not in json.dumps(policy)
+
+
+def test_the_account_cannot_grant_itself_signing(template):
+    (key,) = [k for k in template.find_resources("AWS::KMS::Key").values() if k["Properties"].get("KeySpec") == "RSA_2048"]
+    for statement in key["Properties"]["KeyPolicy"]["Statement"]:
+        actions = statement["Action"] if isinstance(statement["Action"], list) else [statement["Action"]]
+        assert not {"kms:CreateGrant", "kms:Create*", "kms:Put*"} & set(actions)

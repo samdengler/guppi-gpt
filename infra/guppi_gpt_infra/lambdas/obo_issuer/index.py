@@ -41,6 +41,9 @@ ACCESS_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:access_token"
 SUBJECT_TOKEN_TYPES = {ACCESS_TOKEN_TYPE, "urn:ietf:params:oauth:token-type:jwt"}
 LIFETIME = 3600
 LEEWAY = 60
+# A subject token this close to expiry is refused rather than traded for one that would
+# arrive already expired.
+MIN_REMAINING = 60
 JWKS_TTL = 3600
 JWKS_REFETCH_MIN_INTERVAL = 60
 MAX_TOKEN_LENGTH = 8192
@@ -239,6 +242,8 @@ def verify(token: str, deps: Deps, settings: Settings) -> tuple[dict, str]:
         raise Refused(400, "invalid_grant", "expired")
     if claims["iat"] > now + LEEWAY or claims.get("nbf", 0) > now + LEEWAY:
         raise Refused(400, "invalid_grant", "not yet valid")
+    if claims["exp"] - now < MIN_REMAINING:
+        raise Refused(400, "invalid_grant", "expires too soon")
     if source == "okta":
         if claims.get("aud") != settings.okta_audience:
             raise Refused(400, "invalid_grant", "okta audience")
@@ -249,11 +254,19 @@ def verify(token: str, deps: Deps, settings: Settings) -> tuple[dict, str]:
     return claims, source
 
 
+def header(event: dict, name: str) -> str:
+    """A request header by name, whatever its case (REST API events keep the caller's)."""
+    for key, value in (event.get("headers") or {}).items():
+        if key.lower() == name:
+            return value or ""
+    return ""
+
+
 def client_of(event: dict, form: dict, deps: Deps) -> str:
-    header = (event.get("headers") or {}).get("authorization", "")
+    authorization = header(event, "authorization")
     try:
-        if header[:6].lower() == "basic ":
-            raw = base64.b64decode(header[6:], validate=True).decode()
+        if authorization[:6].lower() == "basic ":
+            raw = base64.b64decode(authorization[6:], validate=True).decode()
             client_id, _, secret = raw.partition(":")
             client_id, secret = urllib.parse.unquote(client_id), urllib.parse.unquote(secret)
         else:
@@ -299,7 +312,7 @@ def grant_for(rule: dict, requested: list[str], claims: dict) -> tuple[str, list
     raise Refused(400, "invalid_scope", "scope not allowed for client")
 
 
-def mint(deps: Deps, client_id: str, claims: dict, source: str, audience: str, scopes: list[str]) -> tuple[str, int]:
+def mint(deps: Deps, client_id: str, claims: dict, source: str, audience: str, scopes: list[str]) -> tuple[str, int, str]:
     now = int(deps.now())
     act: dict[str, Any] = {"sub": client_id}
     if isinstance(claims.get("act"), dict):
@@ -319,12 +332,13 @@ def mint(deps: Deps, client_id: str, claims: dict, source: str, audience: str, s
     header = {"alg": "RS256", "typ": "at+jwt", "kid": deps.kid}
     signing_input = (f"{b64u(json.dumps(header, separators=(',', ':')).encode())}."
                      f"{b64u(json.dumps(payload, separators=(',', ':')).encode())}")
-    return f"{signing_input}.{b64u(deps.sign(signing_input.encode()))}", payload["exp"] - now
+    return f"{signing_input}.{b64u(deps.sign(signing_input.encode()))}", payload["exp"] - now, payload["jti"]
 
 
-def respond(status: int, body: dict) -> dict:
-    return {"statusCode": status, "headers": {"content-type": "application/json", "cache-control": "no-store",
-                                              "pragma": "no-cache"}, "body": json.dumps(body)}
+def respond(status: int, body: dict, cacheable: bool = False) -> dict:
+    # Tokens are never cached; the discovery document and the key may be, for five minutes.
+    cache = {"cache-control": "public, max-age=300"} if cacheable else {"cache-control": "no-store", "pragma": "no-cache"}
+    return {"statusCode": status, "headers": {"content-type": "application/json", **cache}, "body": json.dumps(body)}
 
 
 def log(**fields: Any) -> None:
@@ -351,15 +365,17 @@ def token(event: dict, deps: Deps, settings: Settings) -> dict:
         claims, source = verify(form.get("subject_token", ""), deps, settings)
         subject_allowed(rule, claims, source)
         audience, scopes = grant_for(rule, form.get("scope", "").split(), claims)
-        access_token, expires_in = mint(deps, client_id, claims, source, audience, scopes)
+        access_token, expires_in, jti = mint(deps, client_id, claims, source, audience, scopes)
     except Refused as refused:
         log(route="/token", client=client_id, status=refused.status, error=refused.error, reason=refused.reason)
         return respond(refused.status, {"error": refused.error})
     except Exception as error:  # noqa: BLE001 - never a 500 with a reason in it
         log(route="/token", client=client_id, status=400, error="invalid_request", reason=type(error).__name__)
         return respond(400, {"error": "invalid_request"})
+    # The new token's jti and the subject's, never who it names: an incident can follow a
+    # chain of exchanges back to the Okta token, whose own jti Okta's system log has.
     log(route="/token", client=client_id, status=200, audience=audience, scope=" ".join(scopes),
-        depth=act_depth(claims) + 1)
+        depth=act_depth(claims) + 1, jti=jti, subject_jti=str(claims.get("jti", "")))
     return respond(200, {"access_token": access_token, "issued_token_type": ACCESS_TOKEN_TYPE,
                          "token_type": "Bearer", "expires_in": expires_in, "scope": " ".join(scopes)})
 
@@ -384,12 +400,13 @@ def discovery(deps: Deps, settings: Settings) -> dict:
 
 def handler(event: dict, _context: Any) -> dict:
     deps, settings = _load()
-    method = event.get("requestContext", {}).get("http", {}).get("method", "")
-    path = event.get("rawPath", "")
+    # REST API events (httpMethod, path) since the move to a web ACL; HTTP API events too.
+    method = event.get("httpMethod") or event.get("requestContext", {}).get("http", {}).get("method", "")
+    path = event.get("path") or event.get("rawPath", "")
     if method == "GET" and path == "/.well-known/openid-configuration":
-        return respond(200, discovery(deps, settings))
+        return respond(200, discovery(deps, settings), cacheable=True)
     if method == "GET" and path == "/jwks.json":
-        return respond(200, {"keys": [deps.public_jwk]})
+        return respond(200, {"keys": [deps.public_jwk]}, cacheable=True)
     if method == "POST" and path == "/token":
         return token(event, deps, settings)
     return respond(404, {"error": "not_found"})

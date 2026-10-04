@@ -24,8 +24,7 @@ from pathlib import Path
 
 import aws_cdk as cdk
 from aws_cdk import Duration, RemovalPolicy
-from aws_cdk import aws_apigatewayv2 as apigw
-from aws_cdk import aws_apigatewayv2_integrations as integrations
+from aws_cdk import aws_apigateway as apigateway
 from aws_cdk import aws_bedrockagentcore as agentcore
 from aws_cdk import aws_cloudwatch as cloudwatch
 from aws_cdk import aws_cloudwatch_actions as cloudwatch_actions
@@ -36,6 +35,7 @@ from aws_cdk import aws_logs as logs
 from aws_cdk import aws_secretsmanager as secretsmanager
 from aws_cdk import aws_sns as sns
 from aws_cdk import aws_ssm as ssm
+from aws_cdk import aws_wafv2 as wafv2
 from constructs import Construct
 
 ISSUER_DIR = Path(__file__).resolve().parent / "lambdas" / "obo_issuer"
@@ -43,37 +43,58 @@ PARAMS = "/guppi/obo"
 API_NAME = "guppi-obo-issuer"
 FUNCTION_NAME = "guppi-gpt-obo-issuer"
 PROVIDER_PREFIX = "guppi-obo-"
+STAGE = "prod"
 # About five exchanges per chat start, plus one per HR tool call; a burst covers a chat's
-# warm start and a few turns at once.
-RATE_PER_SECOND = 20
-BURST = 40
+# warm start and a few turns at once. Key and discovery reads have their own, higher limit,
+# so a flood of token requests never starves the authorizers' key fetches.
+TOKEN_RATE, TOKEN_BURST = 20, 40
+READ_RATE, READ_BURST = 50, 100
 RESERVED_CONCURRENCY = 10
+# Per source IP, over five minutes, at the web ACL in front of the API: far above what
+# AgentCore Identity sends for a handful of employees, far below what drains the throttle.
+WAF_LIMIT_PER_IP = 600
 
-AGENTS = "api://hr-agents"
 TOOLS = "api://hr-tools"
 TOOLS_RUNTIME = "api://hr-tools-runtime"
 POLICY = "hr.tools.policy"
+DOMAINS = ("profile", "pay", "travel")
+
+
+def agents_audience(domain: str) -> str:
+    """Each sub-agent has its own agents audience and scope, so a token meant for one
+    sub-agent cannot drive another (guppi-hr critique of the build, finding 3)."""
+    return f"api://hr-agents/{domain}"
+
+
+def agents_scope(domain: str) -> str:
+    return f"hr.agents.{domain}"
+
+
 DOMAIN_SCOPES = {
     "profile": [POLICY, "hr.tools.profile.read", "hr.tools.profile.write"],
-    "pay": [POLICY, "hr.tools.pay.read", "hr.tools.pay.write"],
+    "pay": [POLICY, "hr.tools.pay.statements.read", "hr.tools.pay.read", "hr.tools.pay.write"],
     "travel": [POLICY],
 }
-CANVAS_SCOPES = [POLICY, "hr.tools.profile.read", "hr.tools.pay.read"]
-AGENT_CLIENTS = [f"hr-agent-{domain}" for domain in DOMAIN_SCOPES]
+# The canvas reads the profile and pay statements, never bank details or writes.
+CANVAS_SCOPES = [POLICY, "hr.tools.profile.read", "hr.tools.pay.statements.read"]
+AGENT_CLIENTS = [f"hr-agent-{domain}" for domain in DOMAINS]
 
 # Which subject token each client may present, and what it may receive (guppi-hr
 # docs/proposals/obo-token-exchange.md, "Clients and what each may exchange").
 RULES: dict[str, dict] = {
-    # The Connect bridge and the /p/hr-diy/ orchestrator: the employee's Okta token, for
-    # the agents token or the canvas's tools token.
+    # The Connect bridge and the /p/hr-diy/ orchestrator: the employee's Okta token, for one
+    # sub-agent's agents token at a time or the canvas's tools token.
     "hr-bridge": {
         "subject": {"issuer": "okta", "act_depths": [0]},
-        "grants": [{"audience": AGENTS, "scopes": ["hr.agents"]}, {"audience": TOOLS, "scopes": CANVAS_SCOPES}],
+        "grants": [*({"audience": agents_audience(d), "scopes": [agents_scope(d)]} for d in DOMAINS),
+                   {"audience": TOOLS, "scopes": CANVAS_SCOPES}],
     },
-    # Each sub-agent: the bridge's agents token, for its own domain's tools token.
+    # Each sub-agent: the bridge's agents token for that sub-agent only, for its own
+    # domain's tools token.
     **{
         f"hr-agent-{domain}": {
-            "subject": {"issuer": "self", "audiences": [AGENTS], "clients": ["hr-bridge"], "act_depths": [1]},
+            "subject": {"issuer": "self", "audiences": [agents_audience(domain)], "clients": ["hr-bridge"],
+                        "act_depths": [1]},
             "grants": [{"audience": TOOLS, "scopes": scopes}],
         }
         for domain, scopes in DOMAIN_SCOPES.items()
@@ -111,11 +132,15 @@ class OboIssuer(Construct):
                         description="The on-behalf-of token issuer (guppi-hr D47)")
         role.add_managed_policy(iam.ManagedPolicy.from_aws_managed_policy_name("service-role/AWSLambdaBasicExecutionRole"))
 
-        # Only the issuer may sign: the key policy gives the account administration but not
-        # kms:Sign, so no IAM policy elsewhere in the account can mint a token.
-        admin_actions = ["kms:Create*", "kms:Describe*", "kms:Enable*", "kms:List*", "kms:Put*", "kms:Update*",
-                         "kms:Revoke*", "kms:Disable*", "kms:Get*", "kms:Delete*", "kms:TagResource",
-                         "kms:UntagResource", "kms:ScheduleKeyDeletion", "kms:CancelKeyDeletion"]
+        # Only the issuer's role may sign: the key policy gives the account administration
+        # but neither kms:Sign nor kms:CreateGrant, so an IAM policy alone cannot mint a
+        # token. An administrator who rewrites the key policy (kms:PutKeyPolicy, kept so the
+        # key stays manageable) or the function's code still could; the account has no
+        # CloudTrail trail to alarm on either, so that is recorded rather than watched.
+        admin_actions = ["kms:CreateAlias", "kms:Describe*", "kms:Enable*", "kms:List*", "kms:PutKeyPolicy",
+                         "kms:Update*", "kms:Revoke*", "kms:Disable*", "kms:Get*", "kms:Delete*",
+                         "kms:TagResource", "kms:UntagResource", "kms:ScheduleKeyDeletion",
+                         "kms:CancelKeyDeletion"]
         key_policy = iam.PolicyDocument(statements=[
             iam.PolicyStatement(sid="AccountAdministration", principals=[iam.AccountRootPrincipal()],
                                 actions=admin_actions, resources=["*"]),
@@ -127,21 +152,20 @@ class OboIssuer(Construct):
                            description="Signs on-behalf-of tokens (guppi-hr D47)")
 
         # One secret per client, a generated string the issuer and AgentCore Identity read.
+        # Stable names (guppi/obo/<client>), so a caller's grant (secret:guppi/obo/<client>-*)
+        # survives a replaced secret. Identity reads it as the caller of
+        # GetResourceOauth2Token (guppi-hr aws-feedback A16), so no service grant is needed.
         self.secrets: dict[str, secretsmanager.Secret] = {}
         for client in CLIENTS:
             secret = secretsmanager.Secret(
                 self, f"Client{_pascal(client)}Secret",
+                secret_name=f"guppi/obo/{client}",
                 description=f"Client secret of {client} at the on-behalf-of issuer (guppi-hr D47)",
                 generate_secret_string=secretsmanager.SecretStringGenerator(
                     secret_string_template=json.dumps({"client_id": client}),
                     generate_string_key="client_secret", exclude_punctuation=True, password_length=48),
                 removal_policy=RemovalPolicy.DESTROY,
             )
-            secret.add_to_resource_policy(iam.PolicyStatement(
-                principals=[iam.ServicePrincipal("bedrock-agentcore.amazonaws.com")],
-                actions=["secretsmanager:GetSecretValue"], resources=["*"],
-                conditions={"StringEquals": {"aws:SourceAccount": account}},
-            ))
             secret.grant_read(role)
             self.secrets[client] = secret
 
@@ -170,16 +194,50 @@ class OboIssuer(Construct):
             actions=["ssm:GetParameter"],
             resources=[f"arn:aws:ssm:{region}:{account}:parameter{issuer_parameter_name}"]))
 
-        self.api = apigw.HttpApi(self, "Api", api_name=API_NAME, description="On-behalf-of token issuer (guppi-hr D47)")
-        integration = integrations.HttpLambdaIntegration("IssuerIntegration", function)
-        for path, method in (("/.well-known/openid-configuration", apigw.HttpMethod.GET),
-                             ("/jwks.json", apigw.HttpMethod.GET), ("/token", apigw.HttpMethod.POST)):
-            self.api.add_routes(path=path, methods=[method], integration=integration)
-        stage = self.api.default_stage.node.default_child
-        stage.default_route_settings = apigw.CfnStage.RouteSettingsProperty(
-            throttling_burst_limit=BURST, throttling_rate_limit=RATE_PER_SECOND)
-        self.issuer_url = self.api.api_endpoint
+        # A REST API rather than an HTTP API: only a REST API takes a web ACL, and the token
+        # endpoint is public by nature (critique of the build, finding 1).
+        access_logs = logs.LogGroup(self, "ApiAccessLogs", log_group_name=f"/aws/apigateway/{API_NAME}",
+                                    retention=logs.RetentionDays.ONE_MONTH, removal_policy=RemovalPolicy.DESTROY)
+        read_limits = apigateway.MethodDeploymentOptions(throttling_rate_limit=READ_RATE,
+                                                         throttling_burst_limit=READ_BURST)
+        self.api = apigateway.RestApi(
+            self, "RestApi", rest_api_name=API_NAME, description="On-behalf-of token issuer (guppi-hr D47)",
+            endpoint_types=[apigateway.EndpointType.REGIONAL],
+            deploy_options=apigateway.StageOptions(
+                stage_name=STAGE,
+                throttling_rate_limit=TOKEN_RATE, throttling_burst_limit=TOKEN_BURST,
+                method_options={"/jwks.json/GET": read_limits, "/.well-known/openid-configuration/GET": read_limits},
+                access_log_destination=apigateway.LogGroupLogDestination(access_logs),
+                access_log_format=apigateway.AccessLogFormat.json_with_standard_fields(
+                    caller=False, http_method=True, ip=True, protocol=False, request_time=True,
+                    resource_path=True, response_length=True, status=True, user=False),
+            ),
+        )
+        integration = apigateway.LambdaIntegration(function)
+        self.api.root.add_resource(".well-known").add_resource("openid-configuration").add_method("GET", integration)
+        self.api.root.add_resource("jwks.json").add_method("GET", integration)
+        self.api.root.add_resource("token").add_method("POST", integration)
+        self.issuer_url = cdk.Fn.join("", ["https://", self.api.rest_api_id, f".execute-api.{region}.amazonaws.com/{STAGE}"])
         self.discovery_url = f"{self.issuer_url}/.well-known/openid-configuration"
+
+        web_acl = wafv2.CfnWebACL(
+            self, "IssuerWebAcl", scope="REGIONAL",
+            default_action=wafv2.CfnWebACL.DefaultActionProperty(allow=wafv2.CfnWebACL.AllowActionProperty()),
+            visibility_config=wafv2.CfnWebACL.VisibilityConfigProperty(
+                sampled_requests_enabled=True, cloud_watch_metrics_enabled=True, metric_name="GuppiOboIssuerWebAcl"),
+            rules=[wafv2.CfnWebACL.RuleProperty(
+                name="PerIpRate", priority=0,
+                statement=wafv2.CfnWebACL.StatementProperty(rate_based_statement=wafv2.CfnWebACL.RateBasedStatementProperty(
+                    limit=WAF_LIMIT_PER_IP, evaluation_window_sec=300, aggregate_key_type="IP")),
+                action=wafv2.CfnWebACL.RuleActionProperty(block=wafv2.CfnWebACL.BlockActionProperty()),
+                visibility_config=wafv2.CfnWebACL.VisibilityConfigProperty(
+                    sampled_requests_enabled=True, cloud_watch_metrics_enabled=True, metric_name="GuppiOboIssuerPerIpRate"),
+            )],
+        )
+        wafv2.CfnWebACLAssociation(
+            self, "IssuerWebAclAssociation", web_acl_arn=web_acl.attr_arn,
+            resource_arn=f"arn:aws:apigateway:{region}::/restapis/{self.api.rest_api_id}/stages/{STAGE}",
+        ).node.add_dependency(self.api.deployment_stage)
 
         issuer_parameter = ssm.StringParameter(self, "IssuerParameter", parameter_name=issuer_parameter_name,
                                                string_value=self.issuer_url,
@@ -211,7 +269,7 @@ class OboIssuer(Construct):
                                 actor_token_content="NONE")),
                     )),
             )
-            provider.node.add_dependency(self.api, issuer_parameter, function)
+            provider.node.add_dependency(self.api.deployment_stage, issuer_parameter, function)
             self.providers[client] = provider
             # AgentCore Identity reads an EXTERNAL secret as the caller of GetResourceOauth2Token
             # (guppi-hr aws-feedback A16), so each caller's role is granted its client's secret.
