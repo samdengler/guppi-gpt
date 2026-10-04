@@ -231,7 +231,7 @@ A project whose agent is an Amazon Connect chat can have the page talk to Connec
 (guppi-hr D55; `docs/proposals/platform.md`, "Connect chat transport"). Its manifest lists
 `connect-chat` and a `connectChat` block with the project's start and report routes, turn
 marks, limits and lines; `connectChatFor` in `web/src/project.js` checks it. The page's
-warm start posts to the start route, reads the first NDJSON line (the participant
+warm start posts to the start route, reads its one JSON body (the participant
 credentials, kept in memory inside the chatjs session only), and sends each question with
 amazon-connect-chatjs 5.2.0 (`disableCSM`, no logger, receipts off, never `sendEvent`)
 through `ConnectChatAgent`; after each turn it posts a report with ids, Connect times and
@@ -239,8 +239,9 @@ the end reason, never text or tokens. A thread whose start or socket fails goes 
 the bridge (`HttpAgent`); the `connect-bridge` flag puts the whole page back on the bridge
 path. The CSP's `connect-src` names Connect's participant host and chat socket hosts for
 every page, and the `/api/hr/chat/*` behavior, listed before `/api/*`, sends the HR routes
-to the chat-start function URL whose host the stack reads from the SSM parameter
-`/guppi/hr/chat-start-host` at deploy time; a deploy fails until guppi-hr publishes it.
+to guppi-hr's chat-start REST API, whose host and stage path the stack reads from the SSM
+parameters `/guppi/hr/chat-start-host` and `/guppi/hr/chat-start-path` at deploy time
+(guppi-hr D57); a deploy fails until guppi-hr publishes them.
 
 `scripts/test-token.sh` prints a fresh access token for a test session on stdout and
 nothing else, for checks that need a signed-in bearer without a browser (a curl against

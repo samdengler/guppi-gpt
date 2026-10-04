@@ -227,11 +227,12 @@ The pieces, all in `web/src/`:
 ### Chat start
 
 The warm start (D50 rules, `warmDue`) posts `{}` or `{ "previousContactId": "..." }` to
-`start` with the bearer instead of the bridge's warm run. The project's route answers
-`application/x-ndjson`: the first line holds `data.startChatResult` (`ContactId`,
-`ParticipantId`, `ParticipantToken`), `region`, `startedAt`, `expiresAt` and `restarted`,
-or `{"error":"signin"}` or `{"error":"unavailable"}`; a second line later says how many
-sub-agent warm-ups succeeded. The page reads the first line as soon as it arrives, calls
+`start` with the bearer instead of the bridge's warm run. The project's route answers one
+JSON body (guppi-hr D57, the shape of AWS's StartChatContact sample):
+`data.startChatResult` (`ContactId`, `ParticipantId`, `ParticipantToken`), `region`,
+`startedAt`, `expiresAt`, `restarted` and `timing`, or `{"error":"signin"}` or
+`{"error":"unavailable"}`; a 401 is a refused sign-in and a 429 (API Gateway's throttle)
+an unavailable start. The route warms no sub-agent. The page reads the body, calls
 `setGlobalConfig` with the region, creates the session and connects. A question sent
 before then waits for that one start. The participant token stays inside the chat
 session's closure: it never reaches the extension host, history, the debug block or RUM.
@@ -309,10 +310,13 @@ already open keeps its transport until it reloads.
 The page's CSP `connect-src` names `https://participant.connect.us-east-1.amazonaws.com`
 and `wss://*.transport.connect.us-east-1.amazonaws.com` for every project page. The
 CloudFront behavior `/api/hr/chat/*`, listed before `/api/*`, sends the HR routes to
-guppi-hr's chat-start function URL, whose host this stack reads from the SSM parameter
-`/guppi/hr/chat-start-host` at deploy time: HTTPS only, no caching, no compression, and
-the managed all-viewer policy without Host, which forwards `Authorization`,
-`Content-Type` and the body.
+guppi-hr's chat-start REST API (regional, stage `prod`, a standard Lambda proxy
+integration, guppi-hr D57), whose host and stage path this stack reads from the SSM
+parameters `/guppi/hr/chat-start-host` and `/guppi/hr/chat-start-path` at deploy time; the
+stage path is the origin's `origin_path`, as for the invites API. HTTPS only, no caching,
+no compression, and the managed all-viewer policy without Host, which forwards
+`Authorization`, `Content-Type` and the body. The function checks the bearer itself; the
+stage throttles each route.
 
 ## Debug mode
 
