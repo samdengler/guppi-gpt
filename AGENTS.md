@@ -121,6 +121,9 @@ scripts/
   `uv run -- cdk synth -c image_uri=<any ecr uri>` working without Docker.
 - Prose in docs and comments: no em-dashes or en-dashes, no second person.
 - The page renders plain text only: no Markdown parser, no `innerHTML` with model or user text.
+  A project with its own surface draws below the header itself (decision 23); guppi-hr's
+  `/p/hr-widget/` hosts AWS's Touchpoint widget, which renders Markdown through DOMPurify,
+  on that page only (Sam, 7 Oct 2026).
 - Tests replace `guppi_agent.agent.build_strands_agent`; nothing in `agent/tests` reaches
   Bedrock or the gateway.
 - Observability that reads state already reaching the browser is never behind a feature
@@ -202,6 +205,15 @@ set `forwardedProps` and AG-UI `state`, `onThread` for a new or switched thread,
 and `token`. The page's own status line names the tool (`toolStatus` in `web/src/copy.js`),
 keeping the knowledge base wording for `docs___*`. The page's default palette is Sky; a
 manifest `theme` replaces it for that project.
+
+A project with its own surface (decision 23) has `"surface": "extension"` and an `extension`
+under `/projects/<name>/` in its manifest and no `agent`. Once signed in, the page hides the
+thread, composer, history and New chat and hands its `surface-screen` element to the
+extension's `onSurface` hooks; the header, switcher and sign-out stay the page's. guppi-hr's
+`hr-widget` is the one such project. Its path, `/p/hr-widget/*`, is in `WIDGET_PAGE_PATTERNS`
+in `stack.py`: the same page through the page-path function, under a response headers
+policy whose CSP adds `'unsafe-inline'` to `style-src` for the `<style>` AWS's Touchpoint
+renders into its shadow root.
 
 MCP Apps are hosted by the page itself (`docs/proposals/platform-phase-3.md`), for a
 project whose manifest lists `"mcp-apps"` in `capabilities`. When a tool result from the

@@ -959,6 +959,7 @@ def test_feedback_behavior_is_matched_before_the_api_wildcard(template):
         "/api/hr/chat/*",
         "/api/*",
         "/sandbox/*",
+        "/p/hr-widget/*",
     ]
     feedback_behavior = config["CacheBehaviors"][0]
     assert feedback_behavior["CachePolicyId"] == "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
@@ -1165,7 +1166,7 @@ def test_agent_path_function_is_on_the_api_wildcard_only(template):
     # The feedback behavior keeps its path and is still matched first.
     assert "FunctionAssociations" not in behaviors["/api/feedback"]
     assert list(behaviors) == [
-        "/api/feedback", "/api/invite*", "/api/hr/chat/*", "/api/*", "/sandbox/*"
+        "/api/feedback", "/api/invite*", "/api/hr/chat/*", "/api/*", "/sandbox/*", "/p/hr-widget/*"
     ]
     assert "FunctionAssociations" not in behaviors["/api/hr/chat/*"]
 
@@ -1200,6 +1201,36 @@ def test_sandbox_behavior_serves_the_site_bucket_with_the_sandbox_headers(templa
     assert "FrameOptions" not in headers
     assert headers["ContentTypeOptions"] == {"Override": True}
     assert headers["StrictTransportSecurity"]["AccessControlMaxAgeSec"] == 31536000
+
+
+def test_widget_page_is_the_page_with_inline_styles_allowed(template):
+    """/p/hr-widget/ is the same page through the page-path function; its headers differ
+    from the page's only in style-src, for the <style> AWS's Touchpoint renders into its
+    shadow root (guppi-hr D62)."""
+    (distribution,) = template.find_resources("AWS::CloudFront::Distribution").values()
+    config = distribution["Properties"]["DistributionConfig"]
+    behaviors = {b["PathPattern"]: b for b in config["CacheBehaviors"]}
+    widget = behaviors["/p/hr-widget/*"]
+    default = config["DefaultCacheBehavior"]
+    for key in ("TargetOriginId", "CachePolicyId", "FunctionAssociations", "ViewerProtocolPolicy"):
+        assert widget[key] == default[key], key
+
+    policy_id, policy = headers_policy(template, "CSP and security headers for a project page")
+    assert widget["ResponseHeadersPolicyId"] == {"Ref": policy_id}
+    headers = policy["Properties"]["ResponseHeadersPolicyConfig"]["SecurityHeadersConfig"]
+    branches = headers["ContentSecurityPolicy"]["ContentSecurityPolicy"]["Fn::If"]
+    assert branches[0] == "HasDynatraceBeaconOrigin"
+    assert render(branches[2]) == CSP_WITHOUT_BEACON.replace(
+        "style-src 'self';", "style-src 'self' 'unsafe-inline';"
+    )
+    _, page = headers_policy(template, "CSP and security headers for the static page")
+    page_headers = page["Properties"]["ResponseHeadersPolicyConfig"]["SecurityHeadersConfig"]
+    page_branches = page_headers["ContentSecurityPolicy"]["ContentSecurityPolicy"]["Fn::If"]
+    assert render(branches[1]) == render(page_branches[1]).replace(
+        "style-src 'self';", "style-src 'self' 'unsafe-inline';"
+    )
+    others = {k: v for k, v in headers.items() if k != "ContentSecurityPolicy"}
+    assert others == {k: v for k, v in page_headers.items() if k != "ContentSecurityPolicy"}
 
 
 def test_the_page_may_frame_only_its_own_origin(template):

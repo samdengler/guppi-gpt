@@ -253,6 +253,11 @@ CONNECT_CHAT_CONNECT_SRC = (
     "https://participant.connect.us-east-1.amazonaws.com "
     "wss://*.transport.connect.us-east-1.amazonaws.com"
 )
+# Project pages that host a vendor chat widget (guppi-hr D62: AWS's Touchpoint on
+# /p/hr-widget/). The page is the same index.html through the page-path function, under a
+# CSP that differs from the page's in one place: style-src also allows 'unsafe-inline', for
+# the <style> element the widget renders into its shadow root.
+WIDGET_PAGE_PATTERNS = ("/p/hr-widget/*",)
 SANDBOX_CSP = (
     "default-src 'none'; "
     "script-src 'self' 'unsafe-inline'; "
@@ -1152,43 +1157,32 @@ class GuppiGptStack(cdk.Stack):
         # pattern as has_alarm_email above, applied to a property value instead of a
         # resource's Condition). With DynatraceBeaconOrigin left blank (the default) this
         # renders to the exact CSP the stack already had.
-        csp_without_dynatrace = (
-            "default-src 'self'; "
-            f"connect-src 'self' https://{okta_host} {CONNECT_CHAT_CONNECT_SRC}; "
-            "img-src 'self' data:; "
-            "style-src 'self'; "
-            "script-src 'self'; "
-            "frame-src 'self'; "
-            "frame-ancestors 'none'; "
-            "base-uri 'self'; "
-            "form-action 'self'"
-        )
-        csp_with_dynatrace = (
-            "default-src 'self'; "
-            f"connect-src 'self' https://{okta_host} {CONNECT_CHAT_CONNECT_SRC} "
-            f"{dynatrace_beacon_origin.value_as_string}; "
-            "img-src 'self' data:; "
-            "style-src 'self'; "
-            "script-src 'self'; "
-            "frame-src 'self'; "
-            "frame-ancestors 'none'; "
-            "base-uri 'self'; "
-            "form-action 'self'"
-        )
-        content_security_policy = cdk.Token.as_string(
-            cdk.Fn.condition_if(
-                has_dynatrace_beacon_origin.logical_id,
-                csp_with_dynatrace,
-                csp_without_dynatrace,
+        def page_csp(style_src: str) -> str:
+            def csp(beacon: str) -> str:
+                return (
+                    "default-src 'self'; "
+                    f"connect-src 'self' https://{okta_host} {CONNECT_CHAT_CONNECT_SRC}{beacon}; "
+                    "img-src 'self' data:; "
+                    f"style-src {style_src}; "
+                    "script-src 'self'; "
+                    "frame-src 'self'; "
+                    "frame-ancestors 'none'; "
+                    "base-uri 'self'; "
+                    "form-action 'self'"
+                )
+
+            return cdk.Token.as_string(
+                cdk.Fn.condition_if(
+                    has_dynatrace_beacon_origin.logical_id,
+                    csp(f" {dynatrace_beacon_origin.value_as_string}"),
+                    csp(""),
+                )
             )
-        )
-        security_headers_policy = cloudfront.ResponseHeadersPolicy(
-            self,
-            "SecurityHeadersPolicy",
-            comment="CSP and security headers for the static page",
-            security_headers_behavior=cloudfront.ResponseSecurityHeadersBehavior(
+
+        def page_security_headers(csp: str) -> cloudfront.ResponseSecurityHeadersBehavior:
+            return cloudfront.ResponseSecurityHeadersBehavior(
                 content_security_policy=cloudfront.ResponseHeadersContentSecurityPolicy(
-                    content_security_policy=content_security_policy,
+                    content_security_policy=csp,
                     override=True,
                 ),
                 strict_transport_security=cloudfront.ResponseHeadersStrictTransportSecurity(
@@ -1204,7 +1198,20 @@ class GuppiGptStack(cdk.Stack):
                 frame_options=cloudfront.ResponseHeadersFrameOptions(
                     frame_option=cloudfront.HeadersFrameOption.DENY, override=True
                 ),
-            ),
+            )
+
+        security_headers_policy = cloudfront.ResponseHeadersPolicy(
+            self,
+            "SecurityHeadersPolicy",
+            comment="CSP and security headers for the static page",
+            security_headers_behavior=page_security_headers(page_csp("'self'")),
+        )
+        # WIDGET_PAGE_PATTERNS: the page's headers, with inline styles allowed for the widget.
+        widget_headers_policy = cloudfront.ResponseHeadersPolicy(
+            self,
+            "WidgetHeadersPolicy",
+            comment="CSP and security headers for a project page that hosts a chat widget",
+            security_headers_behavior=page_security_headers(page_csp("'self' 'unsafe-inline'")),
         )
         # /sandbox/* gets its own headers: the app frame's CSP in place of the page's, and
         # no X-Frame-Options, since frame-ancestors 'self' is what lets the page frame it.
@@ -1317,6 +1324,22 @@ class GuppiGptStack(cdk.Stack):
                     cache_policy=cloudfront.CachePolicy.CACHING_OPTIMIZED,
                     response_headers_policy=sandbox_headers_policy,
                 ),
+                # The default behavior for a widget page, with the widget's headers.
+                **{
+                    pattern: cloudfront.BehaviorOptions(
+                        origin=site_origin,
+                        viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                        cache_policy=cloudfront.CachePolicy.CACHING_OPTIMIZED,
+                        response_headers_policy=widget_headers_policy,
+                        function_associations=[
+                            cloudfront.FunctionAssociation(
+                                function=page_path_function,
+                                event_type=cloudfront.FunctionEventType.VIEWER_REQUEST,
+                            )
+                        ],
+                    )
+                    for pattern in WIDGET_PAGE_PATTERNS
+                },
             },
         )
         for record_type, record_class in (("A", route53.ARecord), ("AAAA", route53.AaaaRecord)):

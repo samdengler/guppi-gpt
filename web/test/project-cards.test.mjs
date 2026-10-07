@@ -54,9 +54,9 @@ test("a manifest the page would not use gives no card", () => {
   assert.equal(projectCard({ name: "hr", agent: "/api/hr/invocations" }, "hr"), null);
 });
 
-test("the shipped list names the three projects", () => {
+test("the shipped list names the four projects", () => {
   const list = JSON.parse(readFileSync(new URL("../src/projects.json", import.meta.url), "utf8"));
-  assert.deepEqual(projectNames(list), ["hr", "hr-diy", "mcp-app"]);
+  assert.deepEqual(projectNames(list), ["hr", "hr-widget", "hr-diy", "mcp-app"]);
 });
 
 test("the switcher lists GuppiGPT first, then the projects, and marks the current one", async () => {

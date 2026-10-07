@@ -32,6 +32,33 @@ test("guppi carries the manifest, the token, and no MCP client in this phase", (
   assert.ok(Object.isFrozen(guppi));
 });
 
+test("mountSurface hands the element to every onSurface hook, past one that throws or rejects", async () => {
+  const { guppi, mountSurface } = host();
+  const element = { id: "surface-screen" };
+  const seen = [];
+  guppi.onSurface(() => {
+    throw new Error("boom");
+  });
+  guppi.onSurface(async () => {
+    throw new Error("async boom");
+  });
+  guppi.onSurface((el) => seen.push(el));
+  guppi.onSurface("not a function");
+  const original = console.warn;
+  let warnings = 0;
+  console.warn = () => {
+    warnings += 1;
+  };
+  try {
+    mountSurface(element);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  } finally {
+    console.warn = original;
+  }
+  assert.deepEqual(seen, [element]);
+  assert.equal(warnings, 2);
+});
+
 test("a tool renderer is claimed by name and called with the call, the slot and ctx", () => {
   const { guppi, claimsTool, renderTool } = host();
   const calls = [];

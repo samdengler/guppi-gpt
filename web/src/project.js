@@ -79,17 +79,33 @@ export function projectCard(manifest, name) {
 /**
  * The manifest when it is usable for the project `name`, else null. Usable means an
  * object whose `name` matches, with a non-empty string `label` and an `agent` that is
- * "platform" or a same-origin /api/<name>/invocations path. Unknown fields are kept for
- * the project's own extension.
+ * "platform" or a same-origin /api/<name>/invocations path, or, for a project with its
+ * own surface, an `extension` module under /projects/<name>/ and no agent. Unknown fields
+ * are kept for the project's own extension.
  */
 export function checkManifest(manifest, name) {
   if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) return null;
   if (manifest.name !== name) return null;
   if (typeof manifest.label !== "string" || !manifest.label.trim()) return null;
+  if (manifest.surface === "extension") {
+    return typeof manifest.extension === "string" && manifest.extension.startsWith(`/projects/${name}/`)
+      ? manifest
+      : null;
+  }
   if (manifest.agent !== "platform" && !PROJECT_AGENT_PATH.test(manifest.agent || "")) {
     return null;
   }
   return manifest;
+}
+
+/**
+ * True when the project's extension draws the screen below the header (`"surface":
+ * "extension"`): the page signs the employee in and then hands that screen to the
+ * extension's onSurface hooks, with no thread, composer, history or agent of its own.
+ * guppi-hr's /p/hr-widget/ is the first, hosting AWS's Touchpoint chat widget.
+ */
+export function hasOwnSurface(manifest) {
+  return Boolean(manifest) && manifest.surface === "extension";
 }
 
 /**

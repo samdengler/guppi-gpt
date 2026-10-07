@@ -6,6 +6,7 @@ import {
   agentUrlFor,
   brandFor,
   checkManifest,
+  hasOwnSurface,
   manifestUrl,
   mergeFeatures,
   projectPath,
@@ -68,6 +69,21 @@ test("checkManifest accepts a project agent path on this origin", () => {
 
 test("checkManifest refuses a manifest for another project", () => {
   assert.equal(checkManifest(DEMO, "other"), null);
+});
+
+test("checkManifest accepts a project with its own surface and no agent", () => {
+  const manifest = { name: "demo", label: "Demo", surface: "extension", extension: "/projects/demo/ext.js" };
+  assert.equal(checkManifest(manifest, "demo"), manifest);
+  assert.equal(hasOwnSurface(manifest), true);
+  assert.equal(hasOwnSurface(DEMO), false);
+  assert.equal(hasOwnSurface(null), false);
+});
+
+test("checkManifest refuses an own-surface project without its extension under /projects/<name>/", () => {
+  const base = { name: "demo", label: "Demo", surface: "extension" };
+  for (const extension of [undefined, "", "/projects/other/ext.js", "https://example.com/projects/demo/ext.js", "/ext.js"]) {
+    assert.equal(checkManifest({ ...base, extension }, "demo"), null, String(extension));
+  }
 });
 
 test("checkManifest refuses a missing label or agent", () => {

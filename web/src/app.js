@@ -11,7 +11,7 @@ import { createPendingIndicator, pendingShown, setPending } from "./pending.js";
 import { DEBUG_FLAG, createDebugRun, isTimingEvent, withDebugProp } from "./debug.js";
 import { inviteBody, inviteResult, signInRefusal } from "./invite-core.js";
 import { oidcEndpoints, logoutUrl } from "./oidc.js";
-import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, manifestUrl, checkManifest, mergeFeatures, brandFor, agentUrlFor, suggestionsFor, themeFor, wantsWarmStart, warmDue, warmRunInput, THEME_KEYS, PROJECTS_URL, projectNames, projectCard, switcherEntries, connectChatFor } from "./project.js";
+import { resolveProject as projectFromPath, projectPath, acceptedReturnPath, manifestUrl, checkManifest, mergeFeatures, brandFor, agentUrlFor, suggestionsFor, themeFor, wantsWarmStart, warmDue, warmRunInput, THEME_KEYS, PROJECTS_URL, projectNames, projectCard, switcherEntries, connectChatFor, hasOwnSurface } from "./project.js";
 import { CONNECT_BRIDGE_FLAG, createConnectChatClient, createReportSender, onNetworkBack } from "./connect-chat.js";
 import { ConnectChatAgent } from "./connect-agent.js";
 
@@ -50,6 +50,7 @@ const CHATJS_MODULE = "/vendor/chatjs.js";
   const inviteSentCopy = $("invite-sent-copy");
 
   const chatScreen = $("chat-screen");
+  const surfaceScreen = $("surface-screen");
   const threadWrap = $("thread-wrap");
   const emptyState = $("empty-state");
   const threadEl = $("thread");
@@ -621,19 +622,32 @@ const CHATJS_MODULE = "/vendor/chatjs.js";
     return (claims.email || "").slice(0, 2).toUpperCase();
   }
 
+  // A project with its own surface gets that element once per page load (guppi.onSurface).
+  let surfaceMounted = false;
+
   function showChat() {
     const claims = decodeJwt(tokens.id_token);
     auth = "signed-in";
     accountBtn.textContent = accountInitials(claims);
     accountEmail.textContent = claims.email || claims.sub;
     accountWrap.hidden = false;
-    newChatBtn.hidden = false;
-    historyWrap.hidden = !historyEnabled;
     signinScreen.hidden = true;
-    chatScreen.hidden = false;
     // A no-op unless RUM is active and config.rum.identifyUser asks for it; the subject
     // is hashed before it reaches dtrum (web/src/rum.js).
     identifyRumUser(config, claims.sub);
+    if (hasOwnSurface(manifest)) {
+      // The project's extension draws everything below the header: no thread, composer,
+      // history or new chat on this page.
+      surfaceScreen.hidden = false;
+      if (!surfaceMounted) {
+        surfaceMounted = true;
+        extensions.mountSurface(surfaceScreen);
+      }
+      return;
+    }
+    newChatBtn.hidden = false;
+    historyWrap.hidden = !historyEnabled;
+    chatScreen.hidden = false;
   }
 
   async function signOut() {

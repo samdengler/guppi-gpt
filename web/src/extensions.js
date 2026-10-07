@@ -55,6 +55,7 @@ export function createExtensionHost({ project, getToken, builtins = BUILTIN_REND
   const eventRenderers = new Map();
   const sendHooks = [];
   const threadHooks = [];
+  const surfaceHooks = [];
   let statusSink = null;
 
   const guppi = Object.freeze({
@@ -83,12 +84,30 @@ export function createExtensionHost({ project, getToken, builtins = BUILTIN_REND
     token() {
       return getToken();
     },
+    // For a project with its own surface (project.js hasOwnSurface): called once, with the
+    // element below the header, when the employee is signed in. What the extension draws
+    // there is the project's own, outside the page's plain-text rule (guppi-hr D62).
+    onSurface(fn) {
+      if (typeof fn === "function") surfaceHooks.push(fn);
+    },
     // A browser-side MCP client arrives in a later phase.
     mcp: null,
   });
 
   return {
     guppi,
+
+    /** Hands the signed-in page's surface element to every onSurface hook. A hook that
+     * throws or rejects is reported and the others still run. */
+    mountSurface(element) {
+      for (const hook of surfaceHooks) {
+        try {
+          Promise.resolve(hook(element)).catch((error) => warn("an onSurface hook", error));
+        } catch (error) {
+          warn("an onSurface hook", error);
+        }
+      }
+    },
 
     /** True when an extension renders this tool, so the built-in status line stays quiet. */
     claimsTool(name) {
